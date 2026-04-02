@@ -328,14 +328,10 @@ func (s *BlockchainService) rateBids(bidIds [][32]byte, bids []m.IBidStorageBid,
 	return scoredBids
 }
 
-func (s *BlockchainService) OpenSession(ctx context.Context, approval, approvalSig []byte, stake *big.Int, directPayment bool, agentUsername string) (common.Hash, error) {
-	var isAgent bool
-	if s.authConfig != nil {
-		var err error
-		isAgent, err = s.authConfig.IsAllowanceEnough(agentUsername, s.morTokenAddr.Hex(), stake)
-		if err != nil {
-			return common.Hash{}, lib.WrapError(ErrAgentUserAllowance, err)
-		}
+func (s *BlockchainService) OpenSession(ctx context.Context, approval, approvalSig []byte, stake *big.Int, directPayment bool, agentUsername string, isTee bool) (common.Hash, error) {
+	isAgent, err := s.authConfig.IsAllowanceEnough(agentUsername, s.morTokenAddr.Hex(), stake)
+	if err != nil {
+		return common.Hash{}, lib.WrapError(ErrAgentUserAllowance, err)
 	}
 
 	prKey, err := s.privateKey.GetPrivateKey()
@@ -451,6 +447,7 @@ func (s *BlockchainService) OpenSession(ctx context.Context, approval, approvalS
 	}
 
 	session.SetAgentUsername(agentUsername)
+	session.SetIsTee(isTee)
 
 	err = s.sessionRepo.SaveSession(ctx, session)
 	if err != nil {
@@ -1358,20 +1355,11 @@ func (s *BlockchainService) tryOpenSession(ctx context.Context, bid *structs.Bid
 	}
 
 	if isTeeSession && s.attestationVerifier != nil {
-		_, version, err := s.proxyService.Ping(ctx, provider.Endpoint, bid.Provider)
-		if err != nil {
-			s.log.Warnf("TEE ping failed for provider %s: %s", bid.Provider, err)
-			return common.Hash{}, true, fmt.Errorf("TEE ping failed: %w", err)
-		}
-		if version == "" {
-			s.log.Warnf("TEE provider %s did not report a version, cannot verify attestation", bid.Provider)
-			return common.Hash{}, true, fmt.Errorf("TEE provider %s did not report a version", bid.Provider)
-		}
-		if err := s.attestationVerifier.VerifyProvider(ctx, provider.Endpoint, version); err != nil {
+		if err := s.attestationVerifier.VerifyProviderQuick(ctx, provider.Endpoint, bid.Provider.Hex(), true); err != nil {
 			s.log.Warnf("TEE attestation failed for provider %s: %s", bid.Provider, err)
 			return common.Hash{}, true, fmt.Errorf("TEE attestation failed: %w", err)
 		}
-		s.log.Infof("TEE attestation passed for provider %s (version %s)", bid.Provider, version)
+		s.log.Infof("TEE attestation passed for provider %s", bid.Provider)
 	}
 
 	amountTransferred, err := computeSessionTokenAmount(bid, duration, supply, budget, directPayment)
@@ -1393,7 +1381,7 @@ func (s *BlockchainService) tryOpenSession(ctx context.Context, bid *structs.Bid
 		return common.Hash{}, true, lib.WrapError(ErrInitSession, err)
 	}
 
-	hash, err := s.OpenSession(ctx, initRes.Approval, initRes.ApprovalSig, amountTransferred, directPayment, agentUsername)
+	hash, err := s.OpenSession(ctx, initRes.Approval, initRes.ApprovalSig, amountTransferred, directPayment, agentUsername, isTeeSession)
 	if err != nil {
 		return common.Hash{}, false, err
 	}
