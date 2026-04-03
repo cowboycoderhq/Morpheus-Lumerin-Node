@@ -47,11 +47,11 @@ const allowanceReserveMultiplier = 3
 // supplyBudgetCacheTTL bounds duplicate contract reads during session open / model flows.
 const supplyBudgetCacheTTL = 55 * time.Second
 
-// openSessionMaxRetries is the number of attempts to submit the openSession
-// tx before giving up. Retries only apply to "execution reverted" errors,
-// which are typically transient after an increaseAllowance has been mined
-// but not fully propagated across RPC nodes.
-const openSessionMaxRetries = 3
+// sessionTxMaxRetries is the number of attempts to submit a session tx
+// (open or close) before giving up. Retries only apply to "execution reverted"
+// errors, which are typically transient when prior state changes haven't fully
+// propagated across RPC nodes.
+const sessionTxMaxRetries = 3
 
 var maxUint256 = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
 
@@ -406,10 +406,10 @@ func (s *BlockchainService) OpenSession(ctx context.Context, approval, approvalS
 	// not yet visible to the RPC node serving the simulation/estimate call.
 	var sessionReceipt *types.Receipt
 	var lastOpenErr error
-	for attempt := 0; attempt < openSessionMaxRetries; attempt++ {
+	for attempt := 0; attempt < sessionTxMaxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(attempt*3) * time.Second
-			s.log.Warnf("openSession reverted (attempt %d/%d), retrying in %s", attempt, openSessionMaxRetries, backoff)
+			s.log.Warnf("openSession reverted (attempt %d/%d), retrying in %s", attempt, sessionTxMaxRetries, backoff)
 			select {
 			case <-ctx.Done():
 				return common.Hash{}, fmt.Errorf("context cancelled during openSession retry: %w", ctx.Err())
@@ -716,22 +716,42 @@ func (s *BlockchainService) CloseSession(ctx context.Context, sessionID common.H
 		signedReport = report.SignedReport
 	}
 
-	baseOpts, err := s.getTransactOpts(ctx, prKey)
-	if err != nil {
-		return common.Hash{}, lib.WrapError(ErrTxOpts, err)
-	}
+	var receipt *types.Receipt
+	var lastCloseErr error
+	for attempt := 0; attempt < sessionTxMaxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt*3) * time.Second
+			s.log.Warnf("closeSession reverted (attempt %d/%d), retrying in %s", attempt, sessionTxMaxRetries, backoff)
+			select {
+			case <-ctx.Done():
+				return common.Hash{}, fmt.Errorf("context cancelled during closeSession retry: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
+		}
 
-	receipt, err := s.txEscalator.SendWithEscalation(
-		ctx,
-		baseOpts,
-		func(opts *bind.TransactOpts) (*types.Transaction, error) {
-			return s.sessionRouter.CloseSessionTx(opts, reportMessage, signedReport)
-		},
-		s.legacyTx,
-	)
-	if err != nil {
-		s.handleTxError(ctx, addr, err)
-		return common.Hash{}, lib.WrapError(ErrSendTx, fmt.Errorf("close session failed: %w", err))
+		baseOpts, err := s.getTransactOpts(ctx, prKey)
+		if err != nil {
+			return common.Hash{}, lib.WrapError(ErrTxOpts, err)
+		}
+
+		receipt, lastCloseErr = s.txEscalator.SendWithEscalation(
+			ctx,
+			baseOpts,
+			func(opts *bind.TransactOpts) (*types.Transaction, error) {
+				return s.sessionRouter.CloseSessionTx(opts, reportMessage, signedReport)
+			},
+			s.legacyTx,
+		)
+		if lastCloseErr == nil {
+			break
+		}
+		if !isExecutionReverted(lastCloseErr) {
+			break
+		}
+	}
+	if lastCloseErr != nil {
+		s.handleTxError(ctx, addr, lastCloseErr)
+		return common.Hash{}, lib.WrapError(ErrSendTx, fmt.Errorf("close session failed: %w", lastCloseErr))
 	}
 
 	if receipt.Status != 1 {
