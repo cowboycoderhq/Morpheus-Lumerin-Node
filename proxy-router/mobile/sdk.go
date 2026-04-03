@@ -91,6 +91,9 @@ type SDK struct {
 	httpSrvMu     sync.Mutex
 	httpSrvCancel context.CancelFunc
 	httpSrvAddr   string
+
+	// Session maintenance (auto-close expired, detect provider closures)
+	maintCancel context.CancelFunc
 }
 
 // NewSDK creates and initializes the SDK. Call Shutdown() when done.
@@ -246,6 +249,10 @@ func NewSDK(cfg Config) (*SDK, error) {
 	}
 
 	log.Info("SDK initialized")
+
+	// Start background session maintenance (auto-close expired sessions, reclaim MOR).
+	sdk.startSessionMaintenance()
+
 	return sdk, nil
 }
 
@@ -273,12 +280,129 @@ func ProxyRouterCommit() string {
 
 // Shutdown releases all resources held by the SDK.
 func (s *SDK) Shutdown() {
+	if s.maintCancel != nil {
+		s.maintCancel()
+	}
 	s.StopHTTPServer()
 	if s.ethClient != nil {
 		s.ethClient.Close()
 		s.ethClient = nil
 	}
 	s.log.Info("SDK shut down")
+}
+
+// DefaultMaintenanceInterval is how often the background loop checks for expired sessions.
+// Each expired-session close costs gas (~0.0001 ETH), so 5 minutes is a reasonable default.
+const DefaultMaintenanceInterval = 5 * time.Minute
+
+// SetMaintenanceInterval restarts the session maintenance loop with a new interval.
+// Pass 0 to disable automatic session closing entirely.
+func (s *SDK) SetMaintenanceInterval(d time.Duration) {
+	if s.maintCancel != nil {
+		s.maintCancel()
+		s.maintCancel = nil
+	}
+	if d > 0 {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.maintCancel = cancel
+		go s.runSessionMaintenance(ctx, d)
+	}
+}
+
+func (s *SDK) startSessionMaintenance() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.maintCancel = cancel
+	go s.runSessionMaintenance(ctx, DefaultMaintenanceInterval)
+}
+
+// runSessionMaintenance periodically checks for expired on-chain sessions and auto-closes them
+// to reclaim the user's locked MOR stake. It also detects provider-initiated closures by
+// comparing against the on-chain state.
+func (s *SDK) runSessionMaintenance(ctx context.Context, interval time.Duration) {
+	log := s.log.Named("SESSION_MAINT")
+	log.Infof("session maintenance started (interval %s)", interval)
+
+	// Small initial delay to let the app finish startup before hitting the chain.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(30 * time.Second):
+	}
+
+	s.runMaintenanceTick(ctx, log)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("session maintenance stopped")
+			return
+		case <-ticker.C:
+			s.runMaintenanceTick(ctx, log)
+		}
+	}
+}
+
+func (s *SDK) runMaintenanceTick(ctx context.Context, log lib.ILogger) {
+	addr, err := s.getAddress()
+	if err != nil {
+		log.Warnf("cannot get wallet address: %s", err)
+		return
+	}
+	user := common.HexToAddress(addr)
+	now := time.Now().Unix()
+
+	var offset big.Int
+	const limit uint8 = 50
+	const maxPages = 40
+	var closed, alreadyClosed, active int
+
+	for page := 0; page < maxPages; page++ {
+		unclosed, _, totalFetched, err := s.blockchain.GetUnclosedUserSessions(ctx, user, &offset, limit, registries.OrderDESC)
+		if err != nil {
+			log.Warnf("error fetching sessions page %d: %s", page, err)
+			break
+		}
+		if totalFetched == 0 {
+			break
+		}
+		for _, ses := range unclosed {
+			if ses == nil {
+				continue
+			}
+			if ses.User.Hex() != addr {
+				continue
+			}
+			endsAt := ses.EndsAt.Int64()
+			if endsAt > 0 && endsAt < now {
+				sessionHash := common.HexToHash(ses.Id)
+				chainSes, err := s.blockchain.GetSession(ctx, sessionHash)
+				if err != nil {
+					log.Warnf("cannot fetch session %s from chain: %s", ses.Id, err)
+					continue
+				}
+				if chainSes.ClosedAt.Int64() != 0 {
+					alreadyClosed++
+					continue
+				}
+				log.Infof("auto-closing expired session %s (ended %ds ago)", ses.Id, now-endsAt)
+				_, err = s.blockchain.CloseSession(ctx, sessionHash)
+				if err != nil {
+					log.Warnf("failed to close session %s: %s", ses.Id, err)
+					continue
+				}
+				closed++
+			} else {
+				active++
+			}
+		}
+		offset.Add(&offset, big.NewInt(int64(totalFetched)))
+	}
+
+	if closed > 0 || alreadyClosed > 0 {
+		log.Infof("maintenance: closed %d expired sessions, %d already closed, %d active", closed, alreadyClosed, active)
+	}
 }
 
 // parseEthNodeURLs splits a config string into deduplicated RPC URLs (order preserved).
