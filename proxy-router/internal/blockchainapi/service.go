@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +46,12 @@ const allowanceReserveMultiplier = 3
 
 // supplyBudgetCacheTTL bounds duplicate contract reads during session open / model flows.
 const supplyBudgetCacheTTL = 55 * time.Second
+
+// openSessionMaxRetries is the number of attempts to submit the openSession
+// tx before giving up. Retries only apply to "execution reverted" errors,
+// which are typically transient after an increaseAllowance has been mined
+// but not fully propagated across RPC nodes.
+const openSessionMaxRetries = 3
 
 var maxUint256 = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
 
@@ -394,23 +401,45 @@ func (s *BlockchainService) OpenSession(ctx context.Context, approval, approvalS
 		}
 	}
 
-	// Step 2: Open session with escalation
-	sessionBaseOpts, err := s.getTransactOpts(ctx, prKey)
-	if err != nil {
-		return common.Hash{}, lib.WrapError(ErrTxOpts, err)
-	}
+	// Step 2: Open session with escalation.
+	// Retry on "execution reverted" — the approval tx may have been mined but
+	// not yet visible to the RPC node serving the simulation/estimate call.
+	var sessionReceipt *types.Receipt
+	var lastOpenErr error
+	for attempt := 0; attempt < openSessionMaxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt*3) * time.Second
+			s.log.Warnf("openSession reverted (attempt %d/%d), retrying in %s", attempt, openSessionMaxRetries, backoff)
+			select {
+			case <-ctx.Done():
+				return common.Hash{}, fmt.Errorf("context cancelled during openSession retry: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
+		}
 
-	sessionReceipt, err := s.txEscalator.SendWithEscalation(
-		ctx,
-		sessionBaseOpts,
-		func(opts *bind.TransactOpts) (*types.Transaction, error) {
-			return s.sessionRouter.OpenSessionTx(opts, approval, approvalSig, stake, directPayment)
-		},
-		s.legacyTx,
-	)
-	if err != nil {
-		s.handleTxError(ctx, addr, err)
-		return common.Hash{}, lib.WrapError(ErrSendTx, fmt.Errorf("open session failed: %w", err))
+		sessionBaseOpts, err := s.getTransactOpts(ctx, prKey)
+		if err != nil {
+			return common.Hash{}, lib.WrapError(ErrTxOpts, err)
+		}
+
+		sessionReceipt, lastOpenErr = s.txEscalator.SendWithEscalation(
+			ctx,
+			sessionBaseOpts,
+			func(opts *bind.TransactOpts) (*types.Transaction, error) {
+				return s.sessionRouter.OpenSessionTx(opts, approval, approvalSig, stake, directPayment)
+			},
+			s.legacyTx,
+		)
+		if lastOpenErr == nil {
+			break
+		}
+		if !isExecutionReverted(lastOpenErr) {
+			break
+		}
+	}
+	if lastOpenErr != nil {
+		s.handleTxError(ctx, addr, lastOpenErr)
+		return common.Hash{}, lib.WrapError(ErrSendTx, fmt.Errorf("open session failed: %w", lastOpenErr))
 	}
 
 	// Parse session info from receipt
@@ -1532,4 +1561,12 @@ func (s *BlockchainService) handleTxError(ctx context.Context, addr common.Addre
 	if lib.IsNonceError(err) {
 		s.log.Warnf("Nonce error for %s: %v", addr.Hex(), err)
 	}
+}
+
+func isExecutionReverted(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "execution reverted") || strings.Contains(msg, "revert")
 }
