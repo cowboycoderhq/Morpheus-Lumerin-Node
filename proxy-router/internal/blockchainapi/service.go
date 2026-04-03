@@ -329,9 +329,13 @@ func (s *BlockchainService) rateBids(bidIds [][32]byte, bids []m.IBidStorageBid,
 }
 
 func (s *BlockchainService) OpenSession(ctx context.Context, approval, approvalSig []byte, stake *big.Int, directPayment bool, agentUsername string, isTee bool) (common.Hash, error) {
-	isAgent, err := s.authConfig.IsAllowanceEnough(agentUsername, s.morTokenAddr.Hex(), stake)
-	if err != nil {
-		return common.Hash{}, lib.WrapError(ErrAgentUserAllowance, err)
+	var isAgent bool
+	if s.authConfig != nil {
+		var err error
+		isAgent, err = s.authConfig.IsAllowanceEnough(agentUsername, s.morTokenAddr.Hex(), stake)
+		if err != nil {
+			return common.Hash{}, lib.WrapError(ErrAgentUserAllowance, err)
+		}
 	}
 
 	prKey, err := s.privateKey.GetPrivateKey()
