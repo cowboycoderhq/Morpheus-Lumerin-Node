@@ -292,8 +292,9 @@ func (s *SDK) Shutdown() {
 }
 
 // DefaultMaintenanceInterval is how often the background loop checks for expired sessions.
-// Each expired-session close costs gas (~0.0001 ETH), so 5 minutes is a reasonable default.
-const DefaultMaintenanceInterval = 5 * time.Minute
+// Only naturally-expired sessions need this — provider-initiated closes already refund MOR
+// on-chain immediately. This is a housekeeping sweep, not time-critical.
+const DefaultMaintenanceInterval = 15 * time.Minute
 
 // SetMaintenanceInterval restarts the session maintenance loop with a new interval.
 // Pass 0 to disable automatic session closing entirely.
@@ -322,11 +323,11 @@ func (s *SDK) runSessionMaintenance(ctx context.Context, interval time.Duration)
 	log := s.log.Named("SESSION_MAINT")
 	log.Infof("session maintenance started (interval %s)", interval)
 
-	// Small initial delay to let the app finish startup before hitting the chain.
+	// Wait before the first tick — let the app finish startup, fund the wallet, etc.
 	select {
 	case <-ctx.Done():
 		return
-	case <-time.After(30 * time.Second):
+	case <-time.After(2 * time.Minute):
 	}
 
 	s.runMaintenanceTick(ctx, log)
