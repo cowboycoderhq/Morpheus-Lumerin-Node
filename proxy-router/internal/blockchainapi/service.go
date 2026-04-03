@@ -386,7 +386,7 @@ func (s *BlockchainService) OpenSession(ctx context.Context, approval, approvalS
 		)
 		if err != nil {
 			s.handleTxError(ctx, addr, err)
-			return common.Hash{}, lib.WrapError(ErrSendTx, fmt.Errorf("approve failed: %w", err))
+			return common.Hash{}, lib.WrapError(ErrSendTx, classifyOpenSessionError("approve MOR allowance failed", err))
 		}
 
 		if approveReceipt.Status != 1 {
@@ -439,7 +439,7 @@ func (s *BlockchainService) OpenSession(ctx context.Context, approval, approvalS
 	}
 	if lastOpenErr != nil {
 		s.handleTxError(ctx, addr, lastOpenErr)
-		return common.Hash{}, lib.WrapError(ErrSendTx, fmt.Errorf("open session failed: %w", lastOpenErr))
+		return common.Hash{}, lib.WrapError(ErrSendTx, classifyOpenSessionError("open session failed", lastOpenErr))
 	}
 
 	// Parse session info from receipt
@@ -751,7 +751,7 @@ func (s *BlockchainService) CloseSession(ctx context.Context, sessionID common.H
 	}
 	if lastCloseErr != nil {
 		s.handleTxError(ctx, addr, lastCloseErr)
-		return common.Hash{}, lib.WrapError(ErrSendTx, fmt.Errorf("close session failed: %w", lastCloseErr))
+		return common.Hash{}, lib.WrapError(ErrSendTx, classifyCloseSessionError(lastCloseErr))
 	}
 
 	if receipt.Status != 1 {
@@ -1589,4 +1589,69 @@ func isExecutionReverted(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "execution reverted") || strings.Contains(msg, "revert")
+}
+
+func isInsufficientAllowance(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "insufficient allowance")
+}
+
+func isInsufficientETH(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "insufficient funds for gas") ||
+		strings.Contains(msg, "insufficient funds for intrinsic transaction cost")
+}
+
+func isInsufficientMOR(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "transfer amount exceeds balance") ||
+		strings.Contains(msg, "erc20: transfer amount exceeds balance")
+}
+
+func isTxNotMined(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not mined after all escalation") ||
+		strings.Contains(msg, "transaction not mined")
+}
+
+// classifyOpenSessionError wraps a raw chain error from OpenSession with
+// user-friendly context so the frontend can display actionable guidance.
+func classifyOpenSessionError(stage string, err error) error {
+	switch {
+	case isInsufficientETH(err):
+		return fmt.Errorf("%s: insufficient ETH for gas — add ETH to your wallet to cover transaction fees. Original: %w", stage, err)
+	case isInsufficientMOR(err):
+		return fmt.Errorf("%s: insufficient MOR balance — your wallet does not have enough MOR to stake for this session length. Original: %w", stage, err)
+	case isTxNotMined(err):
+		return fmt.Errorf("%s: transaction could not be confirmed on-chain — the network may be congested, try again shortly. Original: %w", stage, err)
+	default:
+		return fmt.Errorf("%s: %w", stage, err)
+	}
+}
+
+// classifyCloseSessionError wraps a raw chain error from CloseSession.
+func classifyCloseSessionError(err error) error {
+	switch {
+	case isInsufficientETH(err):
+		return fmt.Errorf("close session failed: insufficient ETH for gas — add ETH to your wallet to cover the close transaction fee. Original: %w", err)
+	case isInsufficientAllowance(err):
+		return fmt.Errorf("close session failed: the protocol funding pool does not have enough MOR allowance to settle provider payment — "+
+			"this is a network-level issue, not a wallet issue. The auto-close will keep retrying. Original: %w", err)
+	case isTxNotMined(err):
+		return fmt.Errorf("close session failed: transaction could not be confirmed on-chain — the network may be congested, try again shortly. Original: %w", err)
+	default:
+		return fmt.Errorf("close session failed: %w", err)
+	}
 }
