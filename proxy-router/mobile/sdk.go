@@ -214,6 +214,7 @@ func NewSDK(cfg Config) (*SDK, error) {
 
 	// Wire circular dependencies
 	proxySender.SetSessionService(blockchainSvc)
+	proxySender.SetAttestationVerifier(teeVerifier)
 	teeVerifier.SetPingFunc(func(ctx context.Context, providerEndpoint string, providerAddr string) (string, error) {
 		_, version, err := proxySender.Ping(ctx, providerEndpoint, common.HexToAddress(providerAddr))
 		return version, err
