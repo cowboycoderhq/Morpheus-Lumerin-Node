@@ -212,8 +212,12 @@ func NewSDK(cfg Config) (*SDK, error) {
 		teeVerifier,
 	)
 
-	// Wire the circular dependency: proxy sender needs session service for failover
+	// Wire circular dependencies
 	proxySender.SetSessionService(blockchainSvc)
+	teeVerifier.SetPingFunc(func(ctx context.Context, providerEndpoint string, providerAddr string) (string, error) {
+		_, version, err := proxySender.Ping(ctx, providerEndpoint, common.HexToAddress(providerAddr))
+		return version, err
+	})
 
 	// Chat storage (file-based JSON, portable)
 	var cs gcs.ChatStorageInterface
