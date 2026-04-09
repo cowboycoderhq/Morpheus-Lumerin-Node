@@ -960,6 +960,83 @@ func (s *SDK) SendPromptWithMessages(ctx context.Context, sessionID string, mess
 	return err
 }
 
+// ChatParams holds optional generation parameters forwarded to the provider.
+// Nil fields are left at their zero values (provider uses its own defaults).
+type ChatParams struct {
+	Temperature      *float32
+	TopP             *float32
+	MaxTokens        *int
+	FrequencyPenalty *float32
+	PresencePenalty  *float32
+}
+
+// SendPromptWithMessagesAndParams is like SendPromptWithMessages but allows
+// setting generation parameters (temperature, top_p, max_tokens, etc.).
+// Pass nil for params to get the default behavior.
+// Returns the last non-control chunk's Data() serialised as JSON so the
+// caller gets the full, unfiltered provider response metadata.
+func (s *SDK) SendPromptWithMessagesAndParams(ctx context.Context, sessionID string, messages []openai.ChatCompletionMessage, stream bool, params *ChatParams, cb StreamCallback) (json.RawMessage, error) {
+	id := common.HexToHash(sessionID)
+	if err := s.ensureProviderForSession(ctx, id); err != nil {
+		return nil, err
+	}
+
+	req := &gcs.OpenAICompletionRequestExtra{}
+	req.Model = sessionID
+	req.Messages = messages
+	req.Stream = stream
+
+	if params != nil {
+		if params.Temperature != nil {
+			req.Temperature = *params.Temperature
+		}
+		if params.TopP != nil {
+			req.TopP = *params.TopP
+		}
+		if params.MaxTokens != nil {
+			req.MaxTokens = *params.MaxTokens
+		}
+		if params.FrequencyPenalty != nil {
+			req.FrequencyPenalty = *params.FrequencyPenalty
+		}
+		if params.PresencePenalty != nil {
+			req.PresencePenalty = *params.PresencePenalty
+		}
+	}
+
+	var lastChunkData interface{}
+
+	internalCB := func(ctx context.Context, chunk gcs.Chunk, errResp *gcs.AiEngineErrorResponse) error {
+		if errResp != nil {
+			return fmt.Errorf("provider error: %v", errResp.ProviderModelError)
+		}
+		if chunk.Type() == gcs.ChunkTypeControl {
+			return cb("", true)
+		}
+
+		lastChunkData = chunk.Data()
+
+		text := chunk.String()
+		isLast := !chunk.IsStreaming()
+		return cb(text, isLast)
+	}
+
+	_, err := s.proxySender.SendPromptV2(ctx, id, req, internalCB)
+	if err != nil {
+		return nil, err
+	}
+
+	// Serialise whatever the last chunk carried — the full provider response
+	// for non-streaming, or the final SSE event for streaming.
+	var raw json.RawMessage
+	if lastChunkData != nil {
+		if b, merr := json.Marshal(lastChunkData); merr == nil {
+			raw = b
+		}
+	}
+	return raw, nil
+}
+
 // ensureProviderForSession repopulates in-memory provider URL + pubkey after SDK restart (mobile).
 func (s *SDK) ensureProviderForSession(ctx context.Context, sessionID common.Hash) error {
 	sess, err := s.sessionRepo.GetSession(ctx, sessionID)
