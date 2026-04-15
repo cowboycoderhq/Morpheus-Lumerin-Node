@@ -14,11 +14,10 @@ import (
 	"time"
 
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/docs"
-	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/apibus"
-	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/authapi"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/blockchainapi"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/config"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/handlers/httphandlers"
+	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/interfaces"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/proxyapi"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/system"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/walletapi"
@@ -80,7 +79,6 @@ func (s *SDK) StartHTTPServer(address, publicURL, adminUser, adminPass string) e
 	}
 
 	blockchainCtrl := blockchainapi.NewBlockchainController(s.blockchain, *authCfg, s.log.Named("BLOCKCHAIN-API"))
-
 	walletCtrl := walletapi.NewWalletController(s.wallet, *authCfg)
 
 	proxyCtrl := proxyapi.NewProxyController(
@@ -94,23 +92,30 @@ func (s *SDK) StartHTTPServer(address, publicURL, adminUser, adminPass string) e
 		s.log.Named("PROXY-API"),
 	)
 
+	// Healthcheck-only wrapper for the system controller (skip /config, /files,
+	// /config/ethNode which crash on nil ethRPC/sysConfig in embedded mode).
 	sysCtrl := system.NewSystemController(
 		&config.Config{},
 		s.wallet,
-		nil,              // ethRPC — not needed for embedded mode health checks
-		nil,              // sysConfig
-		time.Now(),       // appStartTime
+		nil,
+		nil,
+		time.Now(),
 		big.NewInt(s.cfg.ChainID),
 		s.log.Named("SYSTEM-API"),
-		nil,              // ethConnectionValidator
+		nil,
 		*authCfg,
 		&noopStorageHealthChecker{},
 	)
 
-	authCtrl := authapi.NewAuthController(authCfg, "mobile", s.log.Named("AUTH-API"))
-
-	bus := apibus.NewApiBus(blockchainCtrl, proxyCtrl, walletCtrl, sysCtrl, authCtrl)
-	ginEngine := httphandlers.CreateHTTPServer(s.log.Named("HTTP"), *authCfg, bus)
+	// Selective registration: only expose routes whose dependencies are
+	// satisfied in embedded mode. Skips: system (except /healthcheck),
+	// IPFS, /v1/chats/*, and auth agent management — all would crash on
+	// nil ethRPC, sysConfig, ipfsManager, chatStorage, or AuthStorage.
+	safeProxy := &embeddedProxyRoutes{ctrl: proxyCtrl, auth: *authCfg}
+	healthOnly := &embeddedHealthRoute{ctrl: sysCtrl}
+	ginEngine := httphandlers.CreateHTTPServer(s.log.Named("HTTP"), *authCfg,
+		blockchainCtrl, walletCtrl, safeProxy, healthOnly,
+	)
 
 	srv := &http.Server{Addr: address, Handler: ginEngine}
 
@@ -161,6 +166,37 @@ func (s *SDK) HTTPServerAddr() string {
 	s.httpSrvMu.Lock()
 	defer s.httpSrvMu.Unlock()
 	return s.httpSrvAddr
+}
+
+// --- Selective route wrappers for embedded mode ---
+
+// embeddedProxyRoutes registers only the proxy routes that don't require
+// ipfsManager, chatStorage, or other nil dependencies.
+type embeddedProxyRoutes struct {
+	ctrl *proxyapi.ProxyController
+	auth system.HTTPAuthConfig
+}
+
+func (e *embeddedProxyRoutes) RegisterRoutes(r interfaces.Router) {
+	r.POST("/proxy/provider/ping", e.ctrl.Ping)
+	r.POST("/proxy/sessions/initiate", e.auth.CheckAuth("initiate_session"), e.ctrl.InitiateSession)
+	r.POST("/v1/chat/completions", e.auth.CheckAuth("chat"), e.ctrl.Prompt)
+	r.GET("/v1/models", e.auth.CheckAuth("get_local_models"), e.ctrl.Models)
+	r.GET("/v1/agents", e.auth.CheckAuth("get_local_agents"), e.ctrl.Agents)
+	r.GET("/v1/agents/tools", e.auth.CheckAuth("get_agent_tools"), e.ctrl.GetAgentTools)
+	r.POST("/v1/agents/tools", e.auth.CheckAuth("call_agent_tool"), e.ctrl.CallAgentTool)
+	r.POST("/v1/audio/transcriptions", e.auth.CheckAuth("audio_transcription"), e.ctrl.AudioTranscription)
+	r.POST("/v1/audio/speech", e.auth.CheckAuth("audio_speech"), e.ctrl.AudioSpeech)
+	r.POST("/v1/embeddings", e.auth.CheckAuth("embeddings"), e.ctrl.Embeddings)
+}
+
+// embeddedHealthRoute registers only /healthcheck from the system controller.
+type embeddedHealthRoute struct {
+	ctrl *system.SystemController
+}
+
+func (e *embeddedHealthRoute) RegisterRoutes(r interfaces.Router) {
+	r.GET("/healthcheck", e.ctrl.HealthCheck)
 }
 
 // --- No-op implementations for dependencies not available in embedded mode ---
