@@ -2,7 +2,12 @@ package mobile
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -26,8 +31,10 @@ import (
 // address is "host:port", e.g. "127.0.0.1:8082" or "0.0.0.0:8082".
 // publicURL sets the Swagger "Try it out" host for CORS (e.g. "http://192.168.1.42:8082").
 // If empty, defaults to "http://<address>".
+// adminUser and adminPass enable HTTP Basic Auth on protected routes. If both are
+// non-empty, auth is enforced; if both are empty, all routes are open (legacy behavior).
 // Call StopHTTPServer to shut it down.
-func (s *SDK) StartHTTPServer(address, publicURL string) error {
+func (s *SDK) StartHTTPServer(address, publicURL, adminUser, adminPass string) error {
 	s.httpSrvMu.Lock()
 	defer s.httpSrvMu.Unlock()
 
@@ -47,7 +54,29 @@ func (s *SDK) StartHTTPServer(address, publicURL string) error {
 	}
 
 	authCfg := &system.HTTPAuthConfig{
+		AuthEntries:      make(map[string]*system.HTTPAuthEntry),
+		Whitelists:       make(map[string][]string),
 		WhitelistDefault: true,
+	}
+
+	if adminUser != "" && adminPass != "" {
+		saltBytes := make([]byte, 16)
+		if _, err := io.ReadFull(rand.Reader, saltBytes); err != nil {
+			return fmt.Errorf("generate auth salt: %w", err)
+		}
+		saltHex := hex.EncodeToString(saltBytes)
+		h := hmac.New(sha256.New, saltBytes)
+		h.Write([]byte(adminPass))
+		hashHex := hex.EncodeToString(h.Sum(nil))
+
+		authCfg.AuthEntries[adminUser] = &system.HTTPAuthEntry{
+			Username: adminUser,
+			Salt:     saltHex,
+			Hash:     hashHex,
+		}
+		authCfg.Whitelists[adminUser] = []string{"*"}
+		authCfg.WhitelistDefault = false
+		s.log.Infof("Expert API auth enabled for user %q", adminUser)
 	}
 
 	blockchainCtrl := blockchainapi.NewBlockchainController(s.blockchain, *authCfg, s.log.Named("BLOCKCHAIN-API"))
