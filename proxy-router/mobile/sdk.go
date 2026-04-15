@@ -918,8 +918,9 @@ func (s *SDK) GetUnclosedUserSessionsJSON(ctx context.Context) (string, error) {
 // --- Chat ---
 
 // StreamCallback receives streaming chunks from a chat completion.
-// text is the content delta, isLast is true on the final chunk.
-type StreamCallback func(text string, isLast bool) error
+// text is the content delta (or reasoning delta when isThinking is true),
+// isLast is true on the final chunk.
+type StreamCallback func(text string, isThinking bool, isLast bool) error
 
 // SendPrompt sends a chat completion request over an active session.
 // If stream is true, the provider may return SSE chunks; otherwise a single JSON completion.
@@ -947,13 +948,21 @@ func (s *SDK) SendPromptWithMessages(ctx context.Context, sessionID string, mess
 		if errResp != nil {
 			return fmt.Errorf("provider error: %v", errResp.ProviderModelError)
 		}
-		// Match HTTP /v1/chat/completions: [DONE] is ChunkTypeControl (still "streaming" on the chunk).
 		if chunk.Type() == gcs.ChunkTypeControl {
-			return cb("", true)
+			return cb("", false, true)
 		}
-		text := chunk.String()
 		isLast := !chunk.IsStreaming()
-		return cb(text, isLast)
+		text := chunk.String()
+		reasoning := extractReasoningContent(chunk)
+		if reasoning != "" {
+			if err := cb(reasoning, true, false); err != nil {
+				return err
+			}
+		}
+		if text != "" || (reasoning == "" && isLast) {
+			return cb(text, false, isLast)
+		}
+		return nil
 	}
 
 	_, err := s.proxySender.SendPromptV2(ctx, id, req, internalCB)
@@ -1011,14 +1020,23 @@ func (s *SDK) SendPromptWithMessagesAndParams(ctx context.Context, sessionID str
 			return fmt.Errorf("provider error: %v", errResp.ProviderModelError)
 		}
 		if chunk.Type() == gcs.ChunkTypeControl {
-			return cb("", true)
+			return cb("", false, true)
 		}
 
 		lastChunkData = chunk.Data()
 
-		text := chunk.String()
 		isLast := !chunk.IsStreaming()
-		return cb(text, isLast)
+		text := chunk.String()
+		reasoning := extractReasoningContent(chunk)
+		if reasoning != "" {
+			if err := cb(reasoning, true, false); err != nil {
+				return err
+			}
+		}
+		if text != "" || (reasoning == "" && isLast) {
+			return cb(text, false, isLast)
+		}
+		return nil
 	}
 
 	_, err := s.proxySender.SendPromptV2(ctx, id, req, internalCB)
@@ -1083,4 +1101,14 @@ func bigIntStr(b *lib.BigInt) string {
 		return "0"
 	}
 	return b.String()
+}
+
+// extractReasoningContent returns reasoning_content from a streaming chunk.
+// Uses the typed accessor on ChunkStreaming which reads from the preserved
+// original JSON — no re-marshaling, no side effects on the chunk state.
+func extractReasoningContent(chunk gcs.Chunk) string {
+	if cs, ok := chunk.(*gcs.ChunkStreaming); ok {
+		return cs.ReasoningContent()
+	}
+	return ""
 }
