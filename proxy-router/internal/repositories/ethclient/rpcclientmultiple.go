@@ -225,7 +225,15 @@ func shouldRetryRPCError(err error) bool {
 		strings.Contains(msg, "too many requests") ||
 		strings.Contains(msg, "rate limit") ||
 		strings.Contains(msg, "over rate limit") ||
-		strings.Contains(msg, "-32016") {
+		strings.Contains(msg, "usage limit") || // 1rpc.io free tier: "You've reached the usage limit for your current plan..."
+		strings.Contains(msg, "quota exceeded") || // Alchemy / generic
+		strings.Contains(msg, "request limit") || // Infura-style phrasing
+		strings.Contains(msg, "daily limit") || // BlockPi / drpc
+		strings.Contains(msg, "monthly limit") ||
+		strings.Contains(msg, "please upgrade") || // catches vendor upsell pages that are really quota walls
+		strings.Contains(msg, "-32016") ||
+		strings.Contains(msg, "-32005") || // Alchemy: rate limit
+		strings.Contains(msg, "-32097") { // publicnode / generic "too busy"
 		return true
 	}
 	// Cloudflare / HTML error bodies, 403 text without typed HTTPError
