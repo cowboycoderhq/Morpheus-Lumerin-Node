@@ -294,3 +294,92 @@ export const VideoContainer = styled.div`
 export const SubPriceLabel = styled.span`
   color: ${(p) => p.theme.colors.morMain};
 `;
+
+export const AudioInputZone = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+
+  &[data-disabled='true'] {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+`;
+
+export const AudioActionBtn = styled.button`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid ${(p) => p.theme.colors.morMain};
+  background: transparent;
+  color: ${(p) => p.theme.colors.morMain};
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+
+  &:hover {
+    background: rgba(32, 220, 142, 0.12);
+  }
+
+  &[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &[data-recording='true'] {
+    border-color: #ff5b5b;
+    color: #ff5b5b;
+    background: rgba(255, 91, 91, 0.12);
+  }
+`;
+
+export const AudioHint = styled.span`
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+`;
+
+export const TtsControlsRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 0 16px 10px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+
+  label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+  }
+
+  select,
+  input[type='text'] {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 6px;
+    color: white;
+    padding: 4px 8px;
+    font-size: 13px;
+  }
+
+  select:focus,
+  input:focus {
+    outline: none !important;
+    border-color: ${(p) => p.theme.colors.morMain};
+  }
+`;
+
+export const AudioPlayer = styled.audio`
+  width: 320px;
+  max-width: 100%;
+  margin-top: 4px;
+`;
