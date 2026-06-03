@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 // import component 👇
 import Drawer from 'react-modern-drawer';
-import { IconHistory, IconArrowUp, IconMessagePlus } from '@tabler/icons-react';
+import {
+  IconHistory,
+  IconArrowUp,
+  IconMessagePlus,
+  IconShieldLock,
+  IconUpload,
+  IconMicrophone,
+  IconPlayerStopFilled,
+} from '@tabler/icons-react';
 import {
   View,
   ContainerTitle,
@@ -26,6 +34,11 @@ import {
   ChatIntroButton,
   SendBtnWrapper,
   Btn,
+  AudioInputZone,
+  AudioActionBtn,
+  AudioHint,
+  TtsControlsRow,
+  AudioPlayer,
 } from './Chat.styles';
 import { BtnAccent } from '../dashboard/BalanceBlock.styles';
 import withChatState from '../../store/hocs/withChatState';
@@ -43,6 +56,9 @@ import {
   getColor,
   isClosed,
   generateHashId,
+  isSecureModel,
+  SECURE_BADGE_TOOLTIP,
+  getModelModality,
 } from './utils';
 import { Cooldown } from './Cooldown';
 import ImageViewer from 'react-simple-image-viewer';
@@ -53,6 +69,20 @@ import { ApiGateway } from 'src/main/src/client/apiGateway';
 let abort = false;
 let cancelScroll = false;
 const userMessage = { user: 'Me', role: 'user', icon: 'M', color: '#20dc8e' };
+
+// Common TTS voice presets. Names are backend-specific (Kokoro `af_*`,
+// OpenAI `alloy`/`nova`/...), so the field also accepts free-text input.
+const TTS_VOICES = [
+  'af_bella',
+  'af_alloy',
+  'af_sky',
+  'af_nicole',
+  'am_adam',
+  'am_michael',
+  'alloy',
+  'nova',
+  'shimmer',
+];
 
 type ChatProps = {
   client: ApiGateway;
@@ -116,8 +146,21 @@ const Chat = (props: ChatProps) => {
 
   const [chat, setChat] = useState<ChatData | undefined>(undefined);
 
+  // TTS controls + STT recording state
+  const [ttsVoice, setTtsVoice] = useState('af_bella');
+  const [ttsSpeed, setTtsSpeed] = useState(1);
+  const [recording, setRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const peakLevelRef = useRef<number>(0);
+  const levelRafRef = useRef<number | null>(null);
+
   const modelName = selectedModel?.Name || 'Model';
   const isLocal = chat?.isLocal;
+  const isSecure = isSecureModel(selectedModel);
+  const modality = getModelModality(selectedModel);
 
   const providerAddress = isLocal
     ? '(local)'
@@ -391,33 +434,64 @@ const Chat = (props: ChatProps) => {
       }
 
       const model = chainData.models.find((m) => m.Id == history.modelId);
-      history.messages.forEach((m) => {
-        const modelName = model.Name || 'Model';
+      const modelName = model?.Name || 'Model';
+      const aiIcon = modelName.toUpperCase()[0];
+      const aiColor = getColor(aiIcon);
 
-        const aiIcon = modelName.toUpperCase()[0];
-        const aiColor = getColor(aiIcon);
+      (history.messages || []).forEach((m: any) => {
+        const prompt = m?.prompt || {};
+        // Prompt shape differs by modality:
+        //  - LLM/chat: { messages: [{ content }] }
+        //  - TTS:      { input: '...' } (audio response is not stored replayably)
+        //  - STT:      audio request (no messages); response is the transcript,
+        //              flagged with isAudioContent on the stored message.
+        const isChatPrompt =
+          Array.isArray(prompt.messages) && prompt.messages.length > 0;
+        const isTtsPrompt =
+          !isChatPrompt && typeof prompt.input === 'string';
+        const isSttMessage = !isChatPrompt && !isTtsPrompt && !!m.isAudioContent;
+
+        let userText: string;
+        if (isChatPrompt) {
+          userText = prompt.messages[0]?.content ?? '';
+        } else if (isTtsPrompt) {
+          userText = prompt.input;
+        } else if (isSttMessage) {
+          // The uploaded/recorded audio is not retained in a replayable form.
+          userText = prompt.Prompt || prompt.prompt || '🎤 Audio input';
+        } else {
+          userText = '';
+        }
 
         messages.push({
           id: makeId(16),
-          text: m.prompt.messages[0].content,
+          text: userText,
           user: userMessage.user,
           role: userMessage.role,
           icon: userMessage.icon,
           color: userMessage.color,
         });
-        messages.push({
+
+        const assistant: HistoryMessage = {
           id: makeId(16),
           text: m.response,
           user: modelName,
           role: 'assistant',
           icon: aiIcon,
           color: aiColor,
-          isImageContent: m.isImageContent,
-          isVideoRawContent: m.isVideoRawContent,
-        });
+        };
+        if (isTtsPrompt) {
+          // Synthesized audio is not persisted in a replayable form.
+          assistant.text = '[Audio response — replay is not available from history]';
+        } else if (!isSttMessage) {
+          assistant.isImageContent = m.isImageContent;
+          assistant.isVideoRawContent = m.isVideoRawContent;
+        }
+        messages.push(assistant);
       });
       setMessages(messages);
     } catch (e) {
+      console.error('Failed to load chat history', e);
       props.toasts.toast('error', 'Failed to load chat history');
     }
   };
@@ -718,6 +792,222 @@ const Chat = (props: ChatProps) => {
     return memoState;
   };
 
+  const buildAudioHeaders = async () => {
+    const headers: Record<string, string> = {};
+    if (isLocal) {
+      headers['model_id'] = selectedModel.Id;
+    } else {
+      headers['session_id'] = activeSession.Id;
+    }
+    if (chat?.id) {
+      headers['chat_id'] = chat.id;
+    }
+    const authHeaders = await props.client.getAuthHeaders();
+    return { ...headers, ...authHeaders };
+  };
+
+  const audioIconProps = () => {
+    const icon = modelName.toUpperCase()[0];
+    return {
+      icon,
+      color: getColor(icon),
+      user: modelName,
+      role: 'assistant',
+    };
+  };
+
+  // TTS: text in -> synthesized audio out
+  const callSpeech = async (text: string) => {
+    const userText = { id: makeId(16), text, ...userMessage };
+    let memoState = [...messages, userText];
+    setMessages(memoState);
+    scrollToBottom();
+
+    try {
+      const headers = await buildAudioHeaders();
+      const response = await fetch(
+        `${props.config.chain.localProxyRouterUrl}/v1/audio/speech`,
+        {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            input: text,
+            voice: ttsVoice,
+            response_format: 'mp3',
+            speed: Number(ttsSpeed),
+          }),
+        },
+      );
+
+      if (!response || !response.ok) {
+        props.toasts.toast('error', 'Failed to synthesize speech');
+        return memoState;
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      memoState = [
+        ...memoState,
+        { id: makeId(16), text: url, isAudioContent: true, ...audioIconProps() },
+      ];
+      setMessages(memoState);
+      scrollToBottom();
+    } catch (e) {
+      props.toasts.toast('error', 'Something goes wrong. Try later.');
+      console.error(e);
+    }
+    return memoState;
+  };
+
+  // STT: audio in -> transcription text out
+  const callTranscription = async (file: File) => {
+    const userAudioUrl = URL.createObjectURL(file);
+    let memoState = [
+      ...messages,
+      {
+        id: makeId(16),
+        text: userAudioUrl,
+        isAudioContent: true,
+        ...userMessage,
+      },
+    ];
+    setMessages(memoState);
+    scrollToBottom();
+
+    if (messages.length === 0 && chat) {
+      setChatsData([...chatData, { ...chat, title: file.name || 'Transcription' }]);
+    }
+
+    try {
+      const headers = await buildAudioHeaders();
+      const form = new FormData();
+      form.append('file', file);
+      form.append('response_format', 'json');
+
+      // NB: do not set Content-Type; the browser adds the multipart boundary.
+      const response = await fetch(
+        `${props.config.chain.localProxyRouterUrl}/v1/audio/transcriptions`,
+        {
+          method: 'POST',
+          headers,
+          body: form,
+        },
+      );
+
+      if (!response || !response.ok) {
+        props.toasts.toast('error', 'Failed to transcribe audio');
+        return memoState;
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      let transcript = '';
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        transcript = data?.text ?? JSON.stringify(data);
+      } else {
+        transcript = await response.text();
+      }
+
+      memoState = [
+        ...memoState,
+        { id: makeId(16), text: transcript, ...audioIconProps() },
+      ];
+      setMessages(memoState);
+      scrollToBottom();
+    } catch (e) {
+      props.toasts.toast('error', 'Something goes wrong. Try later.');
+      console.error(e);
+    }
+    return memoState;
+  };
+
+  const handleAudioFile = (file?: File | null) => {
+    if (!file || isDisabled) {
+      return;
+    }
+    setIsSpinning(true);
+    callTranscription(file).finally(() => setIsSpinning(false));
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      // Detect a silent/muted input (e.g. macOS handing us a denied mic track):
+      // sample the peak amplitude while recording so we can warn the user
+      // instead of submitting silence that transcribes to garbage.
+      peakLevelRef.current = 0;
+      try {
+        const AudioCtx =
+          window.AudioContext || (window as any).webkitAudioContext;
+        const audioContext = new AudioCtx();
+        audioContextRef.current = audioContext;
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        const data = new Uint8Array(analyser.fftSize);
+        const sampleLevel = () => {
+          analyser.getByteTimeDomainData(data);
+          let peak = 0;
+          for (let i = 0; i < data.length; i++) {
+            peak = Math.max(peak, Math.abs(data[i] - 128));
+          }
+          peakLevelRef.current = Math.max(peakLevelRef.current, peak);
+          levelRafRef.current = requestAnimationFrame(sampleLevel);
+        };
+        sampleLevel();
+      } catch (levelErr) {
+        console.warn('Could not set up audio level monitoring', levelErr);
+      }
+
+      audioChunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (levelRafRef.current != null) {
+          cancelAnimationFrame(levelRafRef.current);
+          levelRafRef.current = null;
+        }
+        audioContextRef.current?.close().catch(() => {});
+        audioContextRef.current = null;
+
+        // Peak is 0..127 (deviation from the 128 silence midpoint). A few
+        // counts of jitter is still effectively silence.
+        if (peakLevelRef.current <= 2) {
+          props.toasts.toast(
+            'error',
+            'No sound was captured. Check microphone permissions and that the correct input device is selected.',
+          );
+          return;
+        }
+
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const file = new File([blob], `recording-${Date.now()}.webm`, {
+          type: 'audio/webm',
+        });
+        handleAudioFile(file);
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+    } catch (e) {
+      props.toasts.toast('error', 'Microphone access was denied');
+      console.error(e);
+    }
+  };
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
+    setRecording(false);
+  };
+
   const handleSystemMessage = (message) => {
     const openSessionEventMessage = 'new session opened';
     const failoverTurnOnMessage = 'provider failed, failover enabled';
@@ -765,7 +1055,8 @@ const Chat = (props: ChatProps) => {
     }
 
     setIsSpinning(true);
-    call(promptInput).finally(() => setIsSpinning(false));
+    const request = modality === 'tts' ? callSpeech(promptInput) : call(promptInput);
+    request.finally(() => setIsSpinning(false));
     setPromptInput('');
   };
 
@@ -970,6 +1261,27 @@ const Chat = (props: ChatProps) => {
               {modelName.toUpperCase()[0]}
             </Avatar>
             <div style={{ marginLeft: '10px' }}>{modelName}</div>
+            {isSecure && (
+              <span
+                title={SECURE_BADGE_TOOLTIP}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  marginLeft: '10px',
+                  padding: '2px 8px 2px 6px',
+                  fontSize: '1.1rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.3px',
+                  color: 'rgba(173, 211, 255, 0.95)',
+                  background: 'rgba(125, 188, 255, 0.14)',
+                  borderRadius: '6px',
+                  cursor: 'default',
+                }}
+              >
+                <IconShieldLock size={13} stroke={2.2} /> Secure
+              </span>
+            )}
           </ChatAvatar>
           {/* {
                         (selectedBid || isLocal) && <div>
@@ -999,52 +1311,130 @@ const Chat = (props: ChatProps) => {
         <Container>
           {renderChatBlock()}
           <Control>
-            <CustomTextArrea
-              disabled={isDisabled}
-              onKeyPress={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleSubmit();
-                }
-              }}
-              value={promptInput}
-              onChange={(ev) => setPromptInput(ev.target.value)}
-              placeholder={
-                isReadonly
-                  ? 'Session is closed. Chat in ReadOnly Mode'
-                  : 'Ask me anything...'
-              }
-              minRows={1}
-              maxRows={6}
-            />
-            <SendBtnWrapper>
-              {isReadonly ? (
-                <>
-                  <Btn onClick={() => handleReopen(false)}>
-                    {isSpinning ? (
-                      <Spinner animation="border" />
-                    ) : (
-                      <span>Staking</span>
-                    )}
-                  </Btn>
-                  <Btn onClick={() => handleReopen(true)}>
-                    {isSpinning ? (
-                      <Spinner animation="border" />
-                    ) : (
-                      <span>Direct Pay</span>
-                    )}
-                  </Btn>
-                </>
-              ) : (
-                <Btn disabled={isDisabled} onClick={handleSubmit}>
-                  {isSpinning ? (
-                    <Spinner animation="border" />
+            {modality === 'stt' && !isReadonly ? (
+              <AudioInputZone data-disabled={isDisabled}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="audio/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    handleAudioFile(e.target.files?.[0]);
+                    e.target.value = '';
+                  }}
+                />
+                <AudioActionBtn
+                  type="button"
+                  disabled={isDisabled || isSpinning || recording}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <IconUpload size={16} /> Upload audio
+                </AudioActionBtn>
+                <AudioActionBtn
+                  type="button"
+                  data-recording={recording}
+                  disabled={isDisabled || isSpinning}
+                  onClick={() => (recording ? stopRecording() : startRecording())}
+                >
+                  {recording ? (
+                    <>
+                      <IconPlayerStopFilled size={16} /> Stop
+                    </>
                   ) : (
-                    <IconArrowUp size={'26px'}></IconArrowUp>
+                    <>
+                      <IconMicrophone size={16} /> Record
+                    </>
                   )}
-                </Btn>
-              )}
-            </SendBtnWrapper>
+                </AudioActionBtn>
+                {isSpinning && <Spinner animation="border" size="sm" />}
+                <AudioHint>
+                  {recording
+                    ? 'Recording… click Stop to transcribe.'
+                    : 'Upload or record audio to transcribe.'}
+                </AudioHint>
+              </AudioInputZone>
+            ) : (
+              <>
+                {modality === 'tts' && !isReadonly && (
+                  <TtsControlsRow>
+                    <label>
+                      Voice
+                      <input
+                        type="text"
+                        list="tts-voices"
+                        value={ttsVoice}
+                        onChange={(e) => setTtsVoice(e.target.value)}
+                      />
+                      <datalist id="tts-voices">
+                        {TTS_VOICES.map((v) => (
+                          <option key={v} value={v} />
+                        ))}
+                      </datalist>
+                    </label>
+                    <label>
+                      Speed
+                      <input
+                        type="range"
+                        min={0.5}
+                        max={2}
+                        step={0.25}
+                        value={ttsSpeed}
+                        onChange={(e) => setTtsSpeed(Number(e.target.value))}
+                      />
+                      {ttsSpeed}x
+                    </label>
+                  </TtsControlsRow>
+                )}
+                <CustomTextArrea
+                  disabled={isDisabled}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSubmit();
+                    }
+                  }}
+                  value={promptInput}
+                  onChange={(ev) => setPromptInput(ev.target.value)}
+                  placeholder={
+                    isReadonly
+                      ? 'Session is closed. Chat in ReadOnly Mode'
+                      : modality === 'tts'
+                        ? 'Enter text to synthesize...'
+                        : 'Ask me anything...'
+                  }
+                  minRows={1}
+                  maxRows={6}
+                />
+                <SendBtnWrapper>
+                  {isReadonly ? (
+                    <>
+                      <Btn onClick={() => handleReopen(false)}>
+                        {isSpinning ? (
+                          <Spinner animation="border" />
+                        ) : (
+                          <span>Staking</span>
+                        )}
+                      </Btn>
+                      <Btn onClick={() => handleReopen(true)}>
+                        {isSpinning ? (
+                          <Spinner animation="border" />
+                        ) : (
+                          <span>Direct Pay</span>
+                        )}
+                      </Btn>
+                    </>
+                  ) : (
+                    <Btn disabled={isDisabled} onClick={handleSubmit}>
+                      {isSpinning ? (
+                        <Spinner animation="border" />
+                      ) : (
+                        <IconArrowUp size={'26px'}></IconArrowUp>
+                      )}
+                    </Btn>
+                  )}
+                </SendBtnWrapper>
+              </>
+            )}
           </Control>
         </Container>
       </View>
@@ -1063,6 +1453,14 @@ const Chat = (props: ChatProps) => {
 };
 
 const renderMessage = (message, onOpenImage) => {
+  if (message.isAudioContent) {
+    return (
+      <MessageBody>
+        <AudioPlayer controls src={message.text} />
+      </MessageBody>
+    );
+  }
+
   if (message.isImageContent) {
     return (
       <MessageBody>

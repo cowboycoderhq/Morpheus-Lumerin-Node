@@ -11,9 +11,11 @@ import {
   IconHome,
   IconWorld,
   IconShieldLock,
+  IconInfoCircle,
 } from '@tabler/icons-react';
 import Modal from '../../contracts/modals/Modal';
 import ModelRow from './ModelRow';
+import { isSecureModel, SECURE_MODE_INFO } from '../utils';
 
 /* The shared outer modal `Body` (in CreateContractModal.styles) bakes in
    `padding: 5rem` and never sets `overflow: hidden`, so an `auto`-height box
@@ -196,6 +198,43 @@ const SectionHint = styled.span`
   text-transform: none;
 `;
 
+const InfoToggle = styled.button`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 2px 6px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: rgba(173, 211, 255, 0.95);
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  text-transform: none;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(125, 188, 255, 0.12);
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgba(125, 188, 255, 0.5);
+    outline-offset: 2px;
+  }
+`;
+
+const InfoPanel = styled.div`
+  margin-bottom: 0.9rem;
+  padding: 1rem 1.2rem;
+  border: 1px solid rgba(125, 188, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(125, 188, 255, 0.08);
+  color: rgba(214, 232, 255, 0.92);
+  font-size: 1.2rem;
+  line-height: 1.5;
+`;
+
 const EmptyState = styled.div`
   padding: 5rem 2rem;
   text-align: center;
@@ -212,14 +251,13 @@ const FILTERS: { id: FilterId; label: string; modality?: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'llm', label: 'LLM', modality: 'llm' },
   { id: 'embeddings', label: 'Embeddings', modality: 'embeddings' },
-  { id: 'tts', label: 'TTS', modality: 'tts' },
-  { id: 'stt', label: 'STT', modality: 'stt' },
-  { id: 'tee', label: 'TEE' },
+  { id: 'tts', label: 'Text-to-Speech', modality: 'tts' },
+  { id: 'stt', label: 'Speech-to-Text', modality: 'stt' },
+  { id: 'tee', label: 'Secure' },
   { id: 'local', label: 'Local' },
 ];
 
-const isTee = (m: any) =>
-  (m?.Tags || []).some((t: any) => String(t).toLowerCase() === 'tee');
+const isTee = (m: any) => isSecureModel(m);
 
 function hasModality(tags: any[] = [], modality: string) {
   return tags.some((t: any) => String(t).toLowerCase() === modality);
@@ -244,6 +282,7 @@ const ModelSelectionModal = ({
 }: any) => {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterId>('all');
+  const [showTeeInfo, setShowTeeInfo] = useState(false);
 
   // Annotate each model with `isOnline` (true for local, otherwise derived
   // from provider availability checks). Sort online first within each section.
@@ -358,6 +397,7 @@ const ModelSelectionModal = ({
       onClose={() => {
         setSearch('');
         setFilter('all');
+        setShowTeeInfo(false);
         handleClose();
       }}
       bodyProps={bodyProps}
@@ -452,9 +492,18 @@ const ModelSelectionModal = ({
             <Section>
               <SectionLabel>
                 <IconShieldLock size={13} stroke={2} />
-                TEE&nbsp;
+                Secure&nbsp;
                 <SectionHint>(Trusted Execution Environment)</SectionHint>
+                <InfoToggle
+                  type="button"
+                  aria-expanded={showTeeInfo}
+                  onClick={() => setShowTeeInfo((v) => !v)}
+                >
+                  <IconInfoCircle size={13} stroke={2} />
+                  What is this?
+                </InfoToggle>
               </SectionLabel>
+              {showTeeInfo && <InfoPanel>{SECURE_MODE_INFO}</InfoPanel>}
               <SectionList>
                 {teeModels.map((m: any) => (
                   <ModelRow

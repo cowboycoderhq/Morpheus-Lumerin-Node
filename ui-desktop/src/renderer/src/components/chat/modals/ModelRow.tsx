@@ -12,7 +12,7 @@ import {
   IconHome,
   IconShieldLock,
 } from '@tabler/icons-react';
-import { formatSmallNumber } from '../utils';
+import { formatSmallNumber, SECURE_TAG, SECURE_BADGE_TOOLTIP } from '../utils';
 
 type IconCmp = React.ComponentType<any>;
 
@@ -21,8 +21,8 @@ type IconCmp = React.ComponentType<any>;
 const MODALITY: Record<string, { label: string; Icon: IconCmp }> = {
   llm: { label: 'LLM', Icon: IconMessage },
   chat: { label: 'LLM', Icon: IconMessage },
-  tts: { label: 'TTS', Icon: IconHeadphones },
-  stt: { label: 'STT', Icon: IconMicrophone },
+  tts: { label: 'Text-to-Speech', Icon: IconHeadphones },
+  stt: { label: 'Speech-to-Text', Icon: IconMicrophone },
   embeddings: { label: 'Embeddings', Icon: IconVector },
   embedding: { label: 'Embeddings', Icon: IconVector },
   image: { label: 'Image', Icon: IconPhoto },
@@ -222,7 +222,7 @@ function classifyTags(rawTags: string[] = [], modelName: string = '') {
     const lower = tag.toLowerCase().trim();
     if (!lower) continue;
     // TEE is a security attribute, not a family tag — surface separately.
-    if (lower === 'tee') {
+    if (lower === SECURE_TAG) {
       hasTee = true;
       continue;
     }
@@ -329,9 +329,9 @@ function ModelRow(props: {
             </Pill>
           ))}
           {hasTee && (
-            <TeePill title="Runs in a Trusted Execution Environment">
+            <TeePill title={SECURE_BADGE_TOOLTIP}>
               <IconShieldLock size={11} stroke={2.2} />
-              TEE
+              Secure
             </TeePill>
           )}
           {!isLocal && providerCount > 1 && (
