@@ -1,5 +1,42 @@
 export const isClosed = (item) => item.ClosedAt || (new Date().getTime() > item.EndsAt * 1000);
 
+// On-chain tag that marks a model as running inside a Trusted Execution Environment (TEE).
+// Mirrors the backend IsTeeModel() check in proxy-router/internal/blockchainapi/model_tags.go.
+export const SECURE_TAG = 'tee';
+
+export const isSecureModel = (model) =>
+    Array.isArray(model?.Tags) &&
+    model.Tags.some((t) => String(t).toLowerCase().trim() === SECURE_TAG);
+
+// Plain-language copy explaining the TEE feature to non-technical users.
+// Accuracy-checked against docs/concepts/tee-overview.mdx — do not over-claim.
+export const SECURE_BADGE_TOOLTIP =
+    'Secure: this model runs inside a Trusted Execution Environment (TEE) — hardware-isolated, encrypted memory. Your prompts are processed privately and the provider is cryptographically prevented from logging or storing them.';
+
+export const SECURE_MODE_INFO =
+    "Secure models run inside a Trusted Execution Environment (TEE). When you chat with one, your node automatically verifies the provider's software at session open and on every prompt — confirming chat storage is off and prompts can't be logged. It verifies the software, not the quality of the answer. Models without this label have no such guarantee.";
+
+// Maps on-chain model tags to an interaction modality. Mirrors the backend
+// DetectModelType() synonym lists in proxy-router/internal/blockchainapi/model_tags.go.
+export const MODALITY_TAGS = {
+    stt: ['stt', 'transcribe', 's2t', 'speech', 'speech-to-text', 'speech2text'],
+    tts: ['tts', 'text-to-speech', 'text2speech', 't2s'],
+    embedding: ['embedding', 'embeddings'],
+    llm: ['llm', 'textgeneration', 'text2text', 'text-to-text', 't2t'],
+};
+
+// Returns 'stt' | 'tts' | 'embedding' | 'llm' for a model. LLM is the default
+// when no recognised modality tag is present.
+export const getModelModality = (model) => {
+    const tags = (model?.Tags || []).map((t) => String(t).toLowerCase().trim());
+    for (const k of ['stt', 'tts', 'embedding']) {
+        if (tags.some((t) => MODALITY_TAGS[k].includes(t))) {
+            return k;
+        }
+    }
+    return 'llm';
+};
+
 export const makeId = (length) => {
     let result = '';
     const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';

@@ -21,10 +21,16 @@ function Modal({ children, onClose, bodyProps }) {
   };
 
   const wrapClose = (e, force) => {
-    if (
-      (!force && ignoreBackdropClickRef.current) ||
-      e.target !== e.currentTarget
-    ) {
+    // `force` is the explicit close button. It must always close, regardless
+    // of the backdrop guards below (the click target is the inner X icon, not
+    // the button itself, so the `e.target !== e.currentTarget` check would
+    // otherwise swallow it).
+    if (force) {
+      ignoreBackdropClickRef.current = false;
+      onClose();
+      return;
+    }
+    if (ignoreBackdropClickRef.current || e.target !== e.currentTarget) {
       ignoreBackdropClickRef.current = false;
       return;
     }
