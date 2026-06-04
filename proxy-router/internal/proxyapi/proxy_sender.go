@@ -842,8 +842,11 @@ func (p *ProxyServiceSender) rpcRequestStreamV2(
 
 	retryCount := 0
 
-	// Track accumulated content for streaming token calculation
+	// Track accumulated content for streaming token calculation. Reasoning
+	// ("thinking") tokens are accumulated separately and folded into
+	// completion_tokens so they are billed like regular output tokens.
 	var accumulatedContent strings.Builder
+	var accumulatedReasoning strings.Builder
 
 	for {
 		if ctx.Err() != nil {
@@ -962,7 +965,7 @@ func (p *ProxyServiceSender) rpcRequestStreamV2(
 		}
 
 		// Process the AI response based on the request type
-		result, tokens, shouldStop, err := p.processAIResponse(requestType, aiResponse, responses, promptTokens, &accumulatedContent)
+		result, tokens, shouldStop, err := p.processAIResponse(requestType, aiResponse, responses, promptTokens, &accumulatedContent, &accumulatedReasoning)
 		if err != nil {
 			return nil, ttftMs, inputTokens, outputTokens, err
 		}
@@ -987,14 +990,14 @@ func (p *ProxyServiceSender) rpcRequestStreamV2(
 }
 
 // processAIResponse handles different response types and returns the appropriate chunk
-func (p *ProxyServiceSender) processAIResponse(requestType string, aiResponse []byte, responses []interface{}, promptTokens int, accumulatedContent *strings.Builder) (gcs.Chunk, int, bool, error) {
+func (p *ProxyServiceSender) processAIResponse(requestType string, aiResponse []byte, responses []interface{}, promptTokens int, accumulatedContent *strings.Builder, accumulatedReasoning *strings.Builder) (gcs.Chunk, int, bool, error) {
 	switch requestType {
 	case "audio_transcription":
 		return p.handleAudioTranscription(aiResponse, responses)
 	case "audio_speech":
 		return p.handleAudioSpeech(aiResponse, responses)
 	case "chat_completion":
-		return p.handleChatCompletion(aiResponse, responses, promptTokens, accumulatedContent)
+		return p.handleChatCompletion(aiResponse, responses, promptTokens, accumulatedContent, accumulatedReasoning)
 	case "embeddings":
 		return p.handleEmbeddings(aiResponse, responses)
 	default:
@@ -1063,7 +1066,7 @@ func (p *ProxyServiceSender) handleAudioSpeech(aiResponse []byte, responses []in
 }
 
 // handleChatCompletion processes chat completion responses
-func (p *ProxyServiceSender) handleChatCompletion(aiResponse []byte, responses []interface{}, promptTokens int, accumulatedContent *strings.Builder) (gcs.Chunk, int, bool, error) {
+func (p *ProxyServiceSender) handleChatCompletion(aiResponse []byte, responses []interface{}, promptTokens int, accumulatedContent *strings.Builder, accumulatedReasoning *strings.Builder) (gcs.Chunk, int, bool, error) {
 	var controlMsg string
 	if err := json.Unmarshal(aiResponse, &controlMsg); err == nil && controlMsg == "[DONE]" {
 		chunk := gcs.NewChunkControl(controlMsg)
@@ -1089,6 +1092,8 @@ func (p *ProxyServiceSender) handleChatCompletion(aiResponse []byte, responses [
 		if hasChoices {
 			accumulatedContent.WriteString(streamResponse.Choices[0].Delta.Content)
 		}
+		// Accumulate reasoning ("thinking") delta, if any
+		accumulatedReasoning.WriteString(streamResponse.ReasoningContent())
 
 		// Check if this is the final chunk (has finish_reason or Usage data)
 		isFinalChunk := false
@@ -1099,10 +1104,11 @@ func (p *ProxyServiceSender) handleChatCompletion(aiResponse []byte, responses [
 			isFinalChunk = true
 		}
 
-		// On final chunk, calculate and add usage_from_consumer
+		// On final chunk, calculate and add usage_from_consumer. Reasoning
+		// tokens are counted as completion tokens.
 		usageTokens := 0
 		if isFinalChunk {
-			completionTokens := lib.CountTokens(accumulatedContent.String())
+			completionTokens := lib.CountTokens(accumulatedContent.String()) + lib.CountTokens(accumulatedReasoning.String())
 			lib.SetUsageFromConsumer(&streamResponse, promptTokens, completionTokens)
 			usageTokens = completionTokens
 		}
@@ -1117,12 +1123,13 @@ func (p *ProxyServiceSender) handleChatCompletion(aiResponse []byte, responses [
 	var chatResponse gcs.ChatCompletionResponseExtra
 	err = json.Unmarshal(aiResponse, &chatResponse)
 	if err == nil && len(chatResponse.Choices) > 0 && chatResponse.Object == "chat.completion" {
-		// Calculate completion tokens from the full response content
+		// Calculate completion tokens from the full response content.
+		// Reasoning ("thinking") tokens are counted as completion tokens.
 		completionContent := ""
 		if len(chatResponse.Choices) > 0 {
 			completionContent = chatResponse.Choices[0].Message.Content
 		}
-		completionTokens := lib.CountTokens(completionContent)
+		completionTokens := lib.CountTokens(completionContent) + lib.CountTokens(chatResponse.ReasoningContent())
 		lib.SetUsageFromConsumer(&chatResponse, promptTokens, completionTokens)
 
 		chunk := gcs.NewChunkText(&chatResponse)
