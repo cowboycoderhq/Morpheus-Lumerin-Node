@@ -181,8 +181,11 @@ func (s *ProxyReceiver) createCompletionCallback(
 	promptTokens int,
 	sendResponse SendResponse,
 ) genericchatstorage.CompletionCallback {
-	// Track accumulated content for streaming responses
+	// Track accumulated content for streaming responses. Reasoning ("thinking")
+	// tokens are accumulated separately and folded into completion_tokens so
+	// they are billed the same as regular output tokens.
 	var accumulatedContent strings.Builder
+	var accumulatedReasoning strings.Builder
 
 	return func(ctx context.Context, completion genericchatstorage.Chunk, aiEngineErrorResponse *genericchatstorage.AiEngineErrorResponse) error {
 		if aiEngineErrorResponse != nil {
@@ -225,6 +228,8 @@ func (s *ProxyReceiver) createCompletionCallback(
 					if len(data.Choices) > 0 {
 						accumulatedContent.WriteString(data.Choices[0].Delta.Content)
 					}
+					// Accumulate reasoning ("thinking") delta, if any
+					accumulatedReasoning.WriteString(streamChunk.ReasoningContent())
 
 					// Check if this is the final chunk (has finish_reason or Usage data)
 					isFinalChunk := false
@@ -235,9 +240,10 @@ func (s *ProxyReceiver) createCompletionCallback(
 						isFinalChunk = true
 					}
 
-					// On final chunk, calculate and update usage
+					// On final chunk, calculate and update usage. Reasoning tokens
+					// are counted as completion tokens.
 					if isFinalChunk {
-						completionTokens := lib.CountTokens(accumulatedContent.String())
+						completionTokens := lib.CountTokens(accumulatedContent.String()) + lib.CountTokens(accumulatedReasoning.String())
 						updateUsageInStreamResponse(data, promptTokens, completionTokens)
 						*inputTokens = promptTokens
 						*outputTokens = completionTokens
@@ -248,12 +254,13 @@ func (s *ProxyReceiver) createCompletionCallback(
 			// Non-streaming: handle full response
 			if textChunk, ok := completion.(*genericchatstorage.ChunkText); ok {
 				if data, ok := textChunk.Data().(*genericchatstorage.ChatCompletionResponseExtra); ok {
-					// Calculate completion tokens from the full response content
+					// Calculate completion tokens from the full response content.
+					// Reasoning ("thinking") tokens are counted as completion tokens.
 					completionContent := ""
 					if len(data.Choices) > 0 {
 						completionContent = data.Choices[0].Message.Content
 					}
-					completionTokens := lib.CountTokens(completionContent)
+					completionTokens := lib.CountTokens(completionContent) + lib.CountTokens(data.ReasoningContent())
 					updateUsageInResponse(data, promptTokens, completionTokens)
 					*inputTokens = promptTokens
 					*outputTokens = completionTokens
