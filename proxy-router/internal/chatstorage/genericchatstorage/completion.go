@@ -139,19 +139,7 @@ func (c *ChunkStreaming) ReasoningContent() string {
 	if c.data == nil {
 		return ""
 	}
-	raw := c.data.OriginalChoicesJSON()
-	if raw == nil {
-		return ""
-	}
-	var choices []struct {
-		Delta struct {
-			ReasoningContent string `json:"reasoning_content"`
-		} `json:"delta"`
-	}
-	if err := json.Unmarshal(raw, &choices); err != nil || len(choices) == 0 {
-		return ""
-	}
-	return choices[0].Delta.ReasoningContent
+	return c.data.ReasoningContent()
 }
 
 func (c *ChunkStreaming) Data() interface{} {
