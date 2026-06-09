@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import styled from 'styled-components';
+import { useQuery } from '@tanstack/react-query';
 
 import withDashboardState from '../../store/hocs/withDashboardState';
 
@@ -10,6 +11,7 @@ import TxList from './tx-list/TxList';
 import { View } from '../common/View';
 import { toUSD } from '../../store/utils/syncAmounts';
 import { BtnAccent } from './BalanceBlock.styles';
+import { queryKeys, computeStakedFunds } from '../../store/queries';
 
 const CustomBtn = styled(BtnAccent)`
   margin-left: 0;
@@ -42,6 +44,11 @@ const StakingWidjet = styled(WidjetItem)`
   border: 1px solid rgba(255, 255, 255, 0.04);
 `;
 
+const EMPTY_BALANCE = {
+  eth: { value: 0, rate: 0, usd: 0, symbol: 'ETH' },
+  mor: { value: 0, rate: 0, usd: 0, symbol: 'MOR' },
+};
+
 const Dashboard = ({
   sendDisabled,
   sendDisabledReason,
@@ -52,7 +59,7 @@ const Dashboard = ({
   getBalances,
   ethCoinPrice,
   loadTransactions,
-  getStakedFunds,
+  getSessionsByUser,
   explorerUrl,
   morTokenAddr,
   ...props
@@ -62,73 +69,58 @@ const Dashboard = ({
   const onCloseModal = () => setActiveModal(null);
   const onTabSwitch = (modal) => setActiveModal(modal);
 
-  const [balanceData, setBalanceData] = useState({
-    eth: {
-      value: 0,
-      rate: 0,
-      usd: 0,
-      symbol: 'ETH',
-    },
-    mor: {
-      value: 0,
-      rate: 0,
-      usd: 0,
-      symbol: 'MOR',
-    },
+  // Cached, stale-while-revalidate data. Revisiting the wallet tab renders the
+  // last-known balances/transactions/staked instantly and refreshes silently,
+  // instead of the previous refetch-and-block-on-mount behavior.
+  const balancesQuery = useQuery({
+    queryKey: queryKeys.balances(address),
+    queryFn: getBalances,
+    enabled: !!address,
+    refetchInterval: 30000,
   });
-  const [transactions, setTransactions] = useState([]);
-  // const [pagging, setPagging] = useState({ page: 1, pageSize: 50, hasNextPage: true })
-  const [staked, setStaked] = useState(0);
 
-  const loadBalances = async () => {
-    const data = await getBalances();
+  const transactionsQuery = useQuery({
+    queryKey: queryKeys.transactions(address),
+    queryFn: () => loadTransactions(1, 15),
+    enabled: !!address,
+  });
+
+  // Shares the exact cache key/shape used by the Chat tab, so the (expensive,
+  // paginated) sessions fetch is reused across tabs.
+  const sessionsQuery = useQuery({
+    queryKey: queryKeys.sessions(address),
+    queryFn: () => getSessionsByUser(address),
+    enabled: !!address,
+  });
+
+  const balanceData = useMemo(() => {
+    const data = balancesQuery.data;
+    if (!data || !data.balances) {
+      return EMPTY_BALANCE;
+    }
     const eth = data.balances.eth / 10 ** 18;
     const mor = data.balances.mor / 10 ** 18;
-    const ethUsd = toUSD(eth, ethCoinPrice);
-    const morUsd = toUSD(mor, +data.rate);
-
-    const balances = {
+    return {
       eth: {
         value: eth,
         rate: ethCoinPrice,
-        usd: ethUsd,
+        usd: toUSD(eth, ethCoinPrice),
         symbol: props.symbolEth,
       },
       mor: {
         value: mor,
         rate: +data.rate,
-        usd: morUsd,
+        usd: toUSD(mor, +data.rate),
         symbol: props.symbol,
       },
     };
-    setBalanceData(balances);
-  };
+  }, [balancesQuery.data, ethCoinPrice, props.symbol, props.symbolEth]);
 
-  const getTransactions = async () => {
-    const pageTransactions = await loadTransactions(1, 15);
-    // const hasNextPage = !!pageTransactions.length;
-    // setPagging({ ...pagging, page: pagging.page + 1, hasNextPage });
-    setTransactions([...pageTransactions]);
-  };
-
-  useEffect(() => {
-    loadBalances();
-    getTransactions();
-    getStakedFunds(address).then((data) => {
-      setStaked(data);
-    });
-
-    const interval = setInterval(() => {
-      console.log('Update balances...');
-      loadBalances();
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    loadBalances();
-  }, [ethCoinPrice]);
+  const transactions = transactionsQuery.data ?? [];
+  const staked = useMemo(
+    () => computeStakedFunds(sessionsQuery.data),
+    [sessionsQuery.data],
+  );
 
   return (
     <View data-testid="dashboard-container">
@@ -169,11 +161,11 @@ const Dashboard = ({
       </WidjetsContainer>
 
       <TxList
-        // {...pagging}
-        // hasNextPage={pagging.hasNextPage}
         loadNextTransactions={() => {}}
         hasTransactions={!!transactions.length}
         syncStatus={syncStatus}
+        loading={transactionsQuery.isLoading}
+        isRefreshing={transactionsQuery.isFetching}
         transactions={transactions}
       />
 

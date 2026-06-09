@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
-import styled from 'styled-components';
+import styled, { keyframes } from 'styled-components';
+
+const spin = keyframes`
+  to { transform: rotate(360deg); }
+`;
 import Form from 'react-bootstrap/Form';
 import InputGroup from 'react-bootstrap/InputGroup';
 import {
@@ -245,6 +249,25 @@ const EmptyState = styled.div`
   svg { opacity: 0.4; margin-bottom: 1rem; }
 `;
 
+const BidsLoadingHint = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 1rem;
+  font-size: 1.1rem;
+  color: rgba(255, 255, 255, 0.5);
+
+  &::before {
+    content: '';
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-top-color: ${(p) => p.theme.colors.morMain};
+    border-radius: 50%;
+    animation: ${spin} 0.7s linear infinite;
+  }
+`;
+
 type FilterId = 'all' | 'llm' | 'embeddings' | 'tts' | 'stt' | 'local' | 'tee';
 
 const FILTERS: { id: FilterId; label: string; modality?: string }[] = [
@@ -279,6 +302,7 @@ const ModelSelectionModal = ({
   onChangeModel,
   symbol,
   providersAvailability,
+  bidsLoading,
 }: any) => {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterId>('all');
@@ -455,6 +479,11 @@ const ModelSelectionModal = ({
               );
             })}
           </FilterRow>
+          {bidsLoading && (
+            <BidsLoadingHint>
+              Loading marketplace options… local models are ready to use.
+            </BidsLoadingHint>
+          )}
         </Header>
 
         <Body>
