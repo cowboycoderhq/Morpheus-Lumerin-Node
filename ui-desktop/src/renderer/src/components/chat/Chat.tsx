@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 // import component 👇
 import Drawer from 'react-modern-drawer';
 import {
@@ -65,6 +66,7 @@ import ImageViewer from 'react-simple-image-viewer';
 import { ChatData, HistoryMessage } from './interfaces';
 import { formatValue } from '../../utils/coinValue';
 import { ApiGateway } from 'src/main/src/client/apiGateway';
+import { queryKeys } from '../../store/queries';
 
 let abort = false;
 let cancelScroll = false;
@@ -111,23 +113,23 @@ type ChatProps = {
 
 const Chat = (props: ChatProps) => {
   const chatBlockRef = useRef<null | HTMLDivElement>(null);
-  const bidsSpinWaitClosed = useRef(false);
+  const queryClient = useQueryClient();
+  const initializedRef = useRef(false);
 
   const [promptInput, setPromptInput] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  // Overlay shown during user-triggered actions (open/close/reopen session,
+  // manual session refresh). The *initial* page load no longer uses this — it
+  // is gated on the react-query cache so revisiting the tab is instant.
+  const [isActionLoading, setIsActionLoading] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   const [messages, setMessages] = useState<any>([]);
   const [isOpen, setIsOpen] = useState(false);
-  const [sessions, setSessions] = useState<any>();
-  const [providersAvailability, setProvidersAvailability] = useState<any[]>([]);
 
   const [isSpinning, setIsSpinning] = useState(false);
-  const [meta, setMeta] = useState({ budget: 0, supply: 0 });
 
   const [imagePreview, setImagePreview] = useState<string>();
   const [activeSession, setActiveSession] = useState<any>(undefined);
 
-  const [chainData, setChainData] = useState<any>(null);
-  const [isChainDataSet, setIsChainDataSet] = useState<boolean>(false);
   const [chatData, setChatsData] = useState<ChatData[]>([]);
 
   const [openChangeModal, setOpenChangeModal] = useState(false);
@@ -139,12 +141,123 @@ const Chat = (props: ChatProps) => {
     min: number;
     max: number;
   }>({ min: 0, max: 0 });
-  const [balances, setBalances] = useState<{ eth: number; mor: number }>({
-    eth: 0,
-    mor: 0,
-  });
 
   const [chat, setChat] = useState<ChatData | undefined>(undefined);
+
+  // --- Cached data layer (stale-while-revalidate via react-query) ---------
+  // These queries live in the app-level QueryClient, so navigating away from
+  // and back to /chat serves cached data instantly and revalidates silently
+  // instead of blocking behind a full-screen spinner.
+
+  const modelsDataQuery = useQuery({
+    queryKey: queryKeys.modelsData,
+    queryFn: () => props.getModelsData(),
+  });
+
+  const sessionsQuery = useQuery({
+    queryKey: queryKeys.sessions(props.address),
+    queryFn: () => props.getSessionsByUser(props.address),
+    enabled: !!props.address,
+  });
+
+  const chatTitlesQuery = useQuery({
+    queryKey: queryKeys.chatTitles,
+    queryFn: () => props.client.getChatHistoryTitles(),
+  });
+
+  // Bid fan-out for every marketplace model. Runs in the background after the
+  // base model list is available; does NOT gate the initial render. Mirrors the
+  // previous "effect #2" merge logic but cached across visits.
+  const modelsWithBidsQuery = useQuery({
+    queryKey: queryKeys.modelsWithBids,
+    enabled: !!modelsDataQuery.data,
+    queryFn: async () => {
+      const md = modelsDataQuery.data;
+      const providersMap = md.providers.reduce(
+        (a: any, b: any) => ({ ...a, [b.Address.toLowerCase()]: b }),
+        {},
+      );
+      const merged = (
+        await Promise.all(
+          md.models.map(async (m: any) => {
+            const id = m.Id;
+            if (m.isLocal) {
+              return { id };
+            }
+            const bids = (await props.getBidsByModelId(id))
+              .map((b: any) => ({
+                ...b,
+                ProviderData: providersMap[b.Provider.toLowerCase()],
+                Model: m,
+              }))
+              .filter((b: any) => b.ProviderData);
+
+            if (!bids.length) {
+              return null;
+            }
+
+            return { id, bids };
+          }),
+        )
+      ).reduce((acc: any[], next: any) => {
+        if (!next) {
+          return acc;
+        }
+        const model = md.models.find((m: any) => m.Id == next.id);
+        return [...acc, { ...model, bids: next.bids }];
+      }, []);
+      return merged;
+    },
+  });
+
+  const availabilityQuery = useQuery({
+    queryKey: queryKeys.providersAvailability,
+    enabled: !!modelsDataQuery.data?.providers?.length,
+    staleTime: 5 * 60_000,
+    queryFn: () => props.getProvidersAvailability(modelsDataQuery.data.providers),
+  });
+
+  // Full (unfiltered) model list — local + every marketplace model, no bids.
+  // Used for mapping sessions/chats by id, matching the original mount logic.
+  const allModels: any[] | undefined = modelsDataQuery.data?.models;
+
+  // chainData.models prefers the bid-enriched (and bid-filtered) list once it
+  // is available, otherwise falls back to the raw list so the UI can render.
+  const chainData = useMemo(() => {
+    const md = modelsDataQuery.data;
+    if (!md) {
+      return null;
+    }
+    return { ...md, models: modelsWithBidsQuery.data ?? md.models };
+  }, [modelsDataQuery.data, modelsWithBidsQuery.data]);
+
+  const meta = modelsDataQuery.data?.meta ?? { budget: 0, supply: 0 };
+  const balances = modelsDataQuery.data?.userBalances ?? { eth: 0, mor: 0 };
+  const providersAvailability = availabilityQuery.data ?? [];
+  const bidsLoading = modelsWithBidsQuery.isFetching;
+
+  const sessions = useMemo(() => {
+    const raw = sessionsQuery.data;
+    if (!raw || !allModels) {
+      return [];
+    }
+    return raw.reduce((res: any[], item: any) => {
+      const sessionModel = allModels.find((x) => x.Id == item.ModelAgentId);
+      if (sessionModel) {
+        res.push({ ...item, ModelName: sessionModel.Name });
+      }
+      return res;
+    }, []);
+  }, [sessionsQuery.data, allModels]);
+
+  // Initial-load overlay: only while there is no cached data yet. On revisits
+  // every query resolves synchronously from cache, so this is false and the
+  // spinner never appears.
+  const isLoading =
+    isActionLoading ||
+    !modelsDataQuery.data ||
+    sessionsQuery.isLoading ||
+    !initialized;
 
   // TTS controls + STT recording state
   const [ttsVoice, setTtsVoice] = useState('af_bella');
@@ -176,166 +289,117 @@ const Chat = (props: ChatProps) => {
       ).toFixed(2)
     : 0;
 
-  useEffect(() => {
-    (async () => {
-      const [chainData, userSessions, chats] = await Promise.all([
-        props.getModelsData(),
-        props.getSessionsByUser(props.address),
-        props.client.getChatHistoryTitles(),
-      ]);
-
-      setBalances(chainData.userBalances);
-      setMeta(chainData.meta);
-      setChainData(chainData);
-      setIsChainDataSet(true);
-
-      const mappedChatData = (
-        chats as
-          | Array<{
-              chatId: string;
-              title: string;
-              modelId: string;
-              createdAt: number;
-              isLocal: boolean;
-            }>
-          | undefined
-      )?.reduce<ChatData[]>((res, item) => {
-        const chatModel = chainData.models.find((x) => x.Id == item.modelId);
-        if (chatModel) {
-          res.push({
-            id: item.chatId,
-            title: item.title,
-            createdAt: new Date(item.createdAt * 1000),
-            modelId: item.modelId,
-            isLocal: item.isLocal,
-          });
-        }
-        return res;
-      }, []);
-      setChatsData(mappedChatData || []);
-
-      const sessions = userSessions.reduce((res, item) => {
-        const sessionModel = chainData.models.find(
-          (x) => x.Id == item.ModelAgentId,
-        );
-        if (sessionModel) {
-          item.ModelName = sessionModel.Name;
-          res.push(item);
-        }
-        return res;
-      }, []);
-      setSessions(sessions);
-
-      const openSessions = sessions.filter((s) => !isClosed(s));
-
-      const useLocalModelChat = () => {
-        const localModel = chainData?.models?.find((m: any) => m.isLocal);
-        if (localModel) {
-          setSelectedModel(localModel);
-          setChat({
-            id: generateHashId(),
-            createdAt: new Date(),
-            modelId: localModel.Id,
-            isLocal: true,
-          });
-        }
-      };
-
-      if (!openSessions.length) {
-        useLocalModelChat();
-        return;
-      }
-
-      const latestSession = openSessions[0];
-      const latestSessionModel = chainData.models.find(
-        (m: any) => m.Id == latestSession.ModelAgentId,
-      );
-
-      if (!latestSessionModel) {
-        useLocalModelChat();
-        return;
-      }
-
-      const openBid = await props.getBidInfo(latestSession.BidID);
-
-      if (!openBid) {
-        useLocalModelChat();
-      }
-
-      setSelectedModel(latestSessionModel);
-      setSelectedBid(openBid);
-      setActiveSession(latestSession);
-      setChat({
-        id: generateHashId(),
-        createdAt: new Date(),
-        modelId: latestSessionModel.ModelAgentId,
-      });
-    })().then(() => {
-      setIsLoading(false);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!isChainDataSet) return;
-
-    (async () => {
-      const providersMap = chainData.providers.reduce(
-        (a, b) => ({ ...a, [b.Address.toLowerCase()]: b }),
-        {},
-      );
-      const modelsWithBids = (
-        await Promise.all(
-          chainData.models.map(async (m) => {
-            const id = m.Id;
-            if (m.isLocal) {
-              return { id };
-            }
-            const bids = (await props.getBidsByModelId(id))
-              .map((b) => ({
-                ...b,
-                ProviderData: providersMap[b.Provider.toLowerCase()],
-                Model: m,
-              }))
-              .filter((b) => b.ProviderData);
-
-            if (!bids.length) {
-              return null;
-            }
-
-            return { id, bids };
-          }),
-        )
-      ).reduce((acc, next) => {
-        if (!next) {
-          return acc;
-        }
-        const model = chainData.models.find((m) => m.Id == next.id);
-        return [...acc, { ...model, bids: next.bids }];
-      }, []);
-
-      setChainData({ ...chainData, models: modelsWithBids });
-      bidsSpinWaitClosed.current = true;
-    })();
-
-    (async () => {
-      const availabilityResults = await props.getProvidersAvailability(
-        chainData.providers,
-      );
-      setProvidersAvailability(availabilityResults);
-    })();
-  }, [isChainDataSet]);
-
-  const spinWaitForBids = async () => {
-    if (bidsSpinWaitClosed.current) return;
-    setIsLoading(true);
-    while (!bidsSpinWaitClosed.current) {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+  // One-time selection of the default chat once the (possibly cached) model and
+  // session data is available. Runs in a layout effect so that on a warm cache
+  // the selection is committed before paint — no flash of the empty/intro state
+  // and no transient spinner on tab revisits.
+  useLayoutEffect(() => {
+    if (initializedRef.current) {
+      return;
     }
-    setIsLoading(false);
-  };
+    const md = modelsDataQuery.data;
+    const rawSessions = sessionsQuery.data;
+    if (!md || !rawSessions) {
+      return;
+    }
+    initializedRef.current = true;
 
-  const toggleDrawer = async () => {
-    spinWaitForBids();
+    const models: any[] = md.models;
+
+    const useLocalModelChat = () => {
+      const localModel = models.find((m: any) => m.isLocal);
+      if (localModel) {
+        setSelectedModel(localModel);
+        setChat({
+          id: generateHashId(),
+          createdAt: new Date(),
+          modelId: localModel.Id,
+          isLocal: true,
+        });
+      }
+    };
+
+    const mappedSessions = rawSessions.reduce((res: any[], item: any) => {
+      const sessionModel = models.find((x) => x.Id == item.ModelAgentId);
+      if (sessionModel) {
+        res.push({ ...item, ModelName: sessionModel.Name });
+      }
+      return res;
+    }, []);
+    const openSessions = mappedSessions.filter((s) => !isClosed(s));
+
+    if (!openSessions.length) {
+      useLocalModelChat();
+      setInitialized(true);
+      return;
+    }
+
+    const latestSession = openSessions[0];
+    const latestSessionModel = models.find(
+      (m: any) => m.Id == latestSession.ModelAgentId,
+    );
+
+    if (!latestSessionModel) {
+      useLocalModelChat();
+      setInitialized(true);
+      return;
+    }
+
+    // Commit the session selection synchronously (before paint), then fetch the
+    // bid details in the background.
+    setSelectedModel(latestSessionModel);
+    setActiveSession(latestSession);
+    setChat({
+      id: generateHashId(),
+      createdAt: new Date(),
+      modelId: latestSessionModel.ModelAgentId,
+    });
+    setInitialized(true);
+
+    props
+      .getBidInfo(latestSession.BidID)
+      .then((openBid) => {
+        if (!openBid) {
+          useLocalModelChat();
+          return;
+        }
+        setSelectedBid(openBid);
+      })
+      .catch((e) => console.error('Failed to load open bid', e));
+  }, [modelsDataQuery.data, sessionsQuery.data]);
+
+  // Keep the chat-history drawer list in sync with the cached titles + models.
+  useEffect(() => {
+    const titles = chatTitlesQuery.data as
+      | Array<{
+          chatId: string;
+          title: string;
+          modelId: string;
+          createdAt: number;
+          isLocal: boolean;
+        }>
+      | undefined;
+    if (!titles || !allModels) {
+      return;
+    }
+    const mappedChatData = titles.reduce<ChatData[]>((res, item) => {
+      const chatModel = allModels.find((x) => x.Id == item.modelId);
+      if (chatModel) {
+        res.push({
+          id: item.chatId,
+          title: item.title,
+          createdAt: new Date(item.createdAt * 1000),
+          modelId: item.modelId,
+          isLocal: item.isLocal,
+        });
+      }
+      return res;
+    }, []);
+    setChatsData(mappedChatData);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatTitlesQuery.data, allModels]);
+
+  const toggleDrawer = () => {
     setIsOpen((prevState) => !prevState);
   };
 
@@ -394,7 +458,7 @@ const Chat = (props: ChatProps) => {
   };
 
   const onOpenSession = async (isReopen: boolean, isDirectPay: boolean) => {
-    setIsLoading(true);
+    setIsActionLoading(true);
     if (!isReopen) {
       setChat({
         id: generateHashId(),
@@ -421,7 +485,7 @@ const Chat = (props: ChatProps) => {
       await setSessionData(openedSession);
       return openedSession;
     } finally {
-      setIsLoading(false);
+      setIsActionLoading(false);
     }
   };
 
@@ -496,31 +560,29 @@ const Chat = (props: ChatProps) => {
     }
   };
 
+  // Refetch sessions through react-query so the shared cache (and every derived
+  // `sessions` consumer) updates, and return the freshly-mapped list for callers
+  // that need it synchronously (e.g. setSessionData).
   const refreshSessions = async () => {
-    const sessions = (await props.getSessionsByUser(props.address)).reduce(
-      (res, item) => {
-        const sessionModel = chainData.models.find(
-          (x) => x.Id == item.ModelAgentId,
-        );
-        if (sessionModel) {
-          item.ModelName = sessionModel.Name;
-          res.push(item);
-        }
-        return res;
-      },
-      [],
-    );
-
-    setSessions(sessions);
-
-    return sessions;
+    const fresh = await queryClient.fetchQuery({
+      queryKey: queryKeys.sessions(props.address),
+      queryFn: () => props.getSessionsByUser(props.address),
+    });
+    const models = allModels ?? [];
+    return (fresh || []).reduce((res, item) => {
+      const sessionModel = models.find((x) => x.Id == item.ModelAgentId);
+      if (sessionModel) {
+        res.push({ ...item, ModelName: sessionModel.Name });
+      }
+      return res;
+    }, []);
   };
 
   const closeSession = async (sessionId: string) => {
-    setIsLoading(true);
+    setIsActionLoading(true);
     await props.closeSession(sessionId);
     await refreshSessions();
-    setIsLoading(false);
+    setIsActionLoading(false);
 
     if (activeSession.Id == sessionId) {
       const localModel = chainData?.models?.find((m: any) => m.isLocal);
@@ -578,8 +640,6 @@ const Chat = (props: ChatProps) => {
   };
 
   const handleReopen = async (isDirectPay: boolean) => {
-    spinWaitForBids();
-    setIsLoading(true);
     await onOpenSession(true, isDirectPay);
     setIsReadonly(false);
   };
@@ -1088,6 +1148,16 @@ const Chat = (props: ChatProps) => {
       ? chainData.models.find((m: any) => m.Id == modelId)
       : chainData.models.find((m: any) => m.Id == modelId && m.bids);
 
+    // Marketplace selection needs the bid list, which may still be loading on a
+    // cold first visit. Guard instead of dereferencing undefined bids.
+    if (!isLocal && !selectedModel) {
+      props.toasts.toast(
+        'info',
+        'Model options are still loading. Please try again in a moment.',
+      );
+      return;
+    }
+
     setSelectedModel(selectedModel);
 
     if (isLocal) {
@@ -1208,9 +1278,9 @@ const Chat = (props: ChatProps) => {
           models={chainData?.models || []}
           onSelectChat={selectChat}
           refreshSessions={async () => {
-            setIsLoading(true);
+            setIsActionLoading(true);
             await refreshSessions();
-            setIsLoading(false);
+            setIsActionLoading(false);
           }}
           onChangeTitle={wrapChangeTitle}
           onCloseSession={closeSession}
@@ -1242,10 +1312,7 @@ const Chat = (props: ChatProps) => {
               </div>
               <BtnAccent
                 className="change-modal"
-                onClick={async () => {
-                  await spinWaitForBids();
-                  setOpenChangeModal(true);
-                }}
+                onClick={() => setOpenChangeModal(true)}
               >
                 <IconMessagePlus></IconMessagePlus> New chat
               </BtnAccent>
@@ -1442,6 +1509,7 @@ const Chat = (props: ChatProps) => {
         models={(chainData as any)?.models}
         isActive={openChangeModal}
         symbol={props.symbol}
+        bidsLoading={bidsLoading}
         providersAvailability={providersAvailability}
         onChangeModel={(eventData) => {
           onCreateNewChat(eventData);

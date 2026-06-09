@@ -67,7 +67,7 @@ const Title = styled.div`
   }
 `;
 
-export const TxList = ({ transactions, hasTransactions, syncStatus }) => {
+export const TxList = ({ transactions, loading, syncStatus }) => {
   const rowRenderer = ({ key, style, index }) => (
     <TxRowContainer style={style} key={`${key}-${transactions[index].hash}`}>
       <TxRow
@@ -90,8 +90,11 @@ export const TxList = ({ transactions, hasTransactions, syncStatus }) => {
 
         <React.Fragment>
           <ListContainer>
+            {/* Show the scanning placeholder only on the first load (no cached
+                rows yet) or while a legacy chain scan is running. Once we have
+                fetched and the list is genuinely empty, show the empty state. */}
             {!transactions.length &&
-              (syncStatus === 'syncing' ? (
+              (loading || syncStatus === 'syncing' ? (
                 <ScanningTxPlaceholder />
               ) : (
                 <NoTxPlaceholder />
