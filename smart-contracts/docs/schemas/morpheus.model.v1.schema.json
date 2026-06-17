@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nodedocs.mor.org/schemas/morpheus.model.v1.schema.json",
+  "title": "morpheus.model/v1",
+  "description": "Canonical model metadata for the Morpheus ModelRegistry. This schema defines the descriptive field set the on-chain CanonicalModel stores as the source of truth (capability, featureFlags, free-form tags, limits, upstream provenance). It also serves as the shape CICD validates a model proposal against before the operator registers it on-chain. The contract version-locks to this schema via schemaVersion.",
+  "type": "object",
+  "required": ["schemaVersion", "canonicalName", "capability"],
+  "properties": {
+    "schemaVersion": {
+      "const": "morpheus.model/v1",
+      "description": "Version-lock token. The contract records which schema versions it accepts and rejects writes that do not conform."
+    },
+    "canonicalName": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Normalized display name. SHOULD match an upstream canonical id (OpenRouter / models.dev / LiteLLM) so downstream matching works; Morpheus-specific suffixes are appended (see morpheusSuffixes)."
+    },
+    "upstream": {
+      "type": "object",
+      "description": "Provenance from an external canonical registry, used by CICD validation to confirm the model exists in the wild before registration.",
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": ["openrouter", "models.dev", "litellm", "other"]
+        },
+        "id": { "type": "string", "description": "Upstream model id, e.g. 'z-ai/glm-4.6'." },
+        "verifiedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "morpheusSuffixes": {
+      "type": "array",
+      "description": "Morpheus-added variants on top of the upstream model, e.g. ':tee', ':thinking', ':non-thinking'. Where a suffix changes routing it must also be expressed as a feature flag on-chain.",
+      "items": { "type": "string" }
+    },
+    "capability": {
+      "type": "string",
+      "description": "Model TYPE. Exactly one. Mirrors the on-chain ModelCapability enum, which is owner-extensible at runtime (this list may grow without a schema change for routing purposes).",
+      "enum": ["LLM", "EMBEDDING", "STT", "TTS", "IMAGE", "VIDEO", "MULTIMODAL"]
+    },
+    "features": {
+      "type": "array",
+      "description": "Boolean capability flags that mirror the on-chain featureFlags bitmask (e.g. TEE_REQUIRED, TEE_OPTIONAL, TOOL_CALLING, VISION, REASONING, STREAMING_ONLY).",
+      "items": { "type": "string" }
+    },
+    "tags": {
+      "type": "array",
+      "description": "Free-form discovery labels stored on-chain but ungoverned (no on-chain tag registry) and never used for contract branching; purely for UX/search.",
+      "items": { "type": "string" },
+      "maxItems": 32
+    },
+    "limits": {
+      "type": "object",
+      "description": "Capacity metadata, ideally cross-checked against the upstream source in CICD.",
+      "properties": {
+        "contextWindow": { "type": "integer", "minimum": 0 },
+        "maxOutputTokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "description": "Per-capability detail block. e.g. LLM { contextWindow, maxOutputTokens, toolCalling, vision, reasoning }, EMBEDDING { dimensions }, STT/TTS { languages, sampleRate }, IMAGE { resolutions }."
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "vendor": { "type": "string" },
+        "license": { "type": "string" },
+        "sourceUrl": { "type": "string", "format": "uri" }
+      }
+    }
+  }
+}
