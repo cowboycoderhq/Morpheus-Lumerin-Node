@@ -1,4 +1,7 @@
+import { useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router';
+import { useSelector } from 'react-redux';
+import { useQueryClient } from '@tanstack/react-query';
 import styled, { keyframes } from 'styled-components';
 import OfflineWarning from './OfflineWarning';
 // import ChangePassword from './ChangePassword'
@@ -10,6 +13,10 @@ import Agents from './agents/Agents';
 import Settings from './settings/Settings';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import Providers from './providers/Providers';
+import { withClient } from '../store/hocs/clientContext';
+import selectors from '../store/selectors';
+import { queryKeys } from '../store/queries';
+import { getSessionsByUser } from '../store/utils/apiCallsHelper';
 
 const fadeIn = keyframes`
   from {
@@ -42,6 +49,35 @@ const Main = styled.div`
   position: relative;
 `;
 
+// Warms the shared session cache as soon as the main app shell mounts, so the
+// first visit to the Chat or Wallet tab finds sessions already loaded (the
+// heaviest, paginated, cross-tab call). Subsequent visits hit the cache via the
+// stale-while-revalidate config. Failures are non-fatal — the tabs refetch.
+const SessionPrefetcher = withClient(({ client }: any) => {
+  const queryClient = useQueryClient();
+  const address = useSelector((state: any) => selectors.getWalletAddress(state));
+  const url = useSelector((state: any) =>
+    selectors.getLocalProxyRouterUrl(state),
+  );
+
+  useEffect(() => {
+    if (!address || !url) {
+      return;
+    }
+    queryClient
+      .prefetchQuery({
+        queryKey: queryKeys.sessions(address),
+        queryFn: async () => {
+          const authHeaders = await client.getAuthHeaders();
+          return (await getSessionsByUser(url, address, authHeaders)) || [];
+        },
+      })
+      .catch((e) => console.warn('Session prefetch failed', e));
+  }, [address, url, queryClient, client]);
+
+  return null;
+});
+
 export const Layout = () => (
   <Container data-testid="router-container">
     <Sidebar />
@@ -59,6 +95,7 @@ export const Layout = () => (
       </Routes>
     </Main>
     {/* <AutoPriceAdjuster /> */}
+    <SessionPrefetcher />
     <OfflineWarning />
   </Container>
 );
