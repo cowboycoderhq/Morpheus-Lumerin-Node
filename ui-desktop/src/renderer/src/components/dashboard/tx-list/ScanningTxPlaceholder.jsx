@@ -9,21 +9,21 @@ const Container = styled.div`
 `
 
 const BigText = styled.div`
-  margin-top: 1rem;
+  margin-top: 1.2rem;
   line-height: 2rem;
   font-size: 1.6rem;
   font-weight: 600;
   text-align: center;
-  color: ${p => p.theme.colors.copy};
+  color: rgba(255, 255, 255, 0.6);
 `
 
 const SmallText = styled.div`
   margin-top: 0.4rem;
   line-height: 16px;
   font-size: 1.3rem;
-  font-weight: 600;
+  font-weight: 500;
   text-align: center;
-  color: ${p => p.theme.colors.copy};
+  color: rgba(255, 255, 255, 0.38);
 `
 
 export default class ScanningTxPlaceholder extends React.Component {
