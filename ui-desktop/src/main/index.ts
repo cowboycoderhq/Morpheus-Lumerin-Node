@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, session, shell, systemPreferences } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import {
   default as install,
@@ -24,7 +24,7 @@ function createWindow(): void {
     autoHideMenuBar: true,
     // ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
+      preload: join(__dirname, '../preload/index.js'),
       sandbox: false
     }
   })
@@ -63,6 +63,36 @@ app
   .then(() => {
     // Set app user model id for windows
     electronApp.setAppUserModelId('com.electron')
+
+    // Allow the renderer to use the microphone (STT recording) and other
+    // media devices. Without an explicit handler Electron does not grant the
+    // `media` permission, so getUserMedia() yields a silent track instead of
+    // throwing. On macOS we also proactively request the OS-level mic grant.
+    const grantedPermissions = new Set(['media', 'mediaKeySystem', 'audioCapture', 'videoCapture'])
+
+    session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+      callback(grantedPermissions.has(permission))
+    })
+
+    session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+      return grantedPermissions.has(permission)
+    })
+
+    if (process.platform === 'darwin') {
+      const micStatus = systemPreferences.getMediaAccessStatus('microphone')
+      logger.info(`Microphone access status: ${micStatus}`)
+      if (micStatus === 'denied' || micStatus === 'restricted') {
+        logger.error(
+          `Microphone access is "${micStatus}". macOS will return a SILENT audio track. ` +
+            `Reset it with: tccutil reset Microphone com.github.Electron (dev) ` +
+            `or enable it in System Settings > Privacy & Security > Microphone, then restart.`
+        )
+      }
+      systemPreferences
+        .askForMediaAccess('microphone')
+        .then((granted) => logger.info(`Microphone access granted: ${granted}`))
+        .catch((err) => logger.error('Failed requesting microphone access', err))
+    }
 
     // Default open or close DevTools by F12 in development
     // and ignore CommandOrControl + R in production.

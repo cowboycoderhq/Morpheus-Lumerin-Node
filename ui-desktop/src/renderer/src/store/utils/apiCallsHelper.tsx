@@ -68,7 +68,9 @@ export const getBidsByModelId = async (url, modelId, headers) => {
     const bidsRes = await getBidsByModels(modelId, offset, limit);
     bids.push(...bidsRes);
 
-    if(bids.length != limit) {
+    // Compare the size of the page just fetched (not the accumulated total):
+    // a model with exactly `limit` bids would otherwise loop forever.
+    if(bidsRes.length != limit) {
       all = true;
     }
     else {

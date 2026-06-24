@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import withModelsState from "../../store/hocs/withModelsState";
 
 import { LayoutHeader } from '../common/LayoutHeader'
@@ -10,6 +11,7 @@ import Tabs from 'react-bootstrap/Tabs';
 import styled from 'styled-components'
 import FileSelectionModal from './FileSelectionModal';
 import PinnedFilesTable from './PinnedFilesTable';
+import { queryKeys } from '../../store/queries';
 
 
 const Container = styled.div`
@@ -46,48 +48,45 @@ const Models = ({
 }: any) => {
 
     const [openChangeModal, setOpenChangeModal] = useState(false);
-    const [ipfsVersion, setIpfsVersion] = useState(null);
-    const [isIpfsConnected, setIsIpfsConnected] = useState(false);
-    const [pinnedFiles, setPinnedFiles] = useState([]);
-    const [models, setModels] = useState([]);
+    const queryClient = useQueryClient();
+
+    // Cached, stale-while-revalidate data so revisiting the Models tab renders
+    // instantly and refreshes in the background instead of refetching on mount.
+    const ipfsVersionQuery = useQuery({
+        queryKey: queryKeys.ipfsVersion,
+        queryFn: getIpfsVersion,
+    });
+    const modelsQuery = useQuery({
+        queryKey: queryKeys.allModels,
+        queryFn: getAllModels,
+    });
+    const pinnedFilesQuery = useQuery({
+        queryKey: queryKeys.pinnedFiles,
+        queryFn: getPinnedFiles,
+    });
+
+    const ipfsVersion = (ipfsVersionQuery.data as any)?.version ?? null;
+    const isIpfsConnected = !!ipfsVersion;
+    const models = modelsQuery.data ?? [];
+    const pinnedFiles = pinnedFilesQuery.data ?? [];
 
     const reload = () => {
-        getIpfsVersion().then((response) => {
-            if (response?.version) {
-                setIpfsVersion(response?.version);
-                setIsIpfsConnected(true);
-            } else {
-                setIsIpfsConnected(false);
-            }
-        }).catch((error) => {
-            console.error("Error", error);
-            setIsIpfsConnected(false);
-        });
-
-        getAllModels().then((response) => {
-            setModels(response);
-        }).catch((error) => {
-            console.error("Error", error);
-        });
-
-        getPinnedFiles().then((response) => {
-            setPinnedFiles(response);
-        }).catch((error) => {
-            console.error("Error", error);
-        });
+        queryClient.invalidateQueries({ queryKey: queryKeys.ipfsVersion });
+        queryClient.invalidateQueries({ queryKey: queryKeys.allModels });
+        queryClient.invalidateQueries({ queryKey: queryKeys.pinnedFiles });
     }
-
-    useEffect(() => {
-        reload();
-    }, []);
 
     const handleUnpinFile = async (hash) => {
         try {
             const response = await unpinFile(hash);
             if (response) {
                 toasts.toast("success", "File unpinned successfully");
-                setPinnedFiles(pinnedFiles.filter((file: any) => file.metadataCIDHash !== hash));
-                setPinnedFiles(pinnedFiles.filter((file: any) => file.fileCIDHash !== hash));
+                queryClient.setQueryData(queryKeys.pinnedFiles, (old: any[] = []) =>
+                    old.filter(
+                        (file: any) =>
+                            file.metadataCIDHash !== hash && file.fileCIDHash !== hash,
+                    ),
+                );
             } else {
                 toasts.toast("error", "Failed to unpin file");
             }

@@ -54,29 +54,20 @@ const withDashboardState = (WrappedComponent) => {
       return transactions;
     };
 
-    getStakedFunds = async (user) => {
-      const isClosed = (item) =>
-        item.ClosedAt || new Date().getTime() > item.EndsAt * 1000;
-
+    // Raw user sessions — shares the same shape (and react-query cache key) as
+    // the Chat tab so the two tabs dedupe instead of each paginating on mount.
+    getSessionsByUser = async (user) => {
       if (!user) {
-        return;
+        return [];
       }
-
       const authHeaders = await this.props.client.getAuthHeaders();
-      const sessions = await getSessionsByUser(
-        this.props.config.chain.localProxyRouterUrl,
-        user,
-        authHeaders,
+      return (
+        (await getSessionsByUser(
+          this.props.config.chain.localProxyRouterUrl,
+          user,
+          authHeaders,
+        )) || []
       );
-
-      try {
-        const openSessions = sessions.filter((s) => !isClosed(s));
-        const sum = openSessions.reduce((curr, next) => curr + next.Stake, 0);
-        return (sum / 10 ** 18).toFixed(2);
-      } catch (e) {
-        console.log('Error', e);
-        return 0;
-      }
     };
 
     getBalances = async () => {
@@ -103,7 +94,7 @@ const withDashboardState = (WrappedComponent) => {
           getBalances={this.getBalances}
           sendDisabled={sendLmrFeatureStatus !== 'ok'}
           loadTransactions={this.loadTransactions}
-          getStakedFunds={this.getStakedFunds}
+          getSessionsByUser={this.getSessionsByUser}
           {...this.props}
           {...this.state}
         />

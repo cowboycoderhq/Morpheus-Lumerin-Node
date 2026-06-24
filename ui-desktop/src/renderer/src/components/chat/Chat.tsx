@@ -1,7 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 // import component 👇
 import Drawer from 'react-modern-drawer';
-import { IconHistory, IconArrowUp, IconMessagePlus } from '@tabler/icons-react';
+import {
+  IconHistory,
+  IconArrowUp,
+  IconMessagePlus,
+  IconShieldLock,
+  IconUpload,
+  IconMicrophone,
+  IconPlayerStopFilled,
+} from '@tabler/icons-react';
 import {
   View,
   ContainerTitle,
@@ -26,11 +35,16 @@ import {
   ChatIntroButton,
   SendBtnWrapper,
   Btn,
+  AudioInputZone,
+  AudioActionBtn,
+  AudioHint,
+  TtsControlsRow,
+  AudioPlayer,
 } from './Chat.styles';
 import { BtnAccent } from '../dashboard/BalanceBlock.styles';
 import withChatState from '../../store/hocs/withChatState';
 import { abbreviateAddress } from '../../utils';
-import Markdown from 'react-markdown';
+import { ThinkingMessageBody } from './ThinkingMessageBody';
 
 import 'react-modern-drawer/dist/index.css';
 import './Chat.css';
@@ -43,27 +57,47 @@ import {
   getColor,
   isClosed,
   generateHashId,
+  isSecureModel,
+  SECURE_BADGE_TOOLTIP,
+  getModelModality,
 } from './utils';
 import { Cooldown } from './Cooldown';
 import ImageViewer from 'react-simple-image-viewer';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { coldarkDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import {
-  ChatData,
-  ChatHistoryInterface,
-  ChatTitle,
-  HistoryMessage,
-} from './interfaces';
+import { ChatData, HistoryMessage } from './interfaces';
 import { formatValue } from '../../utils/coinValue';
 import { ApiGateway } from 'src/main/src/client/apiGateway';
+import { queryKeys } from '../../store/queries';
 
 let abort = false;
 let cancelScroll = false;
 const userMessage = { user: 'Me', role: 'user', icon: 'M', color: '#20dc8e' };
 
+// Common TTS voice presets. Names are backend-specific (Kokoro `af_*`,
+// OpenAI `alloy`/`nova`/...), so the field also accepts free-text input.
+const TTS_VOICES = [
+  'af_bella',
+  'af_alloy',
+  'af_sky',
+  'af_nicole',
+  'am_adam',
+  'am_michael',
+  'alloy',
+  'nova',
+  'shimmer',
+];
+
 type ChatProps = {
   client: ApiGateway;
   address: string;
+  symbol: string;
+  config: any;
+  toasts: {
+    toast: (
+      type: string,
+      message: string,
+      options?: { autoClose?: number },
+    ) => void;
+  };
   getModelsData: () => Promise<any>;
   getSessionsByUser: (address: string) => Promise<any>;
   getProvidersAvailability: (providers: any[]) => Promise<any[]>;
@@ -79,23 +113,23 @@ type ChatProps = {
 
 const Chat = (props: ChatProps) => {
   const chatBlockRef = useRef<null | HTMLDivElement>(null);
-  const bidsSpinWaitClosed = useRef(false);
+  const queryClient = useQueryClient();
+  const initializedRef = useRef(false);
 
   const [promptInput, setPromptInput] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  // Overlay shown during user-triggered actions (open/close/reopen session,
+  // manual session refresh). The *initial* page load no longer uses this — it
+  // is gated on the react-query cache so revisiting the tab is instant.
+  const [isActionLoading, setIsActionLoading] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   const [messages, setMessages] = useState<any>([]);
   const [isOpen, setIsOpen] = useState(false);
-  const [sessions, setSessions] = useState<any>();
-  const [providersAvailability, setProvidersAvailability] = useState<any[]>([]);
 
   const [isSpinning, setIsSpinning] = useState(false);
-  const [meta, setMeta] = useState({ budget: 0, supply: 0 });
 
   const [imagePreview, setImagePreview] = useState<string>();
   const [activeSession, setActiveSession] = useState<any>(undefined);
 
-  const [chainData, setChainData] = useState<any>(null);
-  const [isChainDataSet, setIsChainDataSet] = useState<boolean>(false);
   const [chatData, setChatsData] = useState<ChatData[]>([]);
 
   const [openChangeModal, setOpenChangeModal] = useState(false);
@@ -104,18 +138,142 @@ const Chat = (props: ChatProps) => {
   const [selectedBid, setSelectedBid] = useState<any>(null);
   const [selectedModel, setSelectedModel] = useState<any>(undefined);
   const [requiredStake, setRequiredStake] = useState<{
-    min: Number;
+    min: number;
     max: number;
   }>({ min: 0, max: 0 });
-  const [balances, setBalances] = useState<{ eth: Number; mor: number }>({
-    eth: 0,
-    mor: 0,
-  });
 
   const [chat, setChat] = useState<ChatData | undefined>(undefined);
 
+  // --- Cached data layer (stale-while-revalidate via react-query) ---------
+  // These queries live in the app-level QueryClient, so navigating away from
+  // and back to /chat serves cached data instantly and revalidates silently
+  // instead of blocking behind a full-screen spinner.
+
+  const modelsDataQuery = useQuery({
+    queryKey: queryKeys.modelsData,
+    queryFn: () => props.getModelsData(),
+  });
+
+  const sessionsQuery = useQuery({
+    queryKey: queryKeys.sessions(props.address),
+    queryFn: () => props.getSessionsByUser(props.address),
+    enabled: !!props.address,
+  });
+
+  const chatTitlesQuery = useQuery({
+    queryKey: queryKeys.chatTitles,
+    queryFn: () => props.client.getChatHistoryTitles(),
+  });
+
+  // Bid fan-out for every marketplace model. Runs in the background after the
+  // base model list is available; does NOT gate the initial render. Mirrors the
+  // previous "effect #2" merge logic but cached across visits.
+  const modelsWithBidsQuery = useQuery({
+    queryKey: queryKeys.modelsWithBids,
+    enabled: !!modelsDataQuery.data,
+    queryFn: async () => {
+      const md = modelsDataQuery.data;
+      const providersMap = md.providers.reduce(
+        (a: any, b: any) => ({ ...a, [b.Address.toLowerCase()]: b }),
+        {},
+      );
+      const merged = (
+        await Promise.all(
+          md.models.map(async (m: any) => {
+            const id = m.Id;
+            if (m.isLocal) {
+              return { id };
+            }
+            const bids = (await props.getBidsByModelId(id))
+              .map((b: any) => ({
+                ...b,
+                ProviderData: providersMap[b.Provider.toLowerCase()],
+                Model: m,
+              }))
+              .filter((b: any) => b.ProviderData);
+
+            if (!bids.length) {
+              return null;
+            }
+
+            return { id, bids };
+          }),
+        )
+      ).reduce((acc: any[], next: any) => {
+        if (!next) {
+          return acc;
+        }
+        const model = md.models.find((m: any) => m.Id == next.id);
+        return [...acc, { ...model, bids: next.bids }];
+      }, []);
+      return merged;
+    },
+  });
+
+  const availabilityQuery = useQuery({
+    queryKey: queryKeys.providersAvailability,
+    enabled: !!modelsDataQuery.data?.providers?.length,
+    staleTime: 5 * 60_000,
+    queryFn: () => props.getProvidersAvailability(modelsDataQuery.data.providers),
+  });
+
+  // Full (unfiltered) model list — local + every marketplace model, no bids.
+  // Used for mapping sessions/chats by id, matching the original mount logic.
+  const allModels: any[] | undefined = modelsDataQuery.data?.models;
+
+  // chainData.models prefers the bid-enriched (and bid-filtered) list once it
+  // is available, otherwise falls back to the raw list so the UI can render.
+  const chainData = useMemo(() => {
+    const md = modelsDataQuery.data;
+    if (!md) {
+      return null;
+    }
+    return { ...md, models: modelsWithBidsQuery.data ?? md.models };
+  }, [modelsDataQuery.data, modelsWithBidsQuery.data]);
+
+  const meta = modelsDataQuery.data?.meta ?? { budget: 0, supply: 0 };
+  const balances = modelsDataQuery.data?.userBalances ?? { eth: 0, mor: 0 };
+  const providersAvailability = availabilityQuery.data ?? [];
+  const bidsLoading = modelsWithBidsQuery.isFetching;
+
+  const sessions = useMemo(() => {
+    const raw = sessionsQuery.data;
+    if (!raw || !allModels) {
+      return [];
+    }
+    return raw.reduce((res: any[], item: any) => {
+      const sessionModel = allModels.find((x) => x.Id == item.ModelAgentId);
+      if (sessionModel) {
+        res.push({ ...item, ModelName: sessionModel.Name });
+      }
+      return res;
+    }, []);
+  }, [sessionsQuery.data, allModels]);
+
+  // Initial-load overlay: only while there is no cached data yet. On revisits
+  // every query resolves synchronously from cache, so this is false and the
+  // spinner never appears.
+  const isLoading =
+    isActionLoading ||
+    !modelsDataQuery.data ||
+    sessionsQuery.isLoading ||
+    !initialized;
+
+  // TTS controls + STT recording state
+  const [ttsVoice, setTtsVoice] = useState('af_bella');
+  const [ttsSpeed, setTtsSpeed] = useState(1);
+  const [recording, setRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const peakLevelRef = useRef<number>(0);
+  const levelRafRef = useRef<number | null>(null);
+
   const modelName = selectedModel?.Name || 'Model';
   const isLocal = chat?.isLocal;
+  const isSecure = isSecureModel(selectedModel);
+  const modality = getModelModality(selectedModel);
 
   const providerAddress = isLocal
     ? '(local)'
@@ -131,156 +289,117 @@ const Chat = (props: ChatProps) => {
       ).toFixed(2)
     : 0;
 
-  useEffect(() => {
-    (async () => {
-      const [chainData, userSessions, chats] = await Promise.all([
-        props.getModelsData(),
-        props.getSessionsByUser(props.address),
-        props.client.getChatHistoryTitles(),
-      ]);
-
-      setBalances(chainData.userBalances);
-      setMeta(chainData.meta);
-      setChainData(chainData);
-      setIsChainDataSet(true);
-
-      const mappedChatData = chats?.reduce<ChatData[]>((res, item) => {
-        const chatModel = chainData.models.find((x) => x.Id == item.modelId);
-        if (chatModel) {
-          res.push({
-            id: item.chatId,
-            title: item.title,
-            createdAt: new Date(item.createdAt * 1000),
-            modelId: item.modelId,
-            isLocal: item.isLocal,
-          });
-        }
-        return res;
-      }, []);
-      setChatsData(mappedChatData || []);
-
-      const sessions = userSessions.reduce((res, item) => {
-        const sessionModel = chainData.models.find(
-          (x) => x.Id == item.ModelAgentId,
-        );
-        if (sessionModel) {
-          item.ModelName = sessionModel.Name;
-          res.push(item);
-        }
-        return res;
-      }, []);
-      setSessions(sessions);
-
-      const openSessions = sessions.filter((s) => !isClosed(s));
-
-      const useLocalModelChat = () => {
-        const localModel = chainData?.models?.find((m: any) => m.isLocal);
-        if (localModel) {
-          setSelectedModel(localModel);
-          setChat({
-            id: generateHashId(),
-            createdAt: new Date(),
-            modelId: localModel.Id,
-            isLocal: true,
-          });
-        }
-      };
-
-      if (!openSessions.length) {
-        useLocalModelChat();
-        return;
-      }
-
-      const latestSession = openSessions[0];
-      const latestSessionModel = chainData.models.find(
-        (m: any) => m.Id == latestSession.ModelAgentId,
-      );
-
-      if (!latestSessionModel) {
-        useLocalModelChat();
-        return;
-      }
-
-      const openBid = await props.getBidInfo(latestSession.BidID);
-
-      if (!openBid) {
-        useLocalModelChat();
-      }
-
-      setSelectedModel(latestSessionModel);
-      setSelectedBid(openBid);
-      setActiveSession(latestSession);
-      setChat({
-        id: generateHashId(),
-        createdAt: new Date(),
-        modelId: latestSessionModel.ModelAgentId,
-      });
-    })().then(() => {
-      setIsLoading(false);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!isChainDataSet) return;
-
-    (async () => {
-      const providersMap = chainData.providers.reduce(
-        (a, b) => ({ ...a, [b.Address.toLowerCase()]: b }),
-        {},
-      );
-      const modelsWithBids = (
-        await Promise.all(
-          chainData.models.map(async (m) => {
-            const id = m.Id;
-            if (m.isLocal) {
-              return { id };
-            }
-            const bids = (await props.getBidsByModelId(id))
-              .map((b) => ({
-                ...b,
-                ProviderData: providersMap[b.Provider.toLowerCase()],
-                Model: m,
-              }))
-              .filter((b) => b.ProviderData);
-
-            if (!bids.length) {
-              return null;
-            }
-
-            return { id, bids };
-          }),
-        )
-      ).reduce((acc, next) => {
-        if (!next) {
-          return acc;
-        }
-        const model = chainData.models.find((m) => m.Id == next.id);
-        return [...acc, { ...model, bids: next.bids }];
-      }, []);
-
-      setChainData({ ...chainData, models: modelsWithBids });
-      bidsSpinWaitClosed.current = true;
-    })();
-
-    (async () => {
-      const availabilityResults = await props.getProvidersAvailability(
-        chainData.providers,
-      );
-      setProvidersAvailability(availabilityResults);
-    })();
-  }, [isChainDataSet]);
-
-  const spinWaitForBids = async () => {
-    if (bidsSpinWaitClosed.current) return;
-    setIsLoading(true);
-    while (!bidsSpinWaitClosed.current) {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+  // One-time selection of the default chat once the (possibly cached) model and
+  // session data is available. Runs in a layout effect so that on a warm cache
+  // the selection is committed before paint — no flash of the empty/intro state
+  // and no transient spinner on tab revisits.
+  useLayoutEffect(() => {
+    if (initializedRef.current) {
+      return;
     }
-    setIsLoading(false);
-  };
+    const md = modelsDataQuery.data;
+    const rawSessions = sessionsQuery.data;
+    if (!md || !rawSessions) {
+      return;
+    }
+    initializedRef.current = true;
 
-  const toggleDrawer = async () => {
-    spinWaitForBids();
+    const models: any[] = md.models;
+
+    const useLocalModelChat = () => {
+      const localModel = models.find((m: any) => m.isLocal);
+      if (localModel) {
+        setSelectedModel(localModel);
+        setChat({
+          id: generateHashId(),
+          createdAt: new Date(),
+          modelId: localModel.Id,
+          isLocal: true,
+        });
+      }
+    };
+
+    const mappedSessions = rawSessions.reduce((res: any[], item: any) => {
+      const sessionModel = models.find((x) => x.Id == item.ModelAgentId);
+      if (sessionModel) {
+        res.push({ ...item, ModelName: sessionModel.Name });
+      }
+      return res;
+    }, []);
+    const openSessions = mappedSessions.filter((s) => !isClosed(s));
+
+    if (!openSessions.length) {
+      useLocalModelChat();
+      setInitialized(true);
+      return;
+    }
+
+    const latestSession = openSessions[0];
+    const latestSessionModel = models.find(
+      (m: any) => m.Id == latestSession.ModelAgentId,
+    );
+
+    if (!latestSessionModel) {
+      useLocalModelChat();
+      setInitialized(true);
+      return;
+    }
+
+    // Commit the session selection synchronously (before paint), then fetch the
+    // bid details in the background.
+    setSelectedModel(latestSessionModel);
+    setActiveSession(latestSession);
+    setChat({
+      id: generateHashId(),
+      createdAt: new Date(),
+      modelId: latestSessionModel.ModelAgentId,
+    });
+    setInitialized(true);
+
+    props
+      .getBidInfo(latestSession.BidID)
+      .then((openBid) => {
+        if (!openBid) {
+          useLocalModelChat();
+          return;
+        }
+        setSelectedBid(openBid);
+      })
+      .catch((e) => console.error('Failed to load open bid', e));
+  }, [modelsDataQuery.data, sessionsQuery.data]);
+
+  // Keep the chat-history drawer list in sync with the cached titles + models.
+  useEffect(() => {
+    const titles = chatTitlesQuery.data as
+      | Array<{
+          chatId: string;
+          title: string;
+          modelId: string;
+          createdAt: number;
+          isLocal: boolean;
+        }>
+      | undefined;
+    if (!titles || !allModels) {
+      return;
+    }
+    const mappedChatData = titles.reduce<ChatData[]>((res, item) => {
+      const chatModel = allModels.find((x) => x.Id == item.modelId);
+      if (chatModel) {
+        res.push({
+          id: item.chatId,
+          title: item.title,
+          createdAt: new Date(item.createdAt * 1000),
+          modelId: item.modelId,
+          isLocal: item.isLocal,
+        });
+      }
+      return res;
+    }, []);
+    setChatsData(mappedChatData);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatTitlesQuery.data, allModels]);
+
+  const toggleDrawer = () => {
     setIsOpen((prevState) => !prevState);
   };
 
@@ -339,7 +458,7 @@ const Chat = (props: ChatProps) => {
   };
 
   const onOpenSession = async (isReopen: boolean, isDirectPay: boolean) => {
-    setIsLoading(true);
+    setIsActionLoading(true);
     if (!isReopen) {
       setChat({
         id: generateHashId(),
@@ -366,7 +485,7 @@ const Chat = (props: ChatProps) => {
       await setSessionData(openedSession);
       return openedSession;
     } finally {
-      setIsLoading(false);
+      setIsActionLoading(false);
     }
   };
 
@@ -379,62 +498,91 @@ const Chat = (props: ChatProps) => {
       }
 
       const model = chainData.models.find((m) => m.Id == history.modelId);
-      history.messages.forEach((m) => {
-        const modelName = model.Name || 'Model';
+      const modelName = model?.Name || 'Model';
+      const aiIcon = modelName.toUpperCase()[0];
+      const aiColor = getColor(aiIcon);
 
-        const aiIcon = modelName.toUpperCase()[0];
-        const aiColor = getColor(aiIcon);
+      (history.messages || []).forEach((m: any) => {
+        const prompt = m?.prompt || {};
+        // Prompt shape differs by modality:
+        //  - LLM/chat: { messages: [{ content }] }
+        //  - TTS:      { input: '...' } (audio response is not stored replayably)
+        //  - STT:      audio request (no messages); response is the transcript,
+        //              flagged with isAudioContent on the stored message.
+        const isChatPrompt =
+          Array.isArray(prompt.messages) && prompt.messages.length > 0;
+        const isTtsPrompt =
+          !isChatPrompt && typeof prompt.input === 'string';
+        const isSttMessage = !isChatPrompt && !isTtsPrompt && !!m.isAudioContent;
+
+        let userText: string;
+        if (isChatPrompt) {
+          userText = prompt.messages[0]?.content ?? '';
+        } else if (isTtsPrompt) {
+          userText = prompt.input;
+        } else if (isSttMessage) {
+          // The uploaded/recorded audio is not retained in a replayable form.
+          userText = prompt.Prompt || prompt.prompt || '🎤 Audio input';
+        } else {
+          userText = '';
+        }
 
         messages.push({
           id: makeId(16),
-          text: m.prompt.messages[0].content,
+          text: userText,
           user: userMessage.user,
           role: userMessage.role,
           icon: userMessage.icon,
           color: userMessage.color,
         });
-        messages.push({
+
+        const assistant: HistoryMessage = {
           id: makeId(16),
           text: m.response,
           user: modelName,
           role: 'assistant',
           icon: aiIcon,
           color: aiColor,
-          isImageContent: m.isImageContent,
-          isVideoRawContent: m.isVideoRawContent,
-        });
+        };
+        if (isTtsPrompt) {
+          // Synthesized audio is not persisted in a replayable form.
+          assistant.text = '[Audio response — replay is not available from history]';
+        } else if (!isSttMessage) {
+          assistant.isImageContent = m.isImageContent;
+          assistant.isVideoRawContent = m.isVideoRawContent;
+        }
+        messages.push(assistant);
       });
       setMessages(messages);
     } catch (e) {
+      console.error('Failed to load chat history', e);
       props.toasts.toast('error', 'Failed to load chat history');
     }
   };
 
+  // Refetch sessions through react-query so the shared cache (and every derived
+  // `sessions` consumer) updates, and return the freshly-mapped list for callers
+  // that need it synchronously (e.g. setSessionData).
   const refreshSessions = async () => {
-    const sessions = (await props.getSessionsByUser(props.address)).reduce(
-      (res, item) => {
-        const sessionModel = chainData.models.find(
-          (x) => x.Id == item.ModelAgentId,
-        );
-        if (sessionModel) {
-          item.ModelName = sessionModel.Name;
-          res.push(item);
-        }
-        return res;
-      },
-      [],
-    );
-
-    setSessions(sessions);
-
-    return sessions;
+    const fresh = await queryClient.fetchQuery({
+      queryKey: queryKeys.sessions(props.address),
+      queryFn: () => props.getSessionsByUser(props.address),
+    });
+    const models = allModels ?? [];
+    return (fresh || []).reduce((res, item) => {
+      const sessionModel = models.find((x) => x.Id == item.ModelAgentId);
+      if (sessionModel) {
+        res.push({ ...item, ModelName: sessionModel.Name });
+      }
+      return res;
+    }, []);
   };
 
   const closeSession = async (sessionId: string) => {
-    setIsLoading(true);
+    setIsActionLoading(true);
     await props.closeSession(sessionId);
     await refreshSessions();
-    setIsLoading(false);
+    setIsActionLoading(false);
 
     if (activeSession.Id == sessionId) {
       const localModel = chainData?.models?.find((m: any) => m.isLocal);
@@ -492,8 +640,6 @@ const Chat = (props: ChatProps) => {
   };
 
   const handleReopen = async (isDirectPay: boolean) => {
-    spinWaitForBids();
-    setIsLoading(true);
     await onOpenSession(true, isDirectPay);
     setIsReadonly(false);
   };
@@ -706,6 +852,222 @@ const Chat = (props: ChatProps) => {
     return memoState;
   };
 
+  const buildAudioHeaders = async () => {
+    const headers: Record<string, string> = {};
+    if (isLocal) {
+      headers['model_id'] = selectedModel.Id;
+    } else {
+      headers['session_id'] = activeSession.Id;
+    }
+    if (chat?.id) {
+      headers['chat_id'] = chat.id;
+    }
+    const authHeaders = await props.client.getAuthHeaders();
+    return { ...headers, ...authHeaders };
+  };
+
+  const audioIconProps = () => {
+    const icon = modelName.toUpperCase()[0];
+    return {
+      icon,
+      color: getColor(icon),
+      user: modelName,
+      role: 'assistant',
+    };
+  };
+
+  // TTS: text in -> synthesized audio out
+  const callSpeech = async (text: string) => {
+    const userText = { id: makeId(16), text, ...userMessage };
+    let memoState = [...messages, userText];
+    setMessages(memoState);
+    scrollToBottom();
+
+    try {
+      const headers = await buildAudioHeaders();
+      const response = await fetch(
+        `${props.config.chain.localProxyRouterUrl}/v1/audio/speech`,
+        {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            input: text,
+            voice: ttsVoice,
+            response_format: 'mp3',
+            speed: Number(ttsSpeed),
+          }),
+        },
+      );
+
+      if (!response || !response.ok) {
+        props.toasts.toast('error', 'Failed to synthesize speech');
+        return memoState;
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      memoState = [
+        ...memoState,
+        { id: makeId(16), text: url, isAudioContent: true, ...audioIconProps() },
+      ];
+      setMessages(memoState);
+      scrollToBottom();
+    } catch (e) {
+      props.toasts.toast('error', 'Something goes wrong. Try later.');
+      console.error(e);
+    }
+    return memoState;
+  };
+
+  // STT: audio in -> transcription text out
+  const callTranscription = async (file: File) => {
+    const userAudioUrl = URL.createObjectURL(file);
+    let memoState = [
+      ...messages,
+      {
+        id: makeId(16),
+        text: userAudioUrl,
+        isAudioContent: true,
+        ...userMessage,
+      },
+    ];
+    setMessages(memoState);
+    scrollToBottom();
+
+    if (messages.length === 0 && chat) {
+      setChatsData([...chatData, { ...chat, title: file.name || 'Transcription' }]);
+    }
+
+    try {
+      const headers = await buildAudioHeaders();
+      const form = new FormData();
+      form.append('file', file);
+      form.append('response_format', 'json');
+
+      // NB: do not set Content-Type; the browser adds the multipart boundary.
+      const response = await fetch(
+        `${props.config.chain.localProxyRouterUrl}/v1/audio/transcriptions`,
+        {
+          method: 'POST',
+          headers,
+          body: form,
+        },
+      );
+
+      if (!response || !response.ok) {
+        props.toasts.toast('error', 'Failed to transcribe audio');
+        return memoState;
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      let transcript = '';
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        transcript = data?.text ?? JSON.stringify(data);
+      } else {
+        transcript = await response.text();
+      }
+
+      memoState = [
+        ...memoState,
+        { id: makeId(16), text: transcript, ...audioIconProps() },
+      ];
+      setMessages(memoState);
+      scrollToBottom();
+    } catch (e) {
+      props.toasts.toast('error', 'Something goes wrong. Try later.');
+      console.error(e);
+    }
+    return memoState;
+  };
+
+  const handleAudioFile = (file?: File | null) => {
+    if (!file || isDisabled) {
+      return;
+    }
+    setIsSpinning(true);
+    callTranscription(file).finally(() => setIsSpinning(false));
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      // Detect a silent/muted input (e.g. macOS handing us a denied mic track):
+      // sample the peak amplitude while recording so we can warn the user
+      // instead of submitting silence that transcribes to garbage.
+      peakLevelRef.current = 0;
+      try {
+        const AudioCtx =
+          window.AudioContext || (window as any).webkitAudioContext;
+        const audioContext = new AudioCtx();
+        audioContextRef.current = audioContext;
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        const data = new Uint8Array(analyser.fftSize);
+        const sampleLevel = () => {
+          analyser.getByteTimeDomainData(data);
+          let peak = 0;
+          for (let i = 0; i < data.length; i++) {
+            peak = Math.max(peak, Math.abs(data[i] - 128));
+          }
+          peakLevelRef.current = Math.max(peakLevelRef.current, peak);
+          levelRafRef.current = requestAnimationFrame(sampleLevel);
+        };
+        sampleLevel();
+      } catch (levelErr) {
+        console.warn('Could not set up audio level monitoring', levelErr);
+      }
+
+      audioChunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (levelRafRef.current != null) {
+          cancelAnimationFrame(levelRafRef.current);
+          levelRafRef.current = null;
+        }
+        audioContextRef.current?.close().catch(() => {});
+        audioContextRef.current = null;
+
+        // Peak is 0..127 (deviation from the 128 silence midpoint). A few
+        // counts of jitter is still effectively silence.
+        if (peakLevelRef.current <= 2) {
+          props.toasts.toast(
+            'error',
+            'No sound was captured. Check microphone permissions and that the correct input device is selected.',
+          );
+          return;
+        }
+
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const file = new File([blob], `recording-${Date.now()}.webm`, {
+          type: 'audio/webm',
+        });
+        handleAudioFile(file);
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+    } catch (e) {
+      props.toasts.toast('error', 'Microphone access was denied');
+      console.error(e);
+    }
+  };
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
+    setRecording(false);
+  };
+
   const handleSystemMessage = (message) => {
     const openSessionEventMessage = 'new session opened';
     const failoverTurnOnMessage = 'provider failed, failover enabled';
@@ -753,7 +1115,8 @@ const Chat = (props: ChatProps) => {
     }
 
     setIsSpinning(true);
-    call(promptInput).finally(() => setIsSpinning(false));
+    const request = modality === 'tts' ? callSpeech(promptInput) : call(promptInput);
+    request.finally(() => setIsSpinning(false));
     setPromptInput('');
   };
 
@@ -784,6 +1147,16 @@ const Chat = (props: ChatProps) => {
     const selectedModel = isLocal
       ? chainData.models.find((m: any) => m.Id == modelId)
       : chainData.models.find((m: any) => m.Id == modelId && m.bids);
+
+    // Marketplace selection needs the bid list, which may still be loading on a
+    // cold first visit. Guard instead of dereferencing undefined bids.
+    if (!isLocal && !selectedModel) {
+      props.toasts.toast(
+        'info',
+        'Model options are still loading. Please try again in a moment.',
+      );
+      return;
+    }
 
     setSelectedModel(selectedModel);
 
@@ -905,9 +1278,9 @@ const Chat = (props: ChatProps) => {
           models={chainData?.models || []}
           onSelectChat={selectChat}
           refreshSessions={async () => {
-            setIsLoading(true);
+            setIsActionLoading(true);
             await refreshSessions();
-            setIsLoading(false);
+            setIsActionLoading(false);
           }}
           onChangeTitle={wrapChangeTitle}
           onCloseSession={closeSession}
@@ -939,10 +1312,7 @@ const Chat = (props: ChatProps) => {
               </div>
               <BtnAccent
                 className="change-modal"
-                onClick={async () => {
-                  await spinWaitForBids();
-                  setOpenChangeModal(true);
-                }}
+                onClick={() => setOpenChangeModal(true)}
               >
                 <IconMessagePlus></IconMessagePlus> New chat
               </BtnAccent>
@@ -958,6 +1328,27 @@ const Chat = (props: ChatProps) => {
               {modelName.toUpperCase()[0]}
             </Avatar>
             <div style={{ marginLeft: '10px' }}>{modelName}</div>
+            {isSecure && (
+              <span
+                title={SECURE_BADGE_TOOLTIP}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  marginLeft: '10px',
+                  padding: '2px 8px 2px 6px',
+                  fontSize: '1.1rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.3px',
+                  color: 'rgba(173, 211, 255, 0.95)',
+                  background: 'rgba(125, 188, 255, 0.14)',
+                  borderRadius: '6px',
+                  cursor: 'default',
+                }}
+              >
+                <IconShieldLock size={13} stroke={2.2} /> Secure
+              </span>
+            )}
           </ChatAvatar>
           {/* {
                         (selectedBid || isLocal) && <div>
@@ -987,52 +1378,130 @@ const Chat = (props: ChatProps) => {
         <Container>
           {renderChatBlock()}
           <Control>
-            <CustomTextArrea
-              disabled={isDisabled}
-              onKeyPress={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleSubmit();
-                }
-              }}
-              value={promptInput}
-              onChange={(ev) => setPromptInput(ev.target.value)}
-              placeholder={
-                isReadonly
-                  ? 'Session is closed. Chat in ReadOnly Mode'
-                  : 'Ask me anything...'
-              }
-              minRows={1}
-              maxRows={6}
-            />
-            <SendBtnWrapper>
-              {isReadonly ? (
-                <>
-                  <Btn onClick={() => handleReopen(false)}>
-                    {isSpinning ? (
-                      <Spinner animation="border" />
-                    ) : (
-                      <span>Staking</span>
-                    )}
-                  </Btn>
-                  <Btn onClick={() => handleReopen(true)}>
-                    {isSpinning ? (
-                      <Spinner animation="border" />
-                    ) : (
-                      <span>Direct Pay</span>
-                    )}
-                  </Btn>
-                </>
-              ) : (
-                <Btn disabled={isDisabled} onClick={handleSubmit}>
-                  {isSpinning ? (
-                    <Spinner animation="border" />
+            {modality === 'stt' && !isReadonly ? (
+              <AudioInputZone data-disabled={isDisabled}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="audio/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    handleAudioFile(e.target.files?.[0]);
+                    e.target.value = '';
+                  }}
+                />
+                <AudioActionBtn
+                  type="button"
+                  disabled={isDisabled || isSpinning || recording}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <IconUpload size={16} /> Upload audio
+                </AudioActionBtn>
+                <AudioActionBtn
+                  type="button"
+                  data-recording={recording}
+                  disabled={isDisabled || isSpinning}
+                  onClick={() => (recording ? stopRecording() : startRecording())}
+                >
+                  {recording ? (
+                    <>
+                      <IconPlayerStopFilled size={16} /> Stop
+                    </>
                   ) : (
-                    <IconArrowUp size={'26px'}></IconArrowUp>
+                    <>
+                      <IconMicrophone size={16} /> Record
+                    </>
                   )}
-                </Btn>
-              )}
-            </SendBtnWrapper>
+                </AudioActionBtn>
+                {isSpinning && <Spinner animation="border" size="sm" />}
+                <AudioHint>
+                  {recording
+                    ? 'Recording… click Stop to transcribe.'
+                    : 'Upload or record audio to transcribe.'}
+                </AudioHint>
+              </AudioInputZone>
+            ) : (
+              <>
+                {modality === 'tts' && !isReadonly && (
+                  <TtsControlsRow>
+                    <label>
+                      Voice
+                      <input
+                        type="text"
+                        list="tts-voices"
+                        value={ttsVoice}
+                        onChange={(e) => setTtsVoice(e.target.value)}
+                      />
+                      <datalist id="tts-voices">
+                        {TTS_VOICES.map((v) => (
+                          <option key={v} value={v} />
+                        ))}
+                      </datalist>
+                    </label>
+                    <label>
+                      Speed
+                      <input
+                        type="range"
+                        min={0.5}
+                        max={2}
+                        step={0.25}
+                        value={ttsSpeed}
+                        onChange={(e) => setTtsSpeed(Number(e.target.value))}
+                      />
+                      {ttsSpeed}x
+                    </label>
+                  </TtsControlsRow>
+                )}
+                <CustomTextArrea
+                  disabled={isDisabled}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSubmit();
+                    }
+                  }}
+                  value={promptInput}
+                  onChange={(ev) => setPromptInput(ev.target.value)}
+                  placeholder={
+                    isReadonly
+                      ? 'Session is closed. Chat in ReadOnly Mode'
+                      : modality === 'tts'
+                        ? 'Enter text to synthesize...'
+                        : 'Ask me anything...'
+                  }
+                  minRows={1}
+                  maxRows={6}
+                />
+                <SendBtnWrapper>
+                  {isReadonly ? (
+                    <>
+                      <Btn onClick={() => handleReopen(false)}>
+                        {isSpinning ? (
+                          <Spinner animation="border" />
+                        ) : (
+                          <span>Staking</span>
+                        )}
+                      </Btn>
+                      <Btn onClick={() => handleReopen(true)}>
+                        {isSpinning ? (
+                          <Spinner animation="border" />
+                        ) : (
+                          <span>Direct Pay</span>
+                        )}
+                      </Btn>
+                    </>
+                  ) : (
+                    <Btn disabled={isDisabled} onClick={handleSubmit}>
+                      {isSpinning ? (
+                        <Spinner animation="border" />
+                      ) : (
+                        <IconArrowUp size={'26px'}></IconArrowUp>
+                      )}
+                    </Btn>
+                  )}
+                </SendBtnWrapper>
+              </>
+            )}
           </Control>
         </Container>
       </View>
@@ -1040,6 +1509,7 @@ const Chat = (props: ChatProps) => {
         models={(chainData as any)?.models}
         isActive={openChangeModal}
         symbol={props.symbol}
+        bidsLoading={bidsLoading}
         providersAvailability={providersAvailability}
         onChangeModel={(eventData) => {
           onCreateNewChat(eventData);
@@ -1051,6 +1521,14 @@ const Chat = (props: ChatProps) => {
 };
 
 const renderMessage = (message, onOpenImage) => {
+  if (message.isAudioContent) {
+    return (
+      <MessageBody>
+        <AudioPlayer controls src={message.text} />
+      </MessageBody>
+    );
+  }
+
   if (message.isImageContent) {
     return (
       <MessageBody>
@@ -1076,28 +1554,7 @@ const renderMessage = (message, onOpenImage) => {
 
   return (
     <MessageBody>
-      <Markdown
-        children={message.text}
-        components={{
-          code(props) {
-            const { children, className, node, ...rest } = props;
-            const match = /language-(\w+)/.exec(className || '');
-            return match ? (
-              <SyntaxHighlighter
-                {...rest}
-                PreTag="div"
-                children={String(children).replace(/\n$/, '')}
-                language={match[1]}
-                style={coldarkDark}
-              />
-            ) : (
-              <code {...rest} className={className}>
-                {children}
-              </code>
-            );
-          },
-        }}
-      />
+      <ThinkingMessageBody text={message.text} />
     </MessageBody>
   );
 };
@@ -1114,4 +1571,6 @@ const Message = ({ message, onOpenImage }) => {
   );
 };
 
-export default withChatState(Chat);
+// withChatState injects props that are loosely typed in its HOC signature;
+// cast to suppress the HOC-vs-component prop mismatch.
+export default withChatState(Chat as React.ComponentType<any>);
