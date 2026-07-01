@@ -3,6 +3,7 @@ package attestation
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -136,30 +137,26 @@ func (bv *BackendVerifier) AttestBackend(ctx context.Context, modelID string, at
 	}
 	bv.log.Infof("backend attestation: TLS binding verified for model %s", modelID)
 
-	// 3a. Workload verification (docker-compose vs attestation quote)
-	var workloadResult *WorkloadResult
-	if bv.artifactRegistry != nil && bv.artifactRegistry.IsLoaded() {
-		dockerCompose, composeErr := bv.fetchDockerCompose(ctx, attestationURL)
-		if composeErr != nil {
-			bv.log.Warnf("backend attestation: could not fetch docker-compose for model %s: %s (workload verification skipped)", modelID, composeErr)
-		} else {
-			result := VerifyWorkload(bv.artifactRegistry, bv.sevRegistry, cpuQuote, dockerCompose, bv.log)
-			workloadResult = &result
-			switch result.Status {
-			case WorkloadAuthentic:
-				bv.log.Infof("backend attestation: workload verified for model %s (template=%s, version=%s, env=%s)", modelID, result.TemplateName, result.ArtifactsVer, result.Env)
-			case WorkloadAuthenticMismatch:
-				bv.storeFailure(modelID, attestationURL, "docker-compose does not match attestation (authentic VM but wrong workload)")
-				return fmt.Errorf("workload verification failed for model %s: docker-compose does not match attestation", modelID)
-			case WorkloadNotAuthentic:
-				bv.storeFailure(modelID, attestationURL, "VM is not an authentic SecretVM (MRTD/RTMR values not in registry)")
-				return fmt.Errorf("workload verification failed for model %s: not an authentic SecretVM", modelID)
-			case WorkloadSkipped:
-				bv.log.Infof("backend attestation: workload verification skipped for model %s (SEV quote, not yet supported)", modelID)
-			}
-		}
-	} else {
-		bv.log.Infof("backend attestation: artifact registry not available, skipping workload verification for model %s", modelID)
+	// 3a. Workload verification (docker-compose vs attestation quote).
+	dockerCompose, composeErr := bv.fetchDockerCompose(ctx, attestationURL)
+	if composeErr != nil {
+		bv.storeFailure(modelID, attestationURL, fmt.Sprintf("could not fetch docker-compose: %s", composeErr))
+		return fmt.Errorf("workload verification failed for model %s: could not fetch docker-compose: %w", modelID, composeErr)
+	}
+
+	workloadResult := VerifyWorkload(bv.artifactRegistry, bv.sevRegistry, cpuQuote, dockerCompose, bv.log)
+	switch workloadResult.Status {
+	case WorkloadAuthentic:
+		bv.log.Infof("backend attestation: workload verified for model %s (template=%s, version=%s, env=%s)", modelID, workloadResult.TemplateName, workloadResult.ArtifactsVer, workloadResult.Env)
+	case WorkloadAuthenticMismatch:
+		bv.storeFailure(modelID, attestationURL, "docker-compose does not match attestation (authentic VM but wrong workload)")
+		return fmt.Errorf("workload verification failed for model %s: docker-compose does not match attestation", modelID)
+	case WorkloadNotAuthentic:
+		bv.storeFailure(modelID, attestationURL, "VM is not an authentic SecretVM (MRTD/RTMR values not in registry)")
+		return fmt.Errorf("workload verification failed for model %s: not an authentic SecretVM", modelID)
+	case ArtifactRegistryNotAvailable:
+		bv.storeFailure(modelID, attestationURL, "artifact registry not available; cannot verify workload")
+		return fmt.Errorf("workload verification unavailable for model %s: artifact registry not loaded", modelID)
 	}
 
 	// 4. Fetch GPU attestation data (JSON with nonce, arch, evidence_list)
@@ -186,15 +183,29 @@ func (bv *BackendVerifier) AttestBackend(ctx context.Context, modelID string, at
 	}
 	bv.log.Infof("backend attestation: CPU-GPU binding verified for model %s", modelID)
 
-	// 7. Verify GPU evidence via NVIDIA Remote Attestation Service (NRAS)
-	// NRAS may be unreachable from some networks (403/timeout). GPU trust is already
-	// established via CPU-GPU nonce binding (step 6), so NRAS failure is non-fatal.
+	// 7. Verify GPU evidence via NVIDIA Remote Attestation Service (NRAS).
+	// NRAS validates the NVIDIA-signed GPU evidence and that it was generated over
+	// the submitted nonce.
 	nrasResult, err := bv.nrasVerifier.VerifyGPU(ctx, gpuData)
 	if err != nil {
-		bv.log.Warnf("backend attestation: NRAS GPU verification failed for model %s (non-fatal): %s", modelID, err)
-	} else {
-		bv.log.Infof("backend attestation: NRAS verified GPU for model %s (%d GPU tokens received)", modelID, len(nrasResult.GPUTokens))
+		bv.storeFailure(modelID, attestationURL, fmt.Sprintf("NRAS GPU verification failed: %s", err))
+		return fmt.Errorf("NRAS GPU verification failed for model %s: %w", modelID, err)
 	}
+	if !nrasResult.OverallResult {
+		bv.storeFailure(modelID, attestationURL, "NRAS reported overall attestation result: failed")
+		return fmt.Errorf("NRAS GPU attestation failed for model %s (x-nvidia-overall-att-result=false)", modelID)
+	}
+	// Bind the NRAS-validated evidence back to the CPU quote: the eat_nonce NRAS
+	// confirmed the evidence was generated over must equal the nonce we submitted
+	// (gpuData.Nonce), which step 6 already proved equals the Intel-signed
+	// CPU-embedded nonce.
+	submittedNonce := strings.ToLower(strings.TrimSpace(gpuData.Nonce))
+	attestedNonce := strings.ToLower(strings.TrimSpace(nrasResult.EATNonce))
+	if attestedNonce == "" || attestedNonce != submittedNonce {
+		bv.storeFailure(modelID, attestationURL, fmt.Sprintf("NRAS eat_nonce mismatch: submitted=%s attested=%s", submittedNonce, attestedNonce))
+		return fmt.Errorf("NRAS eat_nonce does not match CPU-bound nonce for model %s", modelID)
+	}
+	bv.log.Infof("backend attestation: NRAS verified GPU for model %s (%d GPU tokens, nonce bound)", modelID, len(nrasResult.GPUTokens))
 
 	// 8. Golden values comparison (placeholder -- NoopGoldenSource skips this)
 	golden, err := bv.goldenSource.FetchGoldenValues(ctx, modelID, attestationURL)
@@ -230,11 +241,9 @@ func (bv *BackendVerifier) AttestBackend(ctx context.Context, modelID string, at
 		Status:         StatusPassed,
 	}
 
-	if workloadResult != nil {
-		snapshot.WorkloadStatus = string(workloadResult.Status)
-		snapshot.VMTemplateName = workloadResult.TemplateName
-		snapshot.ArtifactsVersion = workloadResult.ArtifactsVer
-	}
+	snapshot.WorkloadStatus = string(workloadResult.Status)
+	snapshot.VMTemplateName = workloadResult.TemplateName
+	snapshot.ArtifactsVersion = workloadResult.ArtifactsVer
 
 	bv.mu.Lock()
 	bv.cache[modelID] = snapshot
@@ -371,19 +380,16 @@ func VerifyCPUGPUBinding(cpuReportData string, gpuReportData string) error {
 		return fmt.Errorf("GPU reportData is empty, cannot verify binding")
 	}
 
-	// Compare the GPU nonce embedded in CPU reportData against GPU's reportData.
-	// Use the shorter of the two for comparison in case of trailing zeros.
-	compareLen := len(gpuNonceFromCPU)
-	if len(gpuReportData) < compareLen {
-		compareLen = len(gpuReportData)
+	// Require an exact match. A prefix/shorter-length comparison would let a GPU
+	// nonce that only matches the first N chars of the CPU-embedded nonce pass,
+	// collapsing the binding's entropy and enabling nonce-collision/replay.
+	if len(gpuNonceFromCPU) != len(gpuReportData) {
+		return fmt.Errorf("CPU-GPU binding length mismatch: cpu_reportdata_suffix=%d chars, gpu_reportdata=%d chars",
+			len(gpuNonceFromCPU), len(gpuReportData))
 	}
-	if compareLen == 0 {
-		return fmt.Errorf("no data available for CPU-GPU binding comparison")
-	}
-
-	if gpuNonceFromCPU[:compareLen] != gpuReportData[:compareLen] {
+	if subtle.ConstantTimeCompare([]byte(gpuNonceFromCPU), []byte(gpuReportData)) != 1 {
 		return fmt.Errorf("CPU-GPU binding mismatch: cpu_reportdata_suffix=%s, gpu_reportdata=%s",
-			gpuNonceFromCPU[:compareLen], gpuReportData[:compareLen])
+			gpuNonceFromCPU, gpuReportData)
 	}
 
 	return nil
