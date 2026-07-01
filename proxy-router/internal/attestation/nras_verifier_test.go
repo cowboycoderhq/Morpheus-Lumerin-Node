@@ -2,6 +2,7 @@ package attestation
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -63,6 +64,62 @@ func TestParseGPUAttestationData_InvalidJSON(t *testing.T) {
 	_, err := ParseGPUAttestationData("not json")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func makeEATToken(t *testing.T, payloadJSON string) string {
+	t.Helper()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(payloadJSON))
+	return header + "." + payload + ".c2ln"
+}
+
+func TestParseEATClaims_Valid(t *testing.T) {
+	token := makeEATToken(t, `{"eat_nonce":"aabbccdd1122","x-nvidia-overall-att-result":true}`)
+	nonce, overall, err := parseEATClaims(token)
+	if err != nil {
+		t.Fatalf("expected no error, got: %s", err)
+	}
+	if nonce != "aabbccdd1122" {
+		t.Fatalf("unexpected nonce: %s", nonce)
+	}
+	if !overall {
+		t.Fatal("expected overall result true")
+	}
+}
+
+func TestParseEATClaims_OverallFalse(t *testing.T) {
+	token := makeEATToken(t, `{"eat_nonce":"aabb","x-nvidia-overall-att-result":false}`)
+	_, overall, err := parseEATClaims(token)
+	if err != nil {
+		t.Fatalf("expected no error, got: %s", err)
+	}
+	if overall {
+		t.Fatal("expected overall result false")
+	}
+}
+
+func TestParseEATClaims_Malformed(t *testing.T) {
+	if _, _, err := parseEATClaims("not-a-jwt"); err == nil {
+		t.Fatal("expected error for non-JWT token")
+	}
+	if _, _, err := parseEATClaims("aGVhZGVy.@@@notbase64@@@.sig"); err == nil {
+		t.Fatal("expected error for invalid base64 payload")
+	}
+}
+
+func TestParseNRASResponse_PopulatesEATClaims(t *testing.T) {
+	overall := makeEATToken(t, `{"eat_nonce":"deadbeef","x-nvidia-overall-att-result":true}`)
+	resp := `[["JWT", "` + overall + `"], {"GPU-0": "eyGPU0"}]`
+	result, err := parseNRASResponse([]byte(resp))
+	if err != nil {
+		t.Fatalf("expected no error, got: %s", err)
+	}
+	if result.EATNonce != "deadbeef" {
+		t.Fatalf("unexpected eat_nonce: %s", result.EATNonce)
+	}
+	if !result.OverallResult {
+		t.Fatal("expected overall result true")
 	}
 }
 

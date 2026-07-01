@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -71,6 +72,35 @@ func TestVerifyCPUGPUBinding_Mismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "CPU-GPU binding mismatch") {
 		t.Fatalf("unexpected error: %s", err)
+	}
+}
+
+func TestVerifyCPUGPUBinding_PrefixDoesNotPass(t *testing.T) {
+	gpuNonce := "aabbccdd11223344556677889900aabbccdd11223344556677889900aabb1122"
+	tlsFingerprint := "0011223344556677889900aabbccddeeff0011223344556677889900aabbccdd"
+	cpuReportData := tlsFingerprint + gpuNonce
+
+	// A GPU reportData that is only a prefix of the expected nonce must be rejected.
+	err := VerifyCPUGPUBinding(cpuReportData, gpuNonce[:1])
+	if err == nil {
+		t.Fatal("expected error for prefix-only GPU reportData")
+	}
+	if !strings.Contains(err.Error(), "length mismatch") {
+		t.Fatalf("expected length mismatch error, got: %s", err)
+	}
+}
+
+func TestVerifyCPUGPUBinding_LongerGPUReportData(t *testing.T) {
+	gpuNonce := "aabbccdd11223344556677889900aabbccdd11223344556677889900aabb1122"
+	tlsFingerprint := "0011223344556677889900aabbccddeeff0011223344556677889900aabbccdd"
+	cpuReportData := tlsFingerprint + gpuNonce
+
+	err := VerifyCPUGPUBinding(cpuReportData, gpuNonce+"deadbeef")
+	if err == nil {
+		t.Fatal("expected error for over-length GPU reportData")
+	}
+	if !strings.Contains(err.Error(), "length mismatch") {
+		t.Fatalf("expected length mismatch error, got: %s", err)
 	}
 }
 
@@ -232,6 +262,7 @@ func TestBackendVerifier_AttestBackend_FullFlow(t *testing.T) {
 
 	gpuNonce := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	cpuReportData := fingerprint + gpuNonce
+	cpuQuote := testTdxQuoteHex()
 
 	gpuJSON := fmt.Sprintf(`{
 		"nonce": "%s",
@@ -241,11 +272,14 @@ func TestBackendVerifier_AttestBackend_FullFlow(t *testing.T) {
 
 	attestMux := http.NewServeMux()
 	attestMux.HandleFunc("/cpu", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, "deadbeefcpu")
+		fmt.Fprint(w, cpuQuote)
 	})
 	attestMux.HandleFunc("/gpu", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, gpuJSON)
+	})
+	attestMux.HandleFunc("/docker-compose", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "services:\n  llm:\n    image: test\n")
 	})
 	attestServer := httptest.NewTLSServer(attestMux)
 	defer attestServer.Close()
@@ -272,8 +306,12 @@ func TestBackendVerifier_AttestBackend_FullFlow(t *testing.T) {
 	portalServer := httptest.NewServer(portalMux)
 	defer portalServer.Close()
 
-	bv := NewBackendVerifier(portalServer.URL+"/api/quote-parse", nil, nil, nil, testLog())
+	nrasServer := httptest.NewServer(mockNRASHandler(t, true))
+	defer nrasServer.Close()
+
+	bv := NewBackendVerifier(portalServer.URL+"/api/quote-parse", nil, loadedRegistry(), nil, testLog())
 	bv.attestationClient = NewAttestationHTTPClient()
+	bv.nrasVerifier.baseURL = nrasServer.URL
 
 	err := bv.AttestBackend(context.Background(), "test-model", attestServer.URL)
 	if err != nil {
@@ -292,11 +330,94 @@ func TestBackendVerifier_AttestBackend_FullFlow(t *testing.T) {
 	}
 }
 
+// testComposeYAML is the docker-compose served by the orchestration tests. It
+// must match the bytes used to compute the fixture registry entry's RTMR3.
+const testComposeYAML = "services:\n  llm:\n    image: test\n"
+
+// testRootfsData is an arbitrary 48-byte hex rootfs_data for the fixture entry.
+const testRootfsData = "1111111111111111111111111111111111111111111111111111111111111111"
+
+// testTdxRegisters returns deterministic register values for a synthetic TDX
+// quote. RTMR3 is derived from testComposeYAML + testRootfsData so that
+// VerifyTdxWorkload against the fixture registry yields WorkloadAuthentic.
+func testTdxRegisters() (mrtd, rtmr0, rtmr1, rtmr2, rtmr3 [48]byte) {
+	for i := 0; i < 48; i++ {
+		mrtd[i] = 0xa1
+		rtmr0[i] = 0xb2
+		rtmr1[i] = 0xc3
+		rtmr2[i] = 0xd4
+	}
+	rtmr3Hex := CalculateRTMR3([]byte(testComposeYAML), testRootfsData)
+	b, _ := hex.DecodeString(rtmr3Hex)
+	copy(rtmr3[:], b)
+	return
+}
+
+// testTdxQuoteHex builds a minimal synthetic TDX v4 quote carrying the fixture
+// register values, so AttestBackend's mandatory workload verification can run.
+func testTdxQuoteHex() string {
+	mrtd, rtmr0, rtmr1, rtmr2, rtmr3 := testTdxRegisters()
+	raw := make([]byte, 632)
+	binary.LittleEndian.PutUint16(raw[0:2], 4)    // version
+	binary.LittleEndian.PutUint32(raw[4:8], 0x81) // tee type (TDX)
+	copy(raw[184:232], mrtd[:])
+	copy(raw[376:424], rtmr0[:])
+	copy(raw[424:472], rtmr1[:])
+	copy(raw[472:520], rtmr2[:])
+	copy(raw[520:568], rtmr3[:])
+	return hex.EncodeToString(raw)
+}
+
+// loadedRegistry returns an ArtifactRegistry (IsLoaded()==true) containing the
+// entry that matches testTdxQuoteHex + testComposeYAML, so tests exercise
+// AttestBackend's mandatory workload-verification step end to end.
+func loadedRegistry() *ArtifactRegistry {
+	mrtd, rtmr0, rtmr1, rtmr2, _ := testTdxRegisters()
+	r := NewArtifactRegistry("http://unused", 1*time.Hour, testLog())
+	r.mu.Lock()
+	r.entries = []TdxArtifactEntry{{
+		TemplateName: "test-template",
+		VMType:       "tdx",
+		ArtifactsVer: "v1.0.0",
+		MRTD:         hex.EncodeToString(mrtd[:]),
+		RTMR0:        hex.EncodeToString(rtmr0[:]),
+		RTMR1:        hex.EncodeToString(rtmr1[:]),
+		RTMR2:        hex.EncodeToString(rtmr2[:]),
+		RootfsData:   testRootfsData,
+	}}
+	r.lastFetched = time.Now()
+	r.mu.Unlock()
+	return r
+}
+
+// mockNRASHandler returns an NRAS handler that echoes the submitted nonce back
+// as the eat_nonce claim in a JWT-encoded overall EAT token, with the given
+// overall attestation result.
+func mockNRASHandler(t *testing.T, overallResult bool) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req GPUAttestationData
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("NRAS: failed to decode request: %s", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		overall := makeEATToken(t, fmt.Sprintf(`{"eat_nonce":%q,"x-nvidia-overall-att-result":%t}`, req.Nonce, overallResult))
+		resp := []json.RawMessage{
+			[]byte(fmt.Sprintf(`["JWT", %q]`, overall)),
+			[]byte(`{"GPU-0": "eyGPU0Token"}`),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
 func TestBackendVerifier_AttestBackend_WithNRAS(t *testing.T) {
 	cert, fingerprint := selfSignedCert(t)
 
 	gpuNonce := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	cpuReportData := fingerprint + gpuNonce
+	cpuQuote := testTdxQuoteHex()
 
 	gpuJSON := fmt.Sprintf(`{
 		"nonce": "%s",
@@ -306,11 +427,14 @@ func TestBackendVerifier_AttestBackend_WithNRAS(t *testing.T) {
 
 	attestMux := http.NewServeMux()
 	attestMux.HandleFunc("/cpu", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, "deadbeefcpu")
+		fmt.Fprint(w, cpuQuote)
 	})
 	attestMux.HandleFunc("/gpu", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, gpuJSON)
+	})
+	attestMux.HandleFunc("/docker-compose", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "services:\n  llm:\n    image: test\n")
 	})
 	attestServer := httptest.NewTLSServer(attestMux)
 	defer attestServer.Close()
@@ -337,33 +461,10 @@ func TestBackendVerifier_AttestBackend_WithNRAS(t *testing.T) {
 	portalServer := httptest.NewServer(portalMux)
 	defer portalServer.Close()
 
-	// Mock NRAS server
-	nrasMux := http.NewServeMux()
-	nrasMux.HandleFunc("/v4/attest/gpu", func(w http.ResponseWriter, r *http.Request) {
-		var req GPUAttestationData
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("NRAS: failed to decode request: %s", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if req.Arch != "HOPPER" {
-			t.Errorf("NRAS: expected arch HOPPER, got %s", req.Arch)
-		}
-		if len(req.EvidenceList) != 1 {
-			t.Errorf("NRAS: expected 1 evidence, got %d", len(req.EvidenceList))
-		}
-
-		resp := []json.RawMessage{
-			[]byte(`["JWT", "eyOverallToken"]`),
-			[]byte(`{"GPU-0": "eyGPU0Token"}`),
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	})
-	nrasServer := httptest.NewServer(nrasMux)
+	nrasServer := httptest.NewServer(mockNRASHandler(t, true))
 	defer nrasServer.Close()
 
-	bv := NewBackendVerifier(portalServer.URL+"/api/quote-parse", nil, nil, nil, testLog())
+	bv := NewBackendVerifier(portalServer.URL+"/api/quote-parse", nil, loadedRegistry(), nil, testLog())
 	bv.attestationClient = NewAttestationHTTPClient()
 	bv.nrasVerifier.baseURL = nrasServer.URL
 
@@ -378,6 +479,114 @@ func TestBackendVerifier_AttestBackend_WithNRAS(t *testing.T) {
 	}
 	if status.Status != StatusPassed {
 		t.Fatalf("expected StatusPassed, got %s (error: %s)", status.Status, status.Error)
+	}
+}
+
+func TestBackendVerifier_AttestBackend_NRASOverallResultFalse(t *testing.T) {
+	cert, fingerprint := selfSignedCert(t)
+
+	gpuNonce := "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	cpuReportData := fingerprint + gpuNonce
+	cpuQuote := testTdxQuoteHex()
+
+	gpuJSON := fmt.Sprintf(`{
+		"nonce": "%s",
+		"arch": "HOPPER",
+		"evidence_list": [{"certificate": "dGVzdA==", "evidence": "dGVzdA=="}]
+	}`, gpuNonce)
+
+	attestMux := http.NewServeMux()
+	attestMux.HandleFunc("/cpu", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, cpuQuote)
+	})
+	attestMux.HandleFunc("/gpu", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, gpuJSON)
+	})
+	attestMux.HandleFunc("/docker-compose", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "services:\n  llm:\n    image: test\n")
+	})
+	attestServer := httptest.NewTLSServer(attestMux)
+	defer attestServer.Close()
+	attestServer.TLS.Certificates = []tls.Certificate{cert}
+
+	portalMux := http.NewServeMux()
+	portalHandler := func(w http.ResponseWriter, _ *http.Request) {
+		resp := ParseQuoteResponse{
+			Quote:  &QuoteFields{MRTD: "aaaa", RTMR0: "bbbb", RTMR1: "cccc", RTMR2: "dddd", RTMR3: "eeee", ReportData: cpuReportData},
+			Status: &QuoteStatus{AttestationType: "tdx"},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+	portalMux.HandleFunc("/api/quote-parse", portalHandler)
+	portalMux.HandleFunc("/api/quote-parse-sev", portalHandler)
+	portalServer := httptest.NewServer(portalMux)
+	defer portalServer.Close()
+
+	// NRAS returns a well-formed token but reports overall attestation failure.
+	nrasServer := httptest.NewServer(mockNRASHandler(t, false))
+	defer nrasServer.Close()
+
+	bv := NewBackendVerifier(portalServer.URL+"/api/quote-parse", nil, loadedRegistry(), nil, testLog())
+	bv.attestationClient = NewAttestationHTTPClient()
+	bv.nrasVerifier.baseURL = nrasServer.URL
+
+	err := bv.AttestBackend(context.Background(), "test-model-fail", attestServer.URL)
+	if err == nil {
+		t.Fatal("expected AttestBackend to fail when NRAS overall result is false")
+	}
+	if !strings.Contains(err.Error(), "overall-att-result") {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if status := bv.GetStatus("test-model-fail"); status == nil || status.Status != StatusFailed {
+		t.Fatalf("expected StatusFailed snapshot, got %+v", status)
+	}
+}
+
+func TestBackendVerifier_AttestBackend_RegistryNotLoaded(t *testing.T) {
+	cert, fingerprint := selfSignedCert(t)
+	cpuReportData := fingerprint + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	cpuQuote := testTdxQuoteHex() // valid TDX quote so workload verification runs
+
+	attestMux := http.NewServeMux()
+	attestMux.HandleFunc("/cpu", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, cpuQuote)
+	})
+	attestMux.HandleFunc("/docker-compose", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, testComposeYAML)
+	})
+	attestServer := httptest.NewTLSServer(attestMux)
+	defer attestServer.Close()
+	attestServer.TLS.Certificates = []tls.Certificate{cert}
+
+	portalMux := http.NewServeMux()
+	portalHandler := func(w http.ResponseWriter, _ *http.Request) {
+		resp := ParseQuoteResponse{
+			Quote:  &QuoteFields{MRTD: "aaaa", RTMR0: "bbbb", RTMR1: "cccc", RTMR2: "dddd", RTMR3: "eeee", ReportData: cpuReportData},
+			Status: &QuoteStatus{AttestationType: "tdx"},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+	portalMux.HandleFunc("/api/quote-parse", portalHandler)
+	portalMux.HandleFunc("/api/quote-parse-sev", portalHandler)
+	portalServer := httptest.NewServer(portalMux)
+	defer portalServer.Close()
+
+	// nil registry -> workload verification is unavailable -> must fail closed.
+	bv := NewBackendVerifier(portalServer.URL+"/api/quote-parse", nil, nil, nil, testLog())
+	bv.attestationClient = NewAttestationHTTPClient()
+
+	err := bv.AttestBackend(context.Background(), "test-model-noreg", attestServer.URL)
+	if err == nil {
+		t.Fatal("expected AttestBackend to fail closed when artifact registry is not loaded")
+	}
+	if !strings.Contains(err.Error(), "artifact registry not loaded") {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if status := bv.GetStatus("test-model-noreg"); status == nil || status.Status != StatusFailed {
+		t.Fatalf("expected StatusFailed snapshot, got %+v", status)
 	}
 }
 
