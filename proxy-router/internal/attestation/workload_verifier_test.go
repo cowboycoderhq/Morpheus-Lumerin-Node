@@ -164,10 +164,34 @@ func TestVerifyWorkload_TdxQuote(t *testing.T) {
 	}
 }
 
-func TestVerifyWorkload_NonTdxQuote(t *testing.T) {
+func TestVerifyWorkload_TdxQuoteRegistryNil(t *testing.T) {
+	quoteHex := readTestFixture(t, "tdx_cpu_docker_check_quote.txt")
+	composeYaml := readTestFixture(t, "tdx_cpu_docker_check_compose.yaml")
+
+	// TDX quote but no artifact registry -> must fail closed.
+	result := VerifyWorkload(nil, nil, quoteHex, composeYaml, nil)
+	if result.Status != ArtifactRegistryNotAvailable {
+		t.Fatalf("status = %s, want %s", result.Status, ArtifactRegistryNotAvailable)
+	}
+}
+
+func TestVerifyWorkload_TdxQuoteRegistryNotLoaded(t *testing.T) {
+	quoteHex := readTestFixture(t, "tdx_cpu_docker_check_quote.txt")
+	composeYaml := readTestFixture(t, "tdx_cpu_docker_check_compose.yaml")
+
+	// Registry constructed but never fetched -> IsLoaded()==false -> fail closed.
+	unloaded := NewArtifactRegistry("", 0, &lib.LoggerMock{})
+	result := VerifyWorkload(unloaded, nil, quoteHex, composeYaml, nil)
+	if result.Status != ArtifactRegistryNotAvailable {
+		t.Fatalf("status = %s, want %s", result.Status, ArtifactRegistryNotAvailable)
+	}
+}
+
+func TestVerifyWorkload_NonTdxQuoteNoSevRegistry(t *testing.T) {
 	reg := testRegistry(t)
+	// SEV quote with no SEV registry available must fail closed (registry unavailable).
 	result := VerifyWorkload(reg, nil, "SGVsbG8gV29ybGQ=", "anything", nil)
-	if result.Status != WorkloadSkipped {
-		t.Fatalf("status = %s, want %s", result.Status, WorkloadSkipped)
+	if result.Status != ArtifactRegistryNotAvailable {
+		t.Fatalf("status = %s, want %s", result.Status, ArtifactRegistryNotAvailable)
 	}
 }

@@ -3,10 +3,12 @@ package attestation
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/lib"
 )
@@ -33,6 +35,14 @@ type GPUAttestationData struct {
 type NRASResult struct {
 	OverallToken string
 	GPUTokens    map[string]string
+
+	// EATNonce is the eat_nonce claim from the overall EAT token -- the nonce
+	// NRAS confirmed the GPU evidence was generated over. Empty if the overall
+	// token could not be decoded.
+	EATNonce string
+	// OverallResult is the x-nvidia-overall-att-result claim: NVIDIA's boolean
+	// pass/fail summary across all attested GPUs.
+	OverallResult bool
 }
 
 // NRASVerifier verifies GPU attestation evidence via NVIDIA Remote Attestation Service.
@@ -128,10 +138,51 @@ func parseNRASResponse(body []byte) (*NRASResult, error) {
 		return nil, fmt.Errorf("failed to parse NRAS GPU tokens: %w", err)
 	}
 
-	return &NRASResult{
+	result := &NRASResult{
 		OverallToken: overallPair[1],
 		GPUTokens:    gpuTokens,
-	}, nil
+	}
+
+	// Decode the overall EAT token's claims so callers can enforce the NVIDIA
+	// pass/fail result and bind the attested nonce back to the CPU quote.
+	// Best-effort here: a malformed token leaves the fields zero-valued and is
+	// treated as a hard failure by the caller (AttestBackend).
+	if nonce, overall, err := parseEATClaims(overallPair[1]); err == nil {
+		result.EATNonce = nonce
+		result.OverallResult = overall
+	}
+
+	return result, nil
+}
+
+// eatClaims holds the subset of NVIDIA EAT (Entity Attestation Token) claims we
+// enforce. See https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html
+type eatClaims struct {
+	Nonce         string `json:"eat_nonce"`
+	OverallResult bool   `json:"x-nvidia-overall-att-result"`
+}
+
+// parseEATClaims decodes the payload of a JWT-encoded EAT token and extracts the
+// eat_nonce and x-nvidia-overall-att-result claims. It does NOT verify the JWT
+// signature: the token is received directly from NRAS over a TLS-authenticated
+// connection to nras.attestation.nvidia.com, which is the source of trust.
+func parseEATClaims(token string) (nonce string, overallResult bool, err error) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return "", false, fmt.Errorf("EAT token is not a well-formed JWT (%d segments)", len(parts))
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return "", false, fmt.Errorf("failed to base64url-decode EAT payload: %w", err)
+	}
+
+	var claims eatClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return "", false, fmt.Errorf("failed to parse EAT claims JSON: %w", err)
+	}
+
+	return claims.Nonce, claims.OverallResult, nil
 }
 
 // ParseGPUAttestationData parses the raw JSON response from the SecretVM /gpu endpoint.
