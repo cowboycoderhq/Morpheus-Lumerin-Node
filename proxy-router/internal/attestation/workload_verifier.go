@@ -10,10 +10,10 @@ import (
 type WorkloadStatus string
 
 const (
-	WorkloadAuthentic         WorkloadStatus = "authentic_match"
-	WorkloadAuthenticMismatch WorkloadStatus = "authentic_mismatch"
-	WorkloadNotAuthentic      WorkloadStatus = "not_authentic"
-	WorkloadSkipped           WorkloadStatus = "skipped"
+	WorkloadAuthentic            WorkloadStatus = "authentic_match"
+	WorkloadAuthenticMismatch    WorkloadStatus = "authentic_mismatch"
+	WorkloadNotAuthentic         WorkloadStatus = "not_authentic"
+	ArtifactRegistryNotAvailable WorkloadStatus = "artifact_registry_not_available"
 )
 
 type WorkloadResult struct {
@@ -78,13 +78,19 @@ func VerifyTdxWorkload(registry *ArtifactRegistry, cpuQuoteHex string, dockerCom
 
 func VerifyWorkload(registry *ArtifactRegistry, sevRegistry *SevArtifactRegistry, cpuQuoteData string, dockerComposeYaml string, log lib.ILogger) WorkloadResult {
 	if IsTdxQuote(cpuQuoteData) {
+		if registry == nil || !registry.IsLoaded() {
+			if log != nil {
+				log.Warnf("workload: TDX quote detected but artifact registry not available; cannot verify workload")
+			}
+			return WorkloadResult{Status: ArtifactRegistryNotAvailable}
+		}
 		return VerifyTdxWorkload(registry, cpuQuoteData, dockerComposeYaml, log)
 	}
-	if sevRegistry != nil && sevRegistry.IsLoaded() {
-		return VerifySevWorkload(sevRegistry, cpuQuoteData, dockerComposeYaml, log)
+	if sevRegistry == nil || !sevRegistry.IsLoaded() {
+		if log != nil {
+			log.Warnf("workload: SEV quote detected but SEV registry not available; cannot verify workload")
+		}
+		return WorkloadResult{Status: ArtifactRegistryNotAvailable}
 	}
-	if log != nil {
-		log.Infof("workload: SEV quote detected but SEV registry not available, skipping")
-	}
-	return WorkloadResult{Status: WorkloadSkipped}
+	return VerifySevWorkload(sevRegistry, cpuQuoteData, dockerComposeYaml, log)
 }
