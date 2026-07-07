@@ -8,7 +8,7 @@
 
 ## 1. The one-paragraph version
 
-The RFP replaces the model catalog's human approval pipeline with a permissionless, bond-backed on-chain registry; removes the misunderstood 365-day provider reward limiter and replaces it with a *hard-enforced* daily emission budget; makes every close return the consumer's money in the same transaction; adds a 5% platform commission on provider payouts with airtight conservation accounting; and adds cold/hot custody delegation. We pressure-tested the design against a real self-dealing operator observed on mainnet (one wallet acting as its own consumer, provider, and model owner, drawing ~975 MOR/day of emissions with zero tokens served). The honest conclusion: **these changes do not stop capital-proportional emission farming — they bound it, price it openly, and strip it of every side benefit** (fake reputation, invisible over-issuance, funding-wallet surprises). Whether the residual — "locked MOR earns emission share without delivering service" — is a bug or just staking yield by another name is a tokenomics question the contract now forces into the open instead of hiding.
+The RFP replaces the model catalog's human approval pipeline with a permissionless, bond-backed on-chain registry; removes the misunderstood 365-day provider reward limiter and replaces it with a *hard-enforced* daily emission budget; makes every close return the consumer's money in the same transaction; adds a 5% platform commission on provider payouts with airtight conservation accounting; and adds cold/hot custody delegation. We pressure-tested the whole design against a replay of recent live mainnet activity — every session open and close, the model catalog, bids, receipts, and the funding wallet's runway. The replay validated the consumer-side fixes (nearly half of real sessions hit the early-close friction the RFP removes), the catalog redesign (the live catalog demonstrates exactly the duplication and naming sprawl the grammar kills), and the budget/conservation accounting (which today is assumed, not enforced). It also surfaced the design's honest limit: **these changes do not stop capital-proportional emission farming — they bound it, price it openly, and strip it of every side benefit** (fake reputation, invisible over-issuance, funding-wallet surprises). Whether the residual — "locked MOR earns emission share without delivering service" — is a bug or just staking yield by another name is a tokenomics question the contract now forces into the open instead of hiding.
 
 ---
 
@@ -21,7 +21,7 @@ The RFP replaces the model catalog's human approval pipeline with a permissionle
 | Model identity | `keccak256(owner, name)` — same name registerable by many owners | One name = one immutable id, derived from the name itself |
 | Naming | Any string, no validation | Strict on-chain ASCII grammar anchored to Hugging Face repo ids (open weights) or vendor API ids (proprietary); homoglyphs structurally impossible |
 | Who can register | Anyone, ~free | Anyone, via commit-reveal + **500 MOR refundable bond** + 10 MOR fee |
-| Curation | None (garbage accumulates) / earlier draft: PR + CI + multisig approval | **Nobody approves anything.** Lies are policed by bonded challenges (loser's bond slashed); dead listings auto-retire after 90 days without bids |
+| Curation | None (garbage accumulates) | **Nobody approves anything.** Lies are policed by bonded challenges (loser's bond slashed); dead listings auto-retire after 90 days without bids |
 | Serving channel | Exposed ad-hoc in names ("venice-served-X") | **Channel neutrality:** names identify the model artifact only; resellers/aggregators bid on the same canonical listing as everyone else |
 
 **Why it matters:** the catalog stops being a spam surface and a gatekeeping bottleneck at the same time. Registration survives total loss of every admin key. The "make it hurt" bar is collateral, not committee.
@@ -57,24 +57,24 @@ Enriched one-call reads (session + bid + model + provider), bounded iteration ev
 
 ## 3. The last 7 days, replayed under the new rules
 
-Real data, 2026-06-30 → 2026-07-07: **8,156 closes; 16,466 MOR of gross provider entitlements; 42% early closes; 49% of sessions served zero tokens.**
+Real data, 2026-06-30 → 2026-07-07: **8,156 closes; 16,466 MOR of gross provider entitlements; 42% early closes; 49% of sessions served zero tokens.** Provider labels are anonymized; the shape of the market, not the identities, is the finding.
 
-| Provider | Closes | Gross MOR | 5% fee | Net MOR | Self-dealt | Tokens served |
+| Provider profile | Closes | Gross MOR | 5% fee | Net MOR | Self-dealt | Tokens served |
 |---|---|---|---|---|---|---|
-| our-frontier | 334 | 8,519 | 426 | 8,093 | 0 | 4.5 M |
-| **MORDIEM (self-dealer)** | **48** | **6,796** | **340** | **6,456** | **48 / 48** | **0** |
-| our-P1 | 3,691 | 972 | 49 | 923 | 0 | 1,879.7 M |
-| others (7) | 4,083 | 179 | 9 | 170 | 0 | 268.2 M |
+| Frontier-model provider (large sessions) | 334 | 8,519 | 426 | 8,093 | 0 | 4.5 M |
+| Self-dealing operator (own consumer + model) | 48 | 6,796 | 340 | 6,456 | 48 / 48 | 0 |
+| High-volume provider (small sessions) | 3,691 | 972 | 49 | 923 | 0 | 1,879.7 M |
+| Seven others | 4,083 | 179 | 9 | 170 | 0 | 268.2 M |
 
-**What would have been different, and what wouldn't:**
+**What the replay says about each part of the ecosystem:**
 
-- **MORDIEM's emission take: unchanged.** 6,796 MOR (41.3% of all entitlements) flows to it either way, because extraction is proportional to staked capital and it cycled 2.17M MOR of stake to get it. The new rules don't pretend otherwise.
-- **MORDIEM's reputation take: zero.** Today its 48 self-signed, zero-token "perfect" sessions write TTFT/TPS stats that rating-driven routers consume. Under REWARD-R6, none of them touch `StatsStorage`. Farming buys MOR yield; it no longer buys real consumers.
-- **The budget throttle never binds.** Peak day was 3,060 MOR of gross entitlements against a 27,890 MOR daily budget (~11%). Honest providers and the farmer alike would feel nothing. The throttle exists for the day ten MORDIEMs show up: then the ceiling holds at the budget, claims queue and roll, and over-issuance is structurally impossible — instead of today, where nothing at claim time checks the budget at all.
-- **Consumers get their money back instantly.** 3,436 early closes (42%) put stake behind the 1-day lock this week; every one of them would have been whole in the close transaction. The external recovery job becomes a backstop.
-- **The fee raises real, but conflicted, revenue.** 823 MOR/week to the maintainer multisig at current volume — of which 340 MOR (41%) is commission on pure self-dealing. That is exactly why the RFP discloses the conflict and prices the burn option.
-- **Funding runway becomes public.** The funding wallet holds 248.5k MOR today: ~15 weeks at current burn, but only **~9 days if farming ever saturated the full daily budget**. Today you need a script and an archive node to know that; `getFundingHealth()` makes it one RPC call anyone can alert on.
-- **Catalog impact:** of 76 live model names, 72 survive the new grammar as-is or via lowercase fold; 4 (names with spaces) get renamed to their HF ids at migration. Nothing else a consumer sees changes.
+- **Consumers (the biggest everyday win).** 3,436 early closes (42% of the week) put stake behind the 1-day lock; under the RFP every one of them is whole in the close transaction, and the second `withdrawUserStakes` transaction plus the external recovery job disappear. Half of all sessions served zero tokens — consumers are demonstrably buying *availability windows*, which is exactly the semantics the RFP formalizes (quote before staking, prepayment-style direct pay, pay-for-readiness rewards).
+- **Providers.** Earnings are heavily concentrated (two profiles account for ~93% of entitlements), and every closeout receipt is provider-signed with no verification. The limiter removal changes nothing for this week's honest volume (nobody was near their cap without topping up); what changes is that quality stats become the only route to rating-driven routing, because fabricated sessions stop writing them (REWARD-R6).
+- **The model catalog.** Of 76 live names, 72 survive the new grammar as-is or via lowercase fold; 4 (names with spaces) get renamed to their upstream ids at migration. Case-duplicate and per-owner duplicate listings — visible in today's catalog — become structurally impossible. Nothing else a consumer sees changes.
+- **Self-dealing (bounded, not stopped).** The one self-dealing operator's emission take — 6,796 MOR, 41.3% of the week's entitlements against 2.17M MOR of cycled stake — is unchanged under the new rules, because extraction is capital-proportional by design. What changes: its 48 zero-token, self-signed "perfect" sessions stop writing reputation stats, and its volume is tagged and visible instead of blended into network totals.
+- **The budget throttle never binds at today's scale.** Peak day was 3,060 MOR of gross entitlements against a 27,890 MOR daily budget (~11%). It exists for the swarm scenario: if farming multiplied tenfold, the ceiling holds at the budget, claims queue and roll, and over-issuance is structurally impossible — instead of today, where nothing at claim time checks the budget at all.
+- **The owner/ops burden shrinks.** The funding wallet holds 248.5k MOR: ~15 weeks at current burn, but only **~9 days if farming saturated the full daily budget**. Today that runway requires a bespoke script; `getFundingHealth()` makes it one RPC call anyone can alert on. The recovery job, the catalog approval queue, and the stuck-stake support tickets all go away; what remains for the owner is parameter tuning within on-chain bounds and challenge arbitration.
+- **The fee raises real, but conflicted, revenue.** 823 MOR/week to the maintainer multisig at current volume — of which 340 MOR (41%) is commission on self-dealt volume. That is exactly why the RFP discloses the conflict and prices the burn option.
 
 ---
 
@@ -84,7 +84,7 @@ Real data, 2026-06-30 → 2026-07-07: **8,156 closes; 16,466 MOR of gross provid
 
 Yes — and the design treats that as a feature to bound rather than a hole to deny. Walk the loop:
 
-**Short term (0–3 months): farming is visibly attractive and demand-positive.** MORDIEM's observed economics: ~311k MOR locked → ~975 MOR/day of emissions ≈ **~0.31%/day, roughly 110% APR** (about 105% after the 5% fee), at essentially zero operational risk. Publishing rules that legalize this (no limiter, no cap) will attract imitators, and imitators must **buy and lock MOR** to play. That is genuine short-term demand and price support. It is also exactly what the emission schedule was going to pay out anyway — the daily budget is emitted regardless; farming changes *who captures it*, not *how much leaves*.
+**Short term (0–3 months): farming is visibly attractive and demand-positive.** The observed self-dealing economics on mainnet: ~311k MOR locked → ~975 MOR/day of emissions ≈ **~0.31%/day, roughly 110% APR** (about 105% after the 5% fee), at essentially zero operational risk. Publishing rules that legalize this (no limiter, no cap) will attract imitators, and imitators must **buy and lock MOR** to play. That is genuine short-term demand and price support. It is also exactly what the emission schedule was going to pay out anyway — the daily budget is emitted regardless; farming changes *who captures it*, not *how much leaves*.
 
 **Medium term (3–12 months): the yield self-dilutes.** The enforced budget is the crucial change. Total daily stake-pool payout is hard-capped at `getTodaysBudget` (~27.9k MOR/day today, declining on the emission curve). Every new farmer's capital competes for the same fixed pot, so the farming APR falls as locked capital rises — the system converges toward an equilibrium where farming yields no more than competitive staking. Meanwhile: farmed sessions can't buy routing (stats exclusion), the funding wallet's runway is public (`getFundingHealth`), a shortfall queues loudly instead of compounding invisibly (accrual accounting), and the treasury can see the drain rate and adjust top-up policy. What farmers *extract* they largely *sell* (that is the point of farming), so the net token flow is: buy-and-lock on entry (support), emission-sell on an ongoing basis (pressure). At equilibrium the two roughly offset; the token's price ends up carried by what it always had to be carried by — real inference demand.
 
@@ -112,7 +112,7 @@ Yes — and the design treats that as a feature to bound rather than a hole to d
 |---|---|
 | Session closes | 8,156 |
 | Gross provider entitlements | 16,466 MOR |
-| — of which pure self-dealing (MORDIEM, 48 sessions, 0 tokens) | 6,796 MOR (41.3%) |
+| — of which pure self-dealing (one operator, 48 sessions, 0 tokens) | 6,796 MOR (41.3%) |
 | 5% fee take (hypothetical) | 823 MOR (340 from self-dealing) |
 | Early closes (stake behind 1-day lock today; instant under RFP) | 3,436 (42%) |
 | Zero-token sessions | 49% |
