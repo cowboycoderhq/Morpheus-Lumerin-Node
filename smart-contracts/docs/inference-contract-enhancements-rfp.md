@@ -161,7 +161,13 @@ Each subsection matures one facet/function end-to-end. Where a concern spans fac
 
 ## 3.1 ModelRegistry facet: permissionless canonical catalog
 
-**Facet intent.** Replace per-owner, free-for-all model registration with a canonical catalog that is **permissionless but expensive to abuse**: globally unique deterministic identity (one name, one id, forever), a strict on-chain name grammar anchored to Hugging Face naming conventions, a refundable registration bond posted for a **probation window** during which the market polices the listing via bonded challenges, and **graduation** at the end of probation: the bond returns to the registrant, the registrant's special powers lapse, and the listing becomes permanent, ownerless protocol infrastructure. Nobody approves a model. Nobody can stop you from listing one. Lying about a listing during probation loses the bond; surviving probation makes the listing a protocol fact that outlives its creator. A registrant is a *contributor*, not an owner: registering confers no revenue, exclusivity, or routing preference — any provider can bid on the listing the moment it is live — so the design returns the contributor's capital once the market has had a fair window to check the claim.
+**Facet intent.** Replace per-owner, free-for-all model registration with a canonical catalog that is **permissionless but expensive to abuse**:
+
+- **Globally unique deterministic identity** — one name, one id, forever — under a strict on-chain name grammar anchored to Hugging Face naming conventions.
+- **A refundable registration bond** posted for a **probation window**, during which the market polices the listing via bonded challenges.
+- **Graduation** at the end of probation: the bond returns to the registrant, the registrant's special powers lapse, and the listing becomes permanent, ownerless protocol infrastructure.
+
+Nobody approves a model. Nobody can stop you from listing one. Lying about a listing during probation loses the bond; surviving probation makes the listing a protocol fact that outlives its creator. A registrant is a *contributor*, not an owner: registering confers no revenue, exclusivity, or routing preference — any provider can bid on the listing the moment it is live — so the design returns the contributor's capital once the market has had a fair window to check the claim.
 
 > **Design stance (read this first).** Registration is deliberately **not** gated behind any human review pipeline (a GitHub PR queue, CI validation, an approval multisig, or similar). Any such pipeline re-introduces exactly the bus-factor and gatekeeping problems F2 exists to prevent: a review queue, an automation key, and a signing quorum are all single points of delay or failure standing between a provider and the market. The governing principle instead: **the contract verifies syntax; economics verify truth; time verifies liveness.**
 >
@@ -206,7 +212,11 @@ flowchart LR
 
 ### 3.1.1 Canonical identity & naming (Priority: High)
 
-**Intent.** Give every model a global immutable `canonicalModelId` plus a deduplicated name key, anchored to the model's Hugging Face repo id (or vendor model id), so the chain is the source of truth for "what model is this" and the same name can't be squatted by two owners. The key move: **constrain the namespace instead of normalizing arbitrary input.** The rejected alternative — accept arbitrary Unicode and normalize it off-chain through a shared reference implementation — creates one off-chain dependency that must "agree exactly" with the contract forever. Instead, the contract accepts only a strict ASCII grammar and does the entire fold-and-validate on-chain, in one cheap byte loop. No reference implementation, no conformance oracle, no version-pinning problem. Names that real models actually use fit this grammar today (HF repo ids are ASCII `[A-Za-z0-9._-]` with one `/`; vendor ids likewise).
+**Intent.** Give every model a global immutable `canonicalModelId` plus a deduplicated name key, anchored to the model's Hugging Face repo id (or vendor model id), so the chain is the source of truth for "what model is this" and the same name can't be squatted by two owners. The key move: **constrain the namespace instead of normalizing arbitrary input.**
+
+- **The rejected alternative** — accept arbitrary Unicode and normalize it off-chain through a shared reference implementation — creates one off-chain dependency that must "agree exactly" with the contract forever.
+- **Instead,** the contract accepts only a strict ASCII grammar and does the entire fold-and-validate on-chain, in one cheap byte loop. No reference implementation, no conformance oracle, no version-pinning problem.
+- **This costs nothing in practice:** names that real models actually use fit this grammar today (HF repo ids are ASCII `[A-Za-z0-9._-]` with one `/`; vendor ids likewise).
 
 ```mermaid
 flowchart LR
@@ -336,7 +346,14 @@ flowchart TB
 
 ### 3.1.3 Permissionless registration: bond, probation, graduation, challenge (Priority: High)
 
-**Intent.** Anyone can register a model, with no role gate and no human approval, but registration carries real economic weight *for a bounded window*: a refundable **bond** held through a **probation period** in which lying is slashable and squatting is expensive; a small non-refundable **fee** that makes spam a toll; a **challenge** path that lets the market police truthfulness; and **graduation** at the end of probation, when the bond returns, the registrant's powers lapse, and the listing becomes permanent, ownerless protocol infrastructure. This replaces the legacy free-for-all (P1/P2). A curated alternative (PR review + CI + approval multisig) was considered and rejected: it violates F2's spirit by putting humans and an automation key between a provider and the market. Probation-then-graduation preserves that alternative's real goal — a reviewed, durable catalog — with economics and time as the reviewer.
+**Intent.** Anyone can register a model, with no role gate and no human approval, but registration carries real economic weight *for a bounded window*:
+
+- a refundable **bond** held through a **probation period** in which lying is slashable and squatting is expensive;
+- a small non-refundable **fee** that makes spam a toll;
+- a **challenge** path that lets the market police truthfulness;
+- **graduation** at the end of probation, when the bond returns, the registrant's powers lapse, and the listing becomes permanent, ownerless protocol infrastructure.
+
+This replaces the legacy free-for-all (P1/P2). A curated alternative (PR review + CI + approval multisig) was considered and rejected: it violates F2's spirit by putting humans and an automation key between a provider and the market. Probation-then-graduation preserves that alternative's real goal — a reviewed, durable catalog — with economics and time as the reviewer.
 
 ```mermaid
 flowchart LR
@@ -459,7 +476,11 @@ flowchart LR
 
 ## 3.2 Marketplace facet: bidding
 
-**Facet intent.** With the registry permissionless and deterministic (§3.1), a provider's relationship to the marketplace is simple: bring up a provider node, register it (§3.3), and post bids on the models they can serve. If the model they serve isn't listed yet, they register it themselves in one transaction (commit-reveal + bond + fee) — no proposal queue, no waiting on anyone, and the bond comes back after the 30-day probation (§3.1.3). Parking a bond for a month means casually minting catalog entries still isn't free, which is the point. This section keeps the bid flow intact and removes a fee friction; bids must reference only active canonical models (§3.1.2 VOCAB-R5).
+**Facet intent.** With the registry permissionless and deterministic (§3.1), a provider's relationship to the marketplace is simple:
+
+- Bring up a provider node, register it (§3.3), and post bids on the models it can serve.
+- If a model isn't listed yet, register it in one transaction (commit-reveal + bond + fee) — no proposal queue, no waiting on anyone, and the bond comes back after the 30-day probation (§3.1.3). Parking a bond for a month means casually minting catalog entries still isn't free, which is the point.
+- This section keeps the bid flow intact and removes a fee friction; bids must reference only active canonical models (§3.1.2 VOCAB-R5).
 
 ### 3.2.1 Update bid price without full repost (Priority: Med)
 
@@ -774,11 +795,23 @@ flowchart LR
 
 ## 3.5 Custody & delegation (cross-facet)
 
-**Facet intent.** Protect high-value MOR on both sides of a session by letting a cold wallet (hardware / multisig, holding millions of MOR) authorize a hot wallet (the EOA on the node) to act (open/manage sessions, receive payouts) without exposing the cold key and without moving the bulk of the funds. The hot wallet is assumed to be the same human or a trusted operator (collusion is fine; the goal is custody safety, not mutual distrust). This spans SessionRouter (consumer staking) and ProviderRegistry/SessionRouter (provider payouts), so it is its own section. New facet: Delegation (a `DelegateRegistry`-style mapping plus per-purpose allowances).
+**Facet intent.** Protect high-value MOR on both sides of a session by letting a cold wallet (hardware / multisig, holding millions of MOR) authorize a hot wallet (the EOA on the node) to act — open/manage sessions, receive payouts — without exposing the cold key and without moving the bulk of the funds.
 
-**Many cold wallets to one hot wallet (one combined bucket).** On the consumer side, a hot wallet may receive staking allowances from several cold wallets at once (e.g. a treasury split across multiple hardware/multisig vaults, or multiple funders backing one node). The hot wallet sees a single purpose escrow "bucket" (the sum of all live allowances plus, optionally, its own funds) and stakes/opens sessions against that total without caring which cold wallet each unit came from. This Many:1 model is also what naturally covers the "I'll fund your compute for you" case (a funder cold-wallet need not be the same human as the hot-wallet operator); see the note in §3.5.1, and no separate "sponsor" feature is required.
+- **Trust model:** the hot wallet is assumed to be the same human or a trusted operator (collusion is fine; the goal is custody safety, not mutual distrust).
+- **Scope:** spans SessionRouter (consumer staking) and ProviderRegistry/SessionRouter (provider payouts), so it is its own section.
+- **New facet:** Delegation (a `DelegateRegistry`-style mapping plus per-purpose allowances).
 
-**A built-in privacy property (and a nice-to-have on top).** Because this mechanism is an allowance/grant, not a transfer, the bulk of the MOR never leaves the cold wallet to reach the hot wallet; the hot wallet is simply permitted to use it. That already provides a degree of obfuscation: an observer watching the hot wallet's session activity does not see funds flowing out of a specific cold vault to fund each action, and pooling many cold wallets into one bucket further blurs which vault backed which action. The nice-to-have is to go further and make the cold-to-hot relationship itself hard to trace on-chain, on both the consumer side (the grants that let a hot wallet stake) and the provider side (the payout target). This is captured as an assessment in §3.5.3 (privacy/masking). One hard constraint shapes the design: on the consumer side, the session must always be opened and managed from the perspective of the c-node hot wallet, even though the funds it draws on are only available to it via cold-wallet allowances, so the masking must not require any cold wallet to appear as the session actor.
+**Many cold wallets to one hot wallet (one combined bucket).**
+
+- On the consumer side, a hot wallet may receive staking allowances from several cold wallets at once (e.g. a treasury split across multiple hardware/multisig vaults, or multiple funders backing one node).
+- The hot wallet sees a single purpose escrow "bucket" — the sum of all live allowances plus, optionally, its own funds — and stakes/opens sessions against that total without caring which cold wallet each unit came from.
+- This Many:1 model also naturally covers the "I'll fund your compute for you" case (a funder cold-wallet need not be the same human as the hot-wallet operator); see the note in §3.5.1. No separate "sponsor" feature is required.
+
+**A built-in privacy property (and a nice-to-have on top).**
+
+- Because this mechanism is an allowance/grant, not a transfer, the bulk of the MOR never leaves the cold wallet to reach the hot wallet; the hot wallet is simply permitted to use it. An observer watching the hot wallet's session activity does not see funds flowing out of a specific cold vault to fund each action, and pooling many cold wallets into one bucket further blurs which vault backed which action.
+- The nice-to-have is to go further and make the cold-to-hot relationship itself hard to trace on-chain, on both the consumer side (the grants that let a hot wallet stake) and the provider side (the payout target). This is captured as an assessment in §3.5.3 (privacy/masking).
+- One hard constraint shapes the design: on the consumer side, the session must always be opened and managed from the perspective of the c-node hot wallet, even though the funds it draws on are only available to it via cold-wallet allowances — so the masking must not require any cold wallet to appear as the session actor.
 
 ```mermaid
 flowchart LR
@@ -798,17 +831,40 @@ flowchart LR
 
 ### 3.5.1 Consumer cold/hot staking allowances (Priority: Med)
 
-**Intent.** One or more cold wallets pre-authorize a hot wallet to stake up to a capped, expiring, purpose-bound budget. The hot wallet opens/manages sessions against the combined bucket; it can never move funds outside session staking or sweep any cold wallet. Sessions are only openable/manageable by the hot wallet.
+**Intent.** One or more cold wallets pre-authorize a hot wallet to stake up to a capped, expiring, purpose-bound budget.
 
-**One "available to stake" bucket (Many cold : one hot, plus the hot's own funds).** Everything the hot wallet can stake lives in a single pool: the sum of every live cold-wallet grant plus the hot wallet's own auto-escrowed MOR. There is no reason to keep these as separate sources: own-funds and delegated funds are spent through one code path, and the hot wallet never has to know or choose which funder backs a given session. A hot wallet with its own MOR is simply its own funder with a standing self-grant. This keeps one "available to stake" balance for the app to reason about.
+- The hot wallet opens/manages sessions against the combined bucket; sessions are only openable/manageable by the hot wallet.
+- The hot wallet can never move funds outside session staking or sweep any cold wallet.
 
-**Recycle by default.** Granted funds are usable by the hot wallet until the granting cold wallet revokes them. Unused stake returned on close goes back into the bucket and can be staked again with no fresh cold signature: the grant is a standing, revocable authorization, not a per-session approval. Recycle timing follows the §3.4.3 close path: under the preferred CLOSE-R4a the unused stake lands back in the bucket in the same close tx; under the CLOSE-R4b fallback the held slice rejoins the bucket when it auto-returns at release.
+**One "available to stake" bucket (Many cold : one hot, plus the hot's own funds).**
 
-**Debiting across funders: FIFO (easiest, deterministic).** When the hot wallet stakes, the bucket is debited FIFO by grant age: the oldest grant is consumed first, then the next, then the hot's self-escrow. Example: Cold A grants 10 MOR, Cold B grants 10 MOR; the hot wallet stakes 10 and draws Cold A's funds first. This is just bookkeeping order; the funds themselves are fungible (which matters for withdrawal, below).
+- Everything the hot wallet can stake lives in a single pool: the sum of every live cold-wallet grant plus the hot wallet's own auto-escrowed MOR.
+- There is no reason to keep these as separate sources: own-funds and delegated funds are spent through one code path, and the hot wallet never has to know or choose which funder backs a given session. A hot wallet with its own MOR is simply its own funder with a standing self-grant.
+- Net effect: one "available to stake" balance for the app to reason about.
 
-**Withdrawal / revocation while funds are in use: fungible, last-out waits (no pro-rata).** A cold wallet may revoke and pull its share back at any time. Because the pooled funds are fungible, it does not matter whose specific tokens are "in" an open session at that instant: the withdrawing cold wallet immediately receives up to the bucket's free (un-staked) balance, reducing its grant. Only if free liquidity can't cover the request, because enough MOR is locked in open sessions, does the remainder queue and pay out as those sessions close. In effect, only the last funder out has to wait for the final session to end; everyone else is served from free liquidity. We explicitly reject pro-rata locking of every funder behind every session: that would freeze all cold wallets from withdrawing for the life of any session, so no one could ever get out.
+**Recycle by default.**
 
-**Sponsoring is just the Many:1 case (answers "why a separate sponsor feature?").** "I'll fund your compute for you" is simply a cold wallet granting/funding a hot wallet it doesn't own (a different human). The mechanism is identical: capped, expiring, purpose-bound, revocable, FIFO-debited, and the beneficiary's hot wallet remains the only session actor. So no separate "sponsor" contract surface is needed; it falls out of Many:1. The only extra care is anti-gaming (it must not make §3.4.4 emission-farming any easier, covered by AC-COLDC-7).
+- Granted funds are usable by the hot wallet until the granting cold wallet revokes them.
+- Unused stake returned on close goes back into the bucket and can be staked again with no fresh cold signature: the grant is a standing, revocable authorization, not a per-session approval.
+- Recycle timing follows the §3.4.3 close path: under the preferred CLOSE-R4a the unused stake lands back in the bucket in the same close tx; under the CLOSE-R4b fallback the held slice rejoins the bucket when it auto-returns at release.
+
+**Debiting across funders: FIFO (easiest, deterministic).**
+
+- When the hot wallet stakes, the bucket is debited FIFO by grant age: the oldest grant is consumed first, then the next, then the hot's self-escrow.
+- Example: Cold A grants 10 MOR, Cold B grants 10 MOR; the hot wallet stakes 10 and draws Cold A's funds first.
+- This is just bookkeeping order; the funds themselves are fungible (which matters for withdrawal, below).
+
+**Withdrawal / revocation while funds are in use: fungible, last-out waits (no pro-rata).**
+
+- A cold wallet may revoke and pull its share back at any time. Because the pooled funds are fungible, it does not matter whose specific tokens are "in" an open session at that instant: the withdrawing cold wallet immediately receives up to the bucket's free (un-staked) balance, reducing its grant.
+- Only if free liquidity can't cover the request — because enough MOR is locked in open sessions — does the remainder queue and pay out as those sessions close. In effect, only the last funder out has to wait for the final session to end; everyone else is served from free liquidity.
+- We explicitly reject pro-rata locking of every funder behind every session: that would freeze all cold wallets from withdrawing for the life of any session, so no one could ever get out.
+
+**Sponsoring is just the Many:1 case (answers "why a separate sponsor feature?").**
+
+- "I'll fund your compute for you" is simply a cold wallet granting/funding a hot wallet it doesn't own (a different human).
+- The mechanism is identical: capped, expiring, purpose-bound, revocable, FIFO-debited, and the beneficiary's hot wallet remains the only session actor. So no separate "sponsor" contract surface is needed; it falls out of Many:1.
+- The only extra care is anti-gaming (it must not make §3.4.4 emission-farming any easier, covered by AC-COLDC-7).
 
 **Fund flow (where do unused tokens go?):** cold wallets (plus optional hot self-escrow) fund one available-to-stake bucket; `openSession` debits it FIFO; on close the unused amount recycles to the bucket; each cold may revoke/withdraw its share (free balance now, locked balance as sessions close).
 
