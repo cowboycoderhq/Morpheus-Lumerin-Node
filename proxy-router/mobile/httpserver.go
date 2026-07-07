@@ -105,6 +105,7 @@ func (s *SDK) StartHTTPServer(address, publicURL, adminUser, adminPass string) e
 		nil,
 		*authCfg,
 		&noopStorageHealthChecker{},
+		nil,
 	)
 
 	// Selective registration: only expose routes whose dependencies are

@@ -17,10 +17,40 @@ type ConfigResponse struct {
 }
 
 type HealthCheckResponse struct {
-	Status     string            `json:"status"`
-	Version    string            `json:"version"`
-	Uptime     string            `json:"uptime"`
-	Components map[string]string `json:"components,omitempty"`
+	Status     string              `json:"status"`
+	Version    string              `json:"version"`
+	Uptime     string              `json:"uptime"`
+	Components map[string]string   `json:"components,omitempty"`
+	Models     []ModelHealthReport `json:"models,omitempty"`
+}
+
+const (
+	ModelHealthStatusHealthy   = "healthy"
+	ModelHealthStatusUnhealthy = "unhealthy"
+	ModelHealthStatusNoBid     = "no_bid"
+	ModelHealthStatusSkipped   = "skipped"
+
+	ModelHealthErrorTimeout     = "timeout"
+	ModelHealthErrorConnection  = "connection"
+	ModelHealthErrorBadResponse = "bad_response"
+	ModelHealthErrorTypeLookup  = "model_type_lookup"
+)
+
+// ModelHealthReport is the sanitized per-model self-report exposed on the
+// public /healthcheck endpoint. It intentionally carries only the on-chain
+// model ID and derived status — never the private modelName, apiUrl or
+// apiKey from models-config.json.
+type ModelHealthReport struct {
+	ModelID       string `json:"modelId"`
+	ModelType     string `json:"modelType,omitempty"`
+	HasActiveBid  bool   `json:"hasActiveBid"`
+	BidID         string `json:"bidId,omitempty"`
+	Status        string `json:"status"`
+	LastHealthy   int64  `json:"lastHealthy,omitempty"`
+	LastChecked   int64  `json:"lastChecked"`
+	LatencyMs     int64  `json:"latencyMs,omitempty"`
+	PromptCorrect *bool  `json:"promptCorrect,omitempty"`
+	ErrorKind     string `json:"errorKind,omitempty"`
 }
 
 type StatusRes struct {

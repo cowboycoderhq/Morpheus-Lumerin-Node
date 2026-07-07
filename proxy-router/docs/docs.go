@@ -3234,9 +3234,6 @@ const docTemplate = `{
                 "error": {
                     "type": "string"
                 },
-                "expiresAt": {
-                    "type": "string"
-                },
                 "modelId": {
                     "type": "string"
                 },
@@ -3262,14 +3259,12 @@ const docTemplate = `{
             "enum": [
                 "passed",
                 "failed",
-                "unknown",
-                "expired"
+                "unknown"
             ],
             "x-enum-varnames": [
                 "StatusPassed",
                 "StatusFailed",
-                "StatusUnknown",
-                "StatusExpired"
+                "StatusUnknown"
             ]
         },
         "attestation.TEEType": {
@@ -4080,6 +4075,12 @@ const docTemplate = `{
         "proxyapi.PingRes": {
             "type": "object",
             "properties": {
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/system.ModelHealthReport"
+                    }
+                },
                 "ping": {
                     "type": "integer"
                 },
@@ -4767,6 +4768,12 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/system.ModelHealthReport"
+                    }
+                },
                 "status": {
                     "type": "string"
                 },
@@ -4774,6 +4781,41 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "system.ModelHealthReport": {
+            "type": "object",
+            "properties": {
+                "bidId": {
+                    "type": "string"
+                },
+                "errorKind": {
+                    "type": "string"
+                },
+                "hasActiveBid": {
+                    "type": "boolean"
+                },
+                "lastChecked": {
+                    "type": "integer"
+                },
+                "lastHealthy": {
+                    "type": "integer"
+                },
+                "latencyMs": {
+                    "type": "integer"
+                },
+                "modelId": {
+                    "type": "string"
+                },
+                "modelType": {
+                    "type": "string"
+                },
+                "promptCorrect": {
+                    "type": "boolean"
+                },
+                "status": {
                     "type": "string"
                 }
             }
