@@ -1,6 +1,6 @@
 # Inference Contract Enhancements: Executive Summary & Impact Outlook
 
-**Companion to:** [`inference-contract-enhancements-rfp.md`](inference-contract-enhancements-rfp.md) (full spec) and [`model-registry-story.md`](model-registry-story.md) (plain-language registry explainer)
+**Companion to:** [`inference-contract-enhancements-rfp-20260707.md`](inference-contract-enhancements-rfp-20260707.md) (full spec) and [`model-registry-story.md`](model-registry-story.md) (plain-language registry explainer)
 **Date:** 2026-07-07
 **Data basis:** All on-chain session closes for the 7 days 2026-06-30 → 2026-07-07 (8,156 closes, BASE mainnet Inference Diamond), plus live funding-wallet and emission-budget reads taken 2026-07-07.
 

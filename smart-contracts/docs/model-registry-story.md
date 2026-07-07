@@ -2,7 +2,7 @@
 
 ### The story of the Morpheus model registry — how models are born, vetted, and become permanent
 
-**Companion to:** [`inference-contract-enhancements-rfp.md`](inference-contract-enhancements-rfp.md) (the full spec) and [`inference-contract-enhancements-executive-summary.md`](inference-contract-enhancements-executive-summary.md) (the impact analysis)
+**Companion to:** [`inference-contract-enhancements-rfp-20260707.md`](inference-contract-enhancements-rfp-20260707.md) (the full spec) and [`inference-contract-enhancements-executive-summary.md`](inference-contract-enhancements-executive-summary.md) (the impact analysis)
 **Audience:** anyone — community, providers, partners. No Solidity required.
 
 ---
