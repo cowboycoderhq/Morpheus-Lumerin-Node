@@ -22,6 +22,11 @@ type StorageHealthChecker interface {
 	DBSize() (lsmSize int64, vlogSize int64)
 }
 
+// ModelHealthReporter provides cached per-model health self-reports.
+type ModelHealthReporter interface {
+	GetReports() []ModelHealthReport
+}
+
 type SystemController struct {
 	config                 *config.Config
 	wallet                 i.Wallet
@@ -33,9 +38,10 @@ type SystemController struct {
 	ethConnectionValidator IEthConnectionValidator
 	authConfig             HTTPAuthConfig
 	storage                StorageHealthChecker
+	modelHealth            ModelHealthReporter
 }
 
-func NewSystemController(config *config.Config, wallet i.Wallet, ethRPC i.RPCEndpoints, sysConfig *SystemConfigurator, appStartTime time.Time, chainID *big.Int, log lib.ILogger, ethConnectionValidator IEthConnectionValidator, authConfig HTTPAuthConfig, storage StorageHealthChecker) *SystemController {
+func NewSystemController(config *config.Config, wallet i.Wallet, ethRPC i.RPCEndpoints, sysConfig *SystemConfigurator, appStartTime time.Time, chainID *big.Int, log lib.ILogger, ethConnectionValidator IEthConnectionValidator, authConfig HTTPAuthConfig, storage StorageHealthChecker, modelHealth ModelHealthReporter) *SystemController {
 	c := &SystemController{
 		config:                 config,
 		wallet:                 wallet,
@@ -47,6 +53,7 @@ func NewSystemController(config *config.Config, wallet i.Wallet, ethRPC i.RPCEnd
 		ethConnectionValidator: ethConnectionValidator,
 		authConfig:             authConfig,
 		storage:                storage,
+		modelHealth:            modelHealth,
 	}
 
 	return c
@@ -85,6 +92,13 @@ func (s *SystemController) HealthCheck(ctx *gin.Context) {
 		}
 	}
 
+	// model probe failures don't flip the node to 503: bid presence and
+	// backend health are marketplace concerns, not process liveness
+	var models []ModelHealthReport
+	if s.modelHealth != nil {
+		models = s.modelHealth.GetReports()
+	}
+
 	httpStatus := http.StatusOK
 	if status != "healthy" {
 		httpStatus = http.StatusServiceUnavailable
@@ -95,6 +109,7 @@ func (s *SystemController) HealthCheck(ctx *gin.Context) {
 		Version:    config.BuildVersion,
 		Uptime:     time.Since(s.appStartTime).Round(time.Second).String(),
 		Components: components,
+		Models:     models,
 	})
 }
 
