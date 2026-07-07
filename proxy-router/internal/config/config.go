@@ -74,6 +74,9 @@ type Config struct {
 		CNodePNodeTimeout         time.Duration `env:"CNODE_PNODE_TIMEOUT" flag:"cnode-pnode-timeout" validate:"omitempty" desc:"per-attempt timeout for CNode waiting for PNode first response"`
 		CNodePNodeMaxRetries      int           `env:"CNODE_PNODE_MAX_RETRIES" flag:"cnode-pnode-max-retries" validate:"omitempty,gte=0" desc:"max retries for CNode to PNode read timeout (chat/embeddings)"`
 		CNodePNodeAudioMaxRetries int           `env:"CNODE_PNODE_AUDIO_MAX_RETRIES" flag:"cnode-pnode-audio-max-retries" validate:"omitempty,gte=0" desc:"max retries for CNode to PNode read timeout (audio transcription/speech)"`
+		ModelHealthCheckDisabled  bool          `env:"MODEL_HEALTH_CHECK_DISABLED" flag:"model-health-check-disabled" desc:"disable periodic model health self-checks on provider"`
+		ModelHealthCheckInterval  time.Duration `env:"MODEL_HEALTH_CHECK_INTERVAL" flag:"model-health-check-interval" validate:"omitempty,duration" desc:"how often to probe configured models with a test prompt, result is cached between runs"`
+		ModelHealthCheckTimeout   time.Duration `env:"MODEL_HEALTH_CHECK_TIMEOUT" flag:"model-health-check-timeout" validate:"omitempty,duration" desc:"per-model health probe timeout"`
 	}
 	System struct {
 		Enable           bool   `env:"SYS_ENABLE"              flag:"sys-enable" desc:"enable system level configuration adjustments"`
@@ -209,6 +212,12 @@ func (cfg *Config) SetDefaults() {
 	if cfg.Proxy.CNodePNodeAudioMaxRetries == 0 {
 		cfg.Proxy.CNodePNodeAudioMaxRetries = 20
 	}
+	if cfg.Proxy.ModelHealthCheckInterval == 0 {
+		cfg.Proxy.ModelHealthCheckInterval = 1 * time.Hour
+	}
+	if cfg.Proxy.ModelHealthCheckTimeout == 0 {
+		cfg.Proxy.ModelHealthCheckTimeout = 60 * time.Second
+	}
 
 	// IPFS
 	if cfg.IPFS.Address == "" {
@@ -267,6 +276,9 @@ func (cfg *Config) GetSanitized() interface{} {
 	publicCfg.Proxy.CNodePNodeTimeout = cfg.Proxy.CNodePNodeTimeout
 	publicCfg.Proxy.CNodePNodeMaxRetries = cfg.Proxy.CNodePNodeMaxRetries
 	publicCfg.Proxy.CNodePNodeAudioMaxRetries = cfg.Proxy.CNodePNodeAudioMaxRetries
+	publicCfg.Proxy.ModelHealthCheckDisabled = cfg.Proxy.ModelHealthCheckDisabled
+	publicCfg.Proxy.ModelHealthCheckInterval = cfg.Proxy.ModelHealthCheckInterval
+	publicCfg.Proxy.ModelHealthCheckTimeout = cfg.Proxy.ModelHealthCheckTimeout
 
 	publicCfg.System.Enable = cfg.System.Enable
 	publicCfg.System.LocalPortRange = cfg.System.LocalPortRange

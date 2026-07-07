@@ -22,6 +22,28 @@ Expected:
 { "status": "healthy", "version": "v7.0.0", "uptime": "..." }
 ```
 
+On provider nodes the response also includes a `models` array — the periodic model health self-report. For every model in `models-config.json` that has an active bid from your wallet, the proxy-router sends a small test prompt on a schedule (default hourly, see `MODEL_HEALTH_CHECK_INTERVAL` in [env-proxy-router](/reference/env-proxy-router)) and caches the result:
+
+```json
+{
+  "models": [
+    {
+      "modelId": "0xe086...",
+      "modelType": "LLM",
+      "hasActiveBid": true,
+      "bidId": "0x3f2a...",
+      "status": "healthy",
+      "lastHealthy": 1751871600,
+      "lastChecked": 1751871600,
+      "latencyMs": 412,
+      "promptCorrect": true
+    }
+  ]
+}
+```
+
+`status` is one of `healthy`, `unhealthy` (probe failed — see `errorKind`: `timeout`, `connection`, or `bad_response`), `no_bid` (configured model has no active bid, so it is not probed), or `skipped` (model type other than LLM/embedding). A model showing `unhealthy` here means consumers who open a session will hit the same failure, so fix the backend `apiUrl` before going further.
+
 Logs should show:
 
 ```
