@@ -24,6 +24,7 @@ import (
 	msgs "github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/proxyapi/morrpcmessage"
 	sessionrepo "github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/repositories/session"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/storages"
+	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/system"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/gin-gonic/gin/binding"
 )
@@ -94,10 +95,10 @@ func (p *ProxyServiceSender) SetAttestationVerifier(v *attestation.Verifier) {
 	p.attestationVerifier = v
 }
 
-func (p *ProxyServiceSender) Ping(ctx context.Context, providerURL string, providerAddr common.Address) (time.Duration, string, error) {
+func (p *ProxyServiceSender) Ping(ctx context.Context, providerURL string, providerAddr common.Address) (time.Duration, string, []system.ModelHealthReport, error) {
 	prKey, err := p.privateKey.GetPrivateKey()
 	if err != nil {
-		return 0, "", ErrMissingPrKey
+		return 0, "", nil, ErrMissingPrKey
 	}
 
 	// check if context has timeout set
@@ -110,40 +111,42 @@ func (p *ProxyServiceSender) Ping(ctx context.Context, providerURL string, provi
 	nonce := make([]byte, 8)
 	_, err = rand.Read(nonce)
 	if err != nil {
-		return 0, "", lib.WrapError(ErrCreateReq, err)
+		return 0, "", nil, lib.WrapError(ErrCreateReq, err)
 	}
 
 	msg, err := p.morRPC.PingRequest("0", prKey, nonce)
 	if err != nil {
-		return 0, "", lib.WrapError(ErrCreateReq, err)
+		return 0, "", nil, lib.WrapError(ErrCreateReq, err)
 	}
 
 	reqStartTime := time.Now()
 	res, code, err := p.rpcRequest(providerURL, msg)
 	if err != nil {
-		return 0, "", lib.WrapError(ErrProvider, fmt.Errorf("code: %d, msg: %v, error: %s", code, res, err))
+		return 0, "", nil, lib.WrapError(ErrProvider, fmt.Errorf("code: %d, msg: %v, error: %s", code, res, err))
 	}
 	pingDuration := time.Since(reqStartTime)
 
 	var typedMsg *msgs.PongRes
 	err = json.Unmarshal(*res.Result, &typedMsg)
 	if err != nil {
-		return pingDuration, "", lib.WrapError(ErrInvalidResponse, fmt.Errorf("expected PongRes, got %s", res.Result))
+		return pingDuration, "", nil, lib.WrapError(ErrInvalidResponse, fmt.Errorf("expected PongRes, got %s", res.Result))
 	}
 
 	err = binding.Validator.ValidateStruct(typedMsg)
 	if err != nil {
-		return pingDuration, "", lib.WrapError(ErrInvalidResponse, err)
+		return pingDuration, "", nil, lib.WrapError(ErrInvalidResponse, err)
 	}
 
 	signature := typedMsg.Signature
+	models := typedMsg.Models
 	typedMsg.Signature = lib.HexString{}
+	typedMsg.Models = nil // not part of the signed payload (see PongRes)
 
 	if !p.morRPC.VerifySignatureAddr(typedMsg, signature, providerAddr, p.log) {
-		return pingDuration, "", ErrInvalidSig
+		return pingDuration, "", nil, ErrInvalidSig
 	}
 
-	return pingDuration, typedMsg.Version, nil
+	return pingDuration, typedMsg.Version, models, nil
 }
 
 // EnsureProviderRegistered re-discovers provider URL + public key (via ping) and stores them in session storage.
@@ -191,6 +194,7 @@ func (p *ProxyServiceSender) EnsureProviderRegistered(ctx context.Context, provi
 
 	signature := typedMsg.Signature
 	typedMsg.Signature = lib.HexString{}
+	typedMsg.Models = nil // not part of the signed payload (see PongRes)
 	if !p.morRPC.VerifySignatureAddr(typedMsg, signature, providerAddr, p.log) {
 		return ErrInvalidSig
 	}

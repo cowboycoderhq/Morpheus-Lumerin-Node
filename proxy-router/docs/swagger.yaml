@@ -65,8 +65,6 @@ definitions:
         type: string
       error:
         type: string
-      expiresAt:
-        type: string
       modelId:
         type: string
       status:
@@ -85,13 +83,11 @@ definitions:
     - passed
     - failed
     - unknown
-    - expired
     type: string
     x-enum-varnames:
     - StatusPassed
     - StatusFailed
     - StatusUnknown
-    - StatusExpired
   attestation.TEEType:
     enum:
     - TDX
@@ -632,6 +628,10 @@ definitions:
     type: object
   proxyapi.PingRes:
     properties:
+      models:
+        items:
+          $ref: '#/definitions/system.ModelHealthReport'
+        type: array
       ping:
         type: integer
       version:
@@ -1091,11 +1091,38 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      models:
+        items:
+          $ref: '#/definitions/system.ModelHealthReport'
+        type: array
       status:
         type: string
       uptime:
         type: string
       version:
+        type: string
+    type: object
+  system.ModelHealthReport:
+    properties:
+      bidId:
+        type: string
+      errorKind:
+        type: string
+      hasActiveBid:
+        type: boolean
+      lastChecked:
+        type: integer
+      lastHealthy:
+        type: integer
+      latencyMs:
+        type: integer
+      modelId:
+        type: string
+      modelType:
+        type: string
+      promptCorrect:
+        type: boolean
+      status:
         type: string
     type: object
   system.SetEthNodeURLReq:

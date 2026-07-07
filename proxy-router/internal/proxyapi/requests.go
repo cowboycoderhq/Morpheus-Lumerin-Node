@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/lib"
+	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/system"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -13,8 +14,9 @@ type PingReq struct {
 }
 
 type PingRes struct {
-	PingMs  int64  `json:"ping,omitempty"`
-	Version string `json:"version,omitempty"`
+	PingMs  int64                      `json:"ping,omitempty"`
+	Version string                     `json:"version,omitempty"`
+	Models  []system.ModelHealthReport `json:"models,omitempty"`
 }
 
 type InitiateSessionReq struct {

@@ -21,6 +21,7 @@ import (
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/handlers/httphandlers"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/interfaces"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/lib"
+	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/modelhealth"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/proxyapi"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/proxyctl"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/repositories/contracts"
@@ -298,7 +299,7 @@ func start() error {
 	proxyRouterApi.SetAttestationVerifier(teeVerifier)
 	if teeVerifier != nil {
 		teeVerifier.SetPingFunc(func(ctx context.Context, providerEndpoint string, providerAddr string) (string, error) {
-			_, version, err := proxyRouterApi.Ping(ctx, providerEndpoint, common.HexToAddress(providerAddr))
+			_, version, _, err := proxyRouterApi.Ping(ctx, providerEndpoint, common.HexToAddress(providerAddr))
 			return version, err
 		})
 	}
@@ -375,7 +376,21 @@ func start() error {
 	proxyController := proxyapi.NewProxyController(proxyRouterApi, aiEngine, chatStorage, *cfg.Proxy.StoreChatContext.Bool, *cfg.Proxy.ForwardChatContext.Bool, *authCfg, ipfsManager, log)
 	proxyController.SetBackendAttestationStatus(backendVerifier)
 	walletController := walletapi.NewWalletController(wallet, *authCfg)
-	systemController := system.NewSystemController(&cfg, wallet, rpcClientStore, sysConfig, appStartTime, chainID, appLog, ethConnectionValidator, *authCfg, storage)
+	var modelHealthChecker *modelhealth.Checker
+	// keep the interface nil when the checker is disabled to avoid a typed-nil
+	// passing the nil check in the healthcheck handler
+	var modelHealthReporter system.ModelHealthReporter
+	if !cfg.Proxy.ModelHealthCheckDisabled {
+		modelHealthChecker = modelhealth.NewChecker(modelhealth.Deps{
+			Adapters:     aiEngine,
+			Bids:         blockchainApi,
+			Tags:         blockchainApi,
+			ModelConfigs: modelConfigLoader,
+		}, cfg.Proxy.ModelHealthCheckInterval, cfg.Proxy.ModelHealthCheckTimeout, appLog)
+		modelHealthReporter = modelHealthChecker
+	}
+
+	systemController := system.NewSystemController(&cfg, wallet, rpcClientStore, sysConfig, appStartTime, chainID, appLog, ethConnectionValidator, *authCfg, storage, modelHealthReporter)
 	authController := authapi.NewAuthController(authCfg, cfg.Environment, appLog)
 
 	apiBus := apibus.NewApiBus(blockchainController, proxyController, walletController, systemController, authController)
@@ -392,7 +407,7 @@ func start() error {
 
 	appLog.Infof("API docs available at %s/swagger/index.html", cfg.Web.PublicUrl)
 
-	proxy := proxyctl.NewProxyCtl(eventListener, wallet, chainID, appLog, tcpLog, cfg.Proxy.Address, sessionStorage, modelConfigLoader, valid, aiEngine, blockchainApi, sessionRepo, sessionExpiryHandler, backendVerifier)
+	proxy := proxyctl.NewProxyCtl(eventListener, wallet, chainID, appLog, tcpLog, cfg.Proxy.Address, sessionStorage, modelConfigLoader, valid, aiEngine, blockchainApi, sessionRepo, sessionExpiryHandler, backendVerifier, modelHealthChecker)
 	err = proxy.Run(ctx)
 
 	cancelServer()

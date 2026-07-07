@@ -140,13 +140,13 @@ func (s *ProxyController) Ping(ctx *gin.Context) {
 		return
 	}
 
-	ping, version, err := s.service.Ping(ctx, req.ProviderURL, req.ProviderAddr)
+	ping, version, models, err := s.service.Ping(ctx, req.ProviderURL, req.ProviderAddr)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	ctx.JSON(http.StatusOK, &PingRes{PingMs: ping.Milliseconds(), Version: version})
+	ctx.JSON(http.StatusOK, &PingRes{PingMs: ping.Milliseconds(), Version: version, Models: models})
 }
 
 // InitiateSession godoc
