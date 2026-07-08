@@ -1472,7 +1472,7 @@ func (s *BlockchainService) GetMyAddress(ctx context.Context) (common.Address, e
 }
 
 func (s *BlockchainService) CheckConnectivity(ctx context.Context, url string, addr common.Address) (time.Duration, error) {
-	dur, _, err := s.proxyService.Ping(ctx, url, addr)
+	dur, _, _, err := s.proxyService.Ping(ctx, url, addr)
 	return dur, err
 }
 

@@ -2,10 +2,13 @@ package morrpcmesssage
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"testing"
 
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/lib"
+	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/system"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -85,4 +88,44 @@ func TestMorRpc_generate(t *testing.T) {
 
 	hexSignature := hex.EncodeToString([]byte(signature))
 	fmt.Println(hexSignature)
+}
+
+// oldPongRes mimics the PongRes struct of consumers built before the models
+// field existed: unknown JSON fields are dropped on unmarshal.
+type oldPongRes struct {
+	Nonce     lib.HexString `json:"nonce"`
+	Version   string        `json:"version,omitempty"`
+	Signature lib.HexString `json:"signature"`
+}
+
+func TestPongResponceModelsExcludedFromSignature(t *testing.T) {
+	prKey, err := crypto.GenerateKey()
+	assert.NoError(t, err)
+	prKeyBytes := crypto.FromECDSA(prKey)
+	addr := crypto.PubkeyToAddress(prKey.PublicKey)
+
+	models := []system.ModelHealthReport{
+		{ModelID: "0x01", ModelType: "LLM", HasActiveBid: true, BidID: "0x02", Status: "healthy"},
+	}
+
+	rpc := NewMorRpc()
+	res, err := rpc.PongResponce("1", prKeyBytes, lib.HexString{0x01, 0x02}, "v1.0.0", models)
+	assert.NoError(t, err)
+
+	// new consumer: zeroes both signature and models before verifying
+	var pong PongRes
+	assert.NoError(t, json.Unmarshal(*res.Result, &pong))
+	assert.Len(t, pong.Models, 1)
+
+	signature := pong.Signature
+	pong.Signature = lib.HexString{}
+	pong.Models = nil
+	assert.True(t, rpc.VerifySignatureAddr(pong, signature, addr, lib.NewTestLogger()))
+
+	// old consumer: models field silently dropped, verification still passes
+	var old oldPongRes
+	assert.NoError(t, json.Unmarshal(*res.Result, &old))
+	oldSignature := old.Signature
+	old.Signature = lib.HexString{}
+	assert.True(t, rpc.VerifySignatureAddr(old, oldSignature, addr, lib.NewTestLogger()))
 }
