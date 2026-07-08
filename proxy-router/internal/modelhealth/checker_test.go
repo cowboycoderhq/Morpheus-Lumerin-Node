@@ -56,10 +56,11 @@ func TestVerifyArithmeticAnswer(t *testing.T) {
 }
 
 var (
-	modelLLM       = common.HexToHash("0x01")
-	modelEmbedding = common.HexToHash("0x02")
-	modelNoBid     = common.HexToHash("0x03")
-	modelTTS       = common.HexToHash("0x04")
+	modelLLM          = common.HexToHash("0x01")
+	modelEmbedding    = common.HexToHash("0x02")
+	modelNoBid        = common.HexToHash("0x03")
+	modelTTS          = common.HexToHash("0x04")
+	modelUnconfigured = common.HexToHash("0x05")
 )
 
 type mockDeps struct {
@@ -72,7 +73,18 @@ type mockDeps struct {
 }
 
 func (m *mockDeps) GetActiveBidsByProvider(ctx context.Context, provider common.Address, offset *big.Int, limit uint8, order registries.Order) ([]*structs.Bid, error) {
-	return m.bids, m.bidsErr
+	if m.bidsErr != nil {
+		return nil, m.bidsErr
+	}
+	from := int(offset.Int64())
+	if from >= len(m.bids) {
+		return nil, nil
+	}
+	to := from + int(limit)
+	if to > len(m.bids) {
+		to = len(m.bids)
+	}
+	return m.bids[from:to], nil
 }
 
 func (m *mockDeps) GetModelTags(ctx context.Context, modelID common.Hash) ([]string, error) {
@@ -169,11 +181,12 @@ func TestCheckAllStatuses(t *testing.T) {
 	olderLLMBid := &structs.Bid{Id: common.HexToHash("0xdead"), ModelAgentId: modelLLM}
 	deps := &mockDeps{
 		// bids come back newest-first; the older duplicate for modelLLM must be ignored
-		bids: []*structs.Bid{bidFor(modelLLM), bidFor(modelEmbedding), bidFor(modelTTS), olderLLMBid},
+		bids: []*structs.Bid{bidFor(modelLLM), bidFor(modelEmbedding), bidFor(modelTTS), olderLLMBid, bidFor(modelUnconfigured)},
 		tags: map[common.Hash][]string{
-			modelLLM:       {"llm"},
-			modelEmbedding: {"embedding"},
-			modelTTS:       {"tts"},
+			modelLLM:          {"llm"},
+			modelEmbedding:    {"embedding"},
+			modelTTS:          {"tts"},
+			modelUnconfigured: {"llm"},
 		},
 		modelIDs: []common.Hash{modelLLM, modelEmbedding, modelNoBid, modelTTS},
 		adapter:  &mathSolvingAdapter{},
@@ -183,7 +196,7 @@ func TestCheckAllStatuses(t *testing.T) {
 	checker.checkAll(context.Background(), common.Address{})
 
 	reports := checker.GetReports()
-	require.Len(t, reports, 4)
+	require.Len(t, reports, 5)
 
 	llm := reportByID(t, reports, modelLLM)
 	require.Equal(t, system.ModelHealthStatusHealthy, llm.Status)
@@ -207,6 +220,52 @@ func TestCheckAllStatuses(t *testing.T) {
 
 	tts := reportByID(t, reports, modelTTS)
 	require.Equal(t, system.ModelHealthStatusSkipped, tts.Status)
+
+	// bid without a matching models-config entry: reported, not probed
+	unconfigured := reportByID(t, reports, modelUnconfigured)
+	require.Equal(t, system.ModelHealthStatusNoModel, unconfigured.Status)
+	require.True(t, unconfigured.HasActiveBid)
+	require.Equal(t, bidIDFor(modelUnconfigured).Hex(), unconfigured.BidID)
+	require.Equal(t, string(structs.ModelTypeLLM), unconfigured.ModelType)
+	require.Zero(t, unconfigured.LatencyMs)
+	require.Nil(t, unconfigured.PromptCorrect)
+}
+
+func TestCheckAllPrunesRemovedModels(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelLLM), bidFor(modelUnconfigured)},
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}, modelUnconfigured: {"llm"}},
+		modelIDs: []common.Hash{modelLLM, modelNoBid},
+		adapter:  &mathSolvingAdapter{},
+	}
+
+	checker := newTestChecker(deps)
+	checker.checkAll(context.Background(), common.Address{})
+	require.Len(t, checker.GetReports(), 3)
+
+	// model removed from config and bid cancelled: both must disappear
+	deps.modelIDs = []common.Hash{modelLLM}
+	deps.bids = []*structs.Bid{bidFor(modelLLM)}
+	checker.checkAll(context.Background(), common.Address{})
+
+	reports := checker.GetReports()
+	require.Len(t, reports, 1)
+	require.Equal(t, modelLLM.Hex(), reports[0].ModelID)
+}
+
+func TestCheckAllBidsOnlyNoConfig(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelUnconfigured)},
+		tags:     map[common.Hash][]string{modelUnconfigured: {"llm"}},
+		modelIDs: []common.Hash{},
+	}
+
+	checker := newTestChecker(deps)
+	checker.checkAll(context.Background(), common.Address{})
+
+	reports := checker.GetReports()
+	require.Len(t, reports, 1)
+	require.Equal(t, system.ModelHealthStatusNoModel, reports[0].Status)
 }
 
 func TestCheckAllProbeFailure(t *testing.T) {
@@ -249,6 +308,30 @@ func TestCheckAllPreservesLastHealthy(t *testing.T) {
 	require.Equal(t, system.ModelHealthStatusUnhealthy, unhealthy.Status)
 	require.Equal(t, system.ModelHealthErrorTimeout, unhealthy.ErrorKind)
 	require.Equal(t, lastHealthy, unhealthy.LastHealthy)
+}
+
+func TestActiveBidModelsPaginates(t *testing.T) {
+	// 3 full pages plus a partial one; the configured model's bid sits on the
+	// last page and must still be found
+	var bids []*structs.Bid
+	for i := 0; i < 3*bidsPageLimit+5; i++ {
+		id := common.BigToHash(big.NewInt(int64(i + 1000)))
+		bids = append(bids, &structs.Bid{Id: common.BigToHash(big.NewInt(int64(i))), ModelAgentId: id})
+	}
+	bids = append(bids, bidFor(modelLLM))
+
+	deps := &mockDeps{
+		bids:     bids,
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}},
+		modelIDs: []common.Hash{modelLLM},
+		adapter:  &mathSolvingAdapter{},
+	}
+
+	checker := newTestChecker(deps)
+	byModel, err := checker.activeBidModels(context.Background(), common.Address{})
+	require.NoError(t, err)
+	require.Len(t, byModel, len(bids)) // every bid targets a distinct model
+	require.Equal(t, bidIDFor(modelLLM), byModel[modelLLM])
 }
 
 func TestCheckAllBidsError(t *testing.T) {

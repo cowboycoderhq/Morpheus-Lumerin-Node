@@ -28,6 +28,7 @@ const (
 	ModelHealthStatusHealthy   = "healthy"
 	ModelHealthStatusUnhealthy = "unhealthy"
 	ModelHealthStatusNoBid     = "no_bid"
+	ModelHealthStatusNoModel   = "no_model_configured"
 	ModelHealthStatusSkipped   = "skipped"
 
 	ModelHealthErrorTimeout     = "timeout"
@@ -37,7 +38,8 @@ const (
 )
 
 // ModelHealthReport is the sanitized per-model self-report exposed on the
-// public /healthcheck endpoint. It intentionally carries only the on-chain
+// public /healthcheck endpoint. It covers the union of configured models and
+// this provider's active bids, and intentionally carries only the on-chain
 // model ID and derived status — never the private modelName, apiUrl or
 // apiKey from models-config.json.
 type ModelHealthReport struct {
