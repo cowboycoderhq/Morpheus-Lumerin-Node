@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/lib"
+	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/system"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -129,9 +130,13 @@ type PingReq struct {
 }
 
 type PongRes struct {
-	Nonce     lib.HexString `json:"nonce"     validate:"required,hexadecimal"`
-	Version   string        `json:"version,omitempty"   validate:"omitempty"`
-	Signature lib.HexString `json:"signature" validate:"required,hexadecimal"`
+	Nonce   lib.HexString `json:"nonce"     validate:"required,hexadecimal"`
+	Version string        `json:"version,omitempty"   validate:"omitempty"`
+	// Models is set after signing (like Signature) and excluded from the
+	// signed payload: consumers with an older PongRes struct drop the unknown
+	// field on unmarshal, so signature verification keeps working for them.
+	Models    []system.ModelHealthReport `json:"models,omitempty" validate:"omitempty"`
+	Signature lib.HexString              `json:"signature" validate:"required,hexadecimal"`
 }
 
 // Audio streaming message types

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/lib"
+	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/system"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 )
@@ -20,7 +21,7 @@ func NewMorRpc() *MORRPCMessage {
 
 // RESPONSES
 
-func (m *MORRPCMessage) PongResponce(requestId string, providerPrKey lib.HexString, nonce lib.HexString, version string) (*RpcResponse, error) {
+func (m *MORRPCMessage) PongResponce(requestId string, providerPrKey lib.HexString, nonce lib.HexString, version string, models []system.ModelHealthReport) (*RpcResponse, error) {
 	params := PongRes{
 		Nonce:   nonce,
 		Version: version,
@@ -30,6 +31,9 @@ func (m *MORRPCMessage) PongResponce(requestId string, providerPrKey lib.HexStri
 		return &RpcResponse{}, err
 	}
 
+	// set after signing so the signed payload stays compatible with older
+	// consumers that don't know the models field (see PongRes)
+	params.Models = models
 	params.Signature = signature
 
 	paramsBytes, err := json.Marshal(params)

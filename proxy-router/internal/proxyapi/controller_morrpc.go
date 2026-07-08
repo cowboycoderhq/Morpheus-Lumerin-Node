@@ -14,6 +14,7 @@ import (
 	msg "github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/proxyapi/morrpcmessage"
 	sessionrepo "github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/repositories/session"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/storages"
+	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/system"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/go-playground/validator/v10"
 )
@@ -27,6 +28,7 @@ type MORRPCController struct {
 	prKey          lib.HexString
 	streamManager  *StreamingSessionManager
 	sessionSema    *SessionSemaphore // Limits to 1 concurrent request per session
+	modelHealth    system.ModelHealthReporter
 }
 
 type SendResponse func(*msg.RpcResponse) error
@@ -35,7 +37,7 @@ var (
 	ErrUnknownMethod = fmt.Errorf("unknown method")
 )
 
-func NewMORRPCController(service *ProxyReceiver, validator *validator.Validate, sessionRepo *sessionrepo.SessionRepositoryCached, sessionStorage *storages.SessionStorage, prKey lib.HexString) *MORRPCController {
+func NewMORRPCController(service *ProxyReceiver, validator *validator.Validate, sessionRepo *sessionrepo.SessionRepositoryCached, sessionStorage *storages.SessionStorage, prKey lib.HexString, modelHealth system.ModelHealthReporter) *MORRPCController {
 	c := &MORRPCController{
 		service:        service,
 		validator:      validator,
@@ -45,6 +47,7 @@ func NewMORRPCController(service *ProxyReceiver, validator *validator.Validate, 
 		prKey:          prKey,
 		streamManager:  NewStreamingSessionManager(),
 		sessionSema:    NewSessionSemaphore(),
+		modelHealth:    modelHealth,
 	}
 
 	return c
@@ -93,7 +96,12 @@ func (s *MORRPCController) networkPing(_ context.Context, msg m.RPCMessage, send
 		return lib.WrapError(ErrValidation, err)
 	}
 
-	res, err := s.morRpc.PongResponce(msg.ID, s.prKey, req.Nonce, config.BuildVersion)
+	var models []system.ModelHealthReport
+	if s.modelHealth != nil {
+		models = s.modelHealth.GetReports()
+	}
+
+	res, err := s.morRpc.PongResponce(msg.ID, s.prKey, req.Nonce, config.BuildVersion, models)
 	if err != nil {
 		sourceLog.Error(err)
 		return err
