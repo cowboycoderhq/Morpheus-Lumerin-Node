@@ -30,7 +30,12 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-const bidsPageLimit = 100
+const (
+	bidsPageLimit = 100
+	// maxBidPages caps pagination (10k bids) as a fail-safe against a
+	// misbehaving RPC that keeps returning full pages.
+	maxBidPages = 100
+)
 
 type AdapterProvider interface {
 	GetAdapter(ctx context.Context, chatID, modelID, sessionID common.Hash, storeChatContext, forwardChatContext bool) (aiengine.AIEngineStream, error)
@@ -110,17 +115,20 @@ func (c *Checker) GetReports() []system.ModelHealthReport {
 	return reports
 }
 
+// checkAll reports on the provider's whole ecosystem: every configured model
+// (probed when it has an active bid) plus every active bid whose model is
+// missing from models-config.json (reported as no_model_configured — the
+// provider is selling capacity it cannot serve).
 func (c *Checker) checkAll(ctx context.Context, walletAddr common.Address) {
 	modelIDs, _ := c.deps.ModelConfigs.GetAll()
-	if len(modelIDs) == 0 {
-		return
-	}
 
 	bidsByModel, err := c.activeBidModels(ctx, walletAddr)
 	if err != nil {
 		c.log.Warnf("cannot get active bids by provider %s: %s", walletAddr, err)
 		return
 	}
+
+	seen := make(map[string]bool, len(modelIDs)+len(bidsByModel))
 
 	for _, modelID := range modelIDs {
 		select {
@@ -130,23 +138,87 @@ func (c *Checker) checkAll(ctx context.Context, walletAddr common.Address) {
 		}
 		bidID, hasBid := bidsByModel[modelID]
 		c.checkModel(ctx, modelID, bidID, hasBid)
+		seen[modelID.Hex()] = true
+	}
+
+	for modelID, bidID := range bidsByModel {
+		if seen[modelID.Hex()] {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		c.reportUnconfigured(ctx, modelID, bidID)
+		seen[modelID.Hex()] = true
+	}
+
+	c.prune(seen)
+}
+
+// reportUnconfigured records a bid whose model has no entry in
+// models-config.json. There is no backend to probe, so only the on-chain
+// facts (bid ID, model type from tags) are reported.
+func (c *Checker) reportUnconfigured(ctx context.Context, modelID common.Hash, bidID common.Hash) {
+	report := system.ModelHealthReport{
+		ModelID:      modelID.Hex(),
+		HasActiveBid: true,
+		BidID:        bidID.Hex(),
+		Status:       system.ModelHealthStatusNoModel,
+		LastChecked:  time.Now().Unix(),
+	}
+
+	c.log.Warnf("active bid %s for model %s has no entry in models config", lib.Short(bidID), lib.Short(modelID))
+
+	if modelType, err := c.modelType(ctx, modelID); err == nil {
+		report.ModelType = string(modelType)
+	}
+
+	c.setReport(report)
+}
+
+// prune drops cached reports for models that are no longer configured and no
+// longer have an active bid, so removed models don't linger in the report.
+func (c *Checker) prune(seen map[string]bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id := range c.reports {
+		if !seen[id] {
+			delete(c.reports, id)
+		}
 	}
 }
 
 // activeBidModels maps each model with an active bid from this provider to
-// its most recent bid ID (bids are fetched newest-first).
+// its most recent bid ID (bids are fetched newest-first). Pages through all
+// active bids so providers with more than one page are fully covered.
 func (c *Checker) activeBidModels(ctx context.Context, walletAddr common.Address) (map[common.Hash]common.Hash, error) {
-	bids, err := c.deps.Bids.GetActiveBidsByProvider(ctx, walletAddr, big.NewInt(0), bidsPageLimit, registries.OrderDESC)
-	if err != nil {
-		return nil, err
-	}
+	byModel := make(map[common.Hash]common.Hash)
 
-	byModel := make(map[common.Hash]common.Hash, len(bids))
-	for _, bid := range bids {
-		if _, ok := byModel[bid.ModelAgentId]; !ok {
-			byModel[bid.ModelAgentId] = bid.Id
+	for page := 0; ; page++ {
+		if page == maxBidPages {
+			c.log.Warnf("provider %s has more than %d active bids, health report may be incomplete", walletAddr, maxBidPages*bidsPageLimit)
+			break
+		}
+
+		offset := big.NewInt(int64(page) * bidsPageLimit)
+		bids, err := c.deps.Bids.GetActiveBidsByProvider(ctx, walletAddr, offset, bidsPageLimit, registries.OrderDESC)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, bid := range bids {
+			if _, ok := byModel[bid.ModelAgentId]; !ok {
+				byModel[bid.ModelAgentId] = bid.Id
+			}
+		}
+
+		if len(bids) < bidsPageLimit {
+			break
 		}
 	}
+
 	return byModel, nil
 }
 
