@@ -2075,6 +2075,110 @@ jobs:
             echo "⚠️ Continuing with warning - ECS deployment completed but version verification inconclusive"
           fi
 
+  Sweep-Zombie-Sessions:
+    name: Sweep zombie routed_sessions (post C-Node)
+    # Final tactical step: after the C-Node task swap, a batch of routed_sessions
+    # rows are left state='OPEN' with a provider mapping the new ephemeral BadgerDB
+    # no longer has. The API Gateway self-heals these within ~30 min (failover marks
+    # FAILED; its automation loop expires OPEN-past-expires_at), but this job clears
+    # the whole batch immediately so users don't eat up to ~30 min of intermittent
+    # "provider not found" retries. The Lambda is safe/idempotent (summary-first,
+    # refuses a future cutoff, guarded by SWEEP_MAX_ROWS). See Morpheus-Infra
+    # 02-morpheus_c_node/.terragrunt/06_routed_sessions_sweep.tf.
+    #
+    # Runs only after a successful C-Node deploy; tolerates skipped P-Node jobs the
+    # same way Deploy-to-Morpheus-C-Node does. Never fails the pipeline on a sweep
+    # hiccup - the deploy already succeeded and the gateway self-heals as a backstop.
+    if: |
+      !cancelled() &&
+      github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      needs.Deploy-to-Morpheus-C-Node.result == 'success'
+    needs:
+      - Generate-Tag
+      - Deploy-to-Morpheus-C-Node
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.MORPHEUS_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.MORPHEUS_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - name: Invoke routed-sessions zombie sweep Lambda
+        run: |
+          BUILDTAG=${{ needs.Generate-Tag.outputs.tag_name }}
+
+          # Map branch -> environment (same convention as the C-Node deploy).
+          if [ "${{ github.ref_name }}" == "test" ]; then
+            ENV="dev"
+          elif [ "${{ github.ref_name }}" == "main" ]; then
+            ENV="prd"
+          else
+            echo "ℹ️ Branch ${{ github.ref_name }} is not a deploy branch; skipping sweep."
+            exit 0
+          fi
+
+          FUNCTION_NAME="${ENV}-routed-sessions-sweep"
+          # deploy_cutoff mode (default): the Lambda derives cutoff from the C-Node
+          # service deployments[0].updatedAt + rehydration + safety, then closes
+          # OPEN rows older than that. release_tag only annotates error_reason.
+          PAYLOAD="{\"release_tag\":\"${BUILDTAG}\"}"
+
+          echo "🧹 Invoking ${FUNCTION_NAME} with payload: ${PAYLOAD}"
+          set +e
+          INVOKE_META=$(aws lambda invoke \
+            --function-name "$FUNCTION_NAME" \
+            --cli-binary-format raw-in-base64-out \
+            --payload "$PAYLOAD" \
+            /tmp/sweep_out.json 2>/tmp/sweep_err.txt)
+          INVOKE_RC=$?
+          set -e
+
+          if [ $INVOKE_RC -ne 0 ]; then
+            echo "⚠️ lambda invoke call failed (rc=$INVOKE_RC):"
+            cat /tmp/sweep_err.txt || true
+            echo "ℹ️ Deploy already succeeded; the API Gateway self-heals zombies within ~30 min. Not failing the pipeline."
+            exit 0
+          fi
+
+          echo "📡 Invoke metadata: $INVOKE_META"
+          FUNCTION_ERROR=$(echo "$INVOKE_META" | jq -r '.FunctionError // empty')
+          RESPONSE=$(cat /tmp/sweep_out.json)
+          echo "📦 Lambda response: $RESPONSE"
+
+          # The handler returns {"statusCode": N, "body": "<json string>"}.
+          STATUS=$(echo "$RESPONSE" | jq -r '.statusCode // empty' 2>/dev/null)
+          BODY=$(echo "$RESPONSE" | jq -r '.body // empty' 2>/dev/null)
+
+          {
+            echo "### 🧹 Routed-sessions zombie sweep"
+            echo ""
+            echo "- **Function:** \`${FUNCTION_NAME}\`"
+            echo "- **Release tag:** \`${BUILDTAG}\`"
+            echo "- **Handler statusCode:** \`${STATUS:-unknown}\`"
+            if [ -n "$BODY" ]; then
+              echo ""
+              echo "\`\`\`json"
+              echo "$BODY"
+              echo "\`\`\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$FUNCTION_ERROR" ]; then
+            echo "⚠️ Lambda reported FunctionError='$FUNCTION_ERROR'. Check CloudWatch /aws/lambda/${FUNCTION_NAME}."
+            echo "ℹ️ Not failing the pipeline; gateway self-heal is the backstop."
+            exit 0
+          fi
+
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ Sweep completed."
+          else
+            echo "⚠️ Sweep returned non-200 statusCode '${STATUS}' (e.g. future-cutoff or > SWEEP_MAX_ROWS guard)."
+            echo "ℹ️ Review the response above and run the runbook sweep manually if needed. Not failing the pipeline."
+          fi
+
   Deploy-to-Morpheus-P-Node:
     name: Deploy to Morpheus Provider via GitHub
     # First half of the one-at-a-time provider roll (P-Node-1, then P-Node-2).

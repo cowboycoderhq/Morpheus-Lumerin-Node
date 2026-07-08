@@ -105,6 +105,7 @@ func (s *SDK) StartHTTPServer(address, publicURL, adminUser, adminPass string) e
 		nil,
 		*authCfg,
 		&noopStorageHealthChecker{},
+		nil,
 	)
 
 	// Selective registration: only expose routes whose dependencies are
@@ -225,5 +226,5 @@ func (n *noopAIEngine) GetAdapter(ctx context.Context, chatID, modelID, sessionI
 
 type noopStorageHealthChecker struct{}
 
-func (n *noopStorageHealthChecker) HealthCheck() error        { return nil }
-func (n *noopStorageHealthChecker) DBSize() (int64, int64)    { return 0, 0 }
+func (n *noopStorageHealthChecker) HealthCheck() error     { return nil }
+func (n *noopStorageHealthChecker) DBSize() (int64, int64) { return 0, 0 }
