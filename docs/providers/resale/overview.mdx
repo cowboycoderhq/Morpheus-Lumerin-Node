@@ -31,7 +31,7 @@ flowchart LR
 
 1. You run a normal proxy-router (containerized or bare-metal) — see [Container P-Node](/providers/resale/container-pnode).
 2. In your `models-config.json` you set `apiUrl` to the upstream's chat completions endpoint and `apiKey` to your upstream account key.
-3. You register your provider, model, and bid on chain — same as a standard full provider, just **without the `tee` tag**.
+3. You register your provider on chain, then **prefer bidding on an existing model** from [active.mor.org](https://active.mor.org/status) — same as a standard full provider, just **without the `tee` tag**. Mint a new model only when nothing suitable exists. [MyProvider](https://myprovider.mor.org) is the easiest UI for this.
 4. Consumer prompts arrive on `:3333`, get routed to your proxy-router on `:8082`, which forwards to the upstream `apiUrl`. Upstream responses stream back the same way.
 
 ## Things to watch for
