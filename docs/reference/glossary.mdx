@@ -33,8 +33,7 @@ LLM-friendly definitions — short, opinionated, and consistent across the rest 
 | **proxy-router** | The Go service in this repo. Same binary serves consumer and provider roles; configuration differs. |
 | **MorpheusUI** | The Electron desktop UI in this repo. |
 | **mor-cli** | The Go CLI client in this repo. |
-| **mor-launch** | A small launcher in releases that starts the proxy-router (and optionally `llama.cpp`) plus the UI. |
-| **`local` model** | The bundled tinyllama demo model. Started with `mor-launch local`. Not a Morpheus marketplace model. |
+| **`local` model** | The tinyllama demo model, downloaded and started automatically by the MorpheusUI desktop app (its "AI Runtime" service). Not a Morpheus marketplace model. |
 | **`tee` tag** | Tag added to a model on chain to engage the two-hop attestation chain (Phase 1 + Phase 2). |
 | **`-tee` image** | The hardened proxy-router image (`ghcr.io/morpheusais/morpheus-lumerin-node-tee`) with config baked at build time. |
 | **RTMR3** | Intel TDX runtime-measurement register #3. Computed from the rootfs and the deployed compose; the unique fingerprint of the running TEE workload. |
