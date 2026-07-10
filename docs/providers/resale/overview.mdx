@@ -3,7 +3,7 @@ title: "Resale provider overview"
 description: "Why and how to resell capacity from Venice / OpenAI / Anthropic / Hyperbolic on Morpheus, without hosting your own model."
 audience: ["provider-resale"]
 product: ["proxy-router"]
-last_verified: "v7.0.0"
+last_verified: "v7.5.0"
 ---
 
 A "resale" provider runs a Morpheus proxy-router but does **not** host the model itself. The proxy-router forwards prompts to a hosted backend (Venice, OpenAI, Anthropic, Hyperbolic, etc.) using the backend's API key, and you collect MOR from the marketplace.
@@ -26,6 +26,10 @@ flowchart LR
 - You are bound by the upstream provider's TOS — many forbid resale; check first.
 - Your margins depend on upstream pricing changes and rate limits.
 - You cannot offer TEE attestation guarantees (see [TEE overview](/concepts/tee-overview)) because you do not control the backend.
+
+## Venice Diem holders
+
+If you already pay for **Venice Diem** (or similar) and want a low-friction way to earn MOR from spare API quota, follow [Reselling Venice (Diem)](/providers/resale/reselling-venice): look up an existing model on active.mor.org → craft secrets in [MyProvider](https://myprovider.mor.org) → bid. That path is designed to be mostly graphical.
 
 ## How it works mechanically
 
