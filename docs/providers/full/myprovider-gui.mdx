@@ -75,6 +75,19 @@ The hosted app at [myprovider.mor.org](https://myprovider.mor.org) can only call
 | TEE attestation inspection | [SecretVM portal](https://secretai.scrtlabs.com/attestation) + cosign |
 | Programmatic automation | API |
 
+## Agent / bot discovery
+
+Plain-text surfaces on this host (no JS required):
+
+| Path | Purpose |
+|------|---------|
+| [/llms.txt](https://myprovider.mor.org/llms.txt) | Index + hard rules |
+| [/llms-full.txt](https://myprovider.mor.org/llms-full.txt) | One-shot install → bid recipe |
+| [/AGENTS.md](https://myprovider.mor.org/AGENTS.md) | Agent rules |
+| [/onboarding.md](https://myprovider.mor.org/onboarding.md) | Deploy-path steps |
+
+For protocol depth, agents should use [nodedocs llms-full](https://nodedocs.mor.org/llms-full.txt) or MCP `https://nodedocs.mor.org/mcp`. Live models/prices: [active.mor.org](https://active.mor.org/status).
+
 ## Related
 
 - [Register on chain](/providers/full/register-onchain) — discover → bid (canonical steps)
