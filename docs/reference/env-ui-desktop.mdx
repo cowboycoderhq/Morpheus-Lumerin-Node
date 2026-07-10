@@ -34,9 +34,9 @@ MorpheusUI configuration lives in `MorpheusUI/.env` (or the equivalent platform-
 
 ## Pairing with a custom proxy-router
 
-Most consumer setups use the bundled proxy-router that `mor-launch` starts. To point the UI at a separate proxy-router (e.g. a Docker container or a remote C-Node):
+Most consumer setups use the proxy-router that the MorpheusUI desktop app downloads and starts itself. To point the UI at a separate proxy-router (e.g. a Docker container or a remote C-Node):
 
-1. Stop the bundled proxy-router (or don't run `mor-launch`).
+1. Stop the managed proxy-router (quit the app, or stop it from the startup screen).
 2. Start your own proxy-router and confirm `http://<host>:8082/healthcheck`.
 3. Set `PROXY_WEB_URL=http://<host>:8082` in MorpheusUI's `.env`.
 4. Restart MorpheusUI.
