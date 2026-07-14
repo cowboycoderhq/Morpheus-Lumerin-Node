@@ -58,6 +58,12 @@ You will need both **MOR** (for stake / fees / session payment) and **ETH on BAS
 | Prosumer / agent | [Prosumer overview](https://nodedocs.mor.org/prosumers/overview) |
 | Developer (API) | [API overview](https://nodedocs.mor.org/reference/api-overview) |
 
+## Contributing
+
+**PRs should target [`dev`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/tree/dev), not `main`.** Changes promote `dev` → `test` → `main`.
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the branch model, PR checklist, and local docs/proxy-router tips. The GitHub PR template reminds you to pick the right base branch.
+
 ## For AI agents reading this repo
 
 **Start with [`AGENTS.md`](AGENTS.md)** — hard rules, quick lookup tables, and ingestion instructions.
