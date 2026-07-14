@@ -1,23 +1,40 @@
 import styled from 'styled-components';
 import React from 'react';
+import { IconReceipt } from '@tabler/icons-react';
 
 const Container = styled.div`
-  padding: 6.4rem 3.2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3.2rem;
+  text-align: center;
+
+  svg {
+    color: rgba(255, 255, 255, 0.18);
+    margin-bottom: 1.2rem;
+  }
 `;
 
 const Label = styled.div`
-  line-height: 3rem;
-  font-size: 2.4rem;
+  line-height: 2.4rem;
+  font-size: 1.7rem;
   font-weight: 600;
-  text-align: center;
-  color: #c2c2c2;
-  margin-top: 0.8rem;
+  color: rgba(255, 255, 255, 0.55);
+`;
+
+const Sub = styled.div`
+  margin-top: 0.4rem;
+  font-size: 1.25rem;
+  color: rgba(255, 255, 255, 0.35);
 `;
 
 export default function NoTxPlaceholder() {
   return (
     <Container data-testid="no-tx-placeholder">
-      <Label>No transactions yet!</Label>
+      <IconReceipt size={48} stroke={1.5} />
+      <Label>No transactions yet</Label>
+      <Sub>Your on-chain activity will appear here.</Sub>
     </Container>
   );
 }

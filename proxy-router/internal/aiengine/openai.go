@@ -127,10 +127,10 @@ func (a *OpenAI) readError(ctx context.Context, statusCode int, body io.Reader, 
 				"type":    "upstream_error",
 			},
 		}
-		return cb(ctx, nil, gcs.NewAiEngineErrorResponseWithStatus(parsed, statusCode))
+		return cb(ctx, nil, gcs.NewAiEngineErrorResponse(statusCode, parsed))
 	}
 
-	if cbErr := cb(ctx, nil, gcs.NewAiEngineErrorResponseWithStatus(parsed, statusCode)); cbErr != nil {
+	if cbErr := cb(ctx, nil, gcs.NewAiEngineErrorResponse(statusCode, parsed)); cbErr != nil {
 		return fmt.Errorf("callback failed: %v", cbErr)
 	}
 	return nil
