@@ -45,7 +45,6 @@ on:
       - ".github/**"
       - "!.github/workflows/docs.yml"
       - "ui-desktop/**"
-      - "ui-core/**"
       - "proxy-router/**"
       - "cli/**"
 
@@ -65,6 +64,84 @@ env:
   TEST_ENV_VAR: "test"
 
 jobs:
+  changes:
+    name: Detect changed components
+    runs-on: ubuntu-latest
+    if: |
+      github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      (
+        (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test' || github.ref == 'refs/heads/dev')) ||
+        (github.event_name == 'workflow_dispatch')
+      )
+    outputs:
+      proxy: ${{ steps.classify.outputs.proxy }}
+      ui: ${{ steps.classify.outputs.ui }}
+      cicd: ${{ steps.classify.outputs.cicd }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          emit() {
+            echo "proxy=$1" >> "$GITHUB_OUTPUT"
+            echo "ui=$2"     >> "$GITHUB_OUTPUT"
+            echo "cicd=$3"   >> "$GITHUB_OUTPUT"
+            {
+              echo "### 🔎 Component change detection"
+              echo ""
+              echo "| Component | Changed |"
+              echo "|-----------|---------|"
+              echo "| proxy-router | \`$1\` |"
+              echo "| ui-desktop / cli | \`$2\` |"
+              echo "| ci-cd (.github) | \`$3\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          # Manual dispatch = operator-driven full build. The build_all_os /
+          # create_deployment inputs remain the single source of truth for what
+          # actually runs, so classify every component as changed here.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Manual dispatch → all components treated as changed."
+            emit true true true
+            exit 0
+          fi
+
+          # New branch / first push / force-push with no usable base → fail safe
+          # to a full build (and a minor version bump).
+          if [ -z "${BEFORE_SHA:-}" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            echo "No usable base commit ('${BEFORE_SHA:-}') → all components treated as changed."
+            emit true true true
+            exit 0
+          fi
+
+          CHANGED=$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA")
+          echo "Changed files ($BEFORE_SHA..$AFTER_SHA):"
+          echo "$CHANGED" | sed 's/^/  /'
+
+          PROXY=false
+          UI=false
+          CICD=false
+          # proxy-router (anchor component). Per design, swagger/docs under
+          # proxy-router/ intentionally count as a proxy change.
+          if echo "$CHANGED" | grep -Eq '^proxy-router/'; then PROXY=true; fi
+          # UI components eligible for an independent patch release.
+          if echo "$CHANGED" | grep -Eq '^(ui-desktop|cli)/'; then UI=true; fi
+          # CI/CD changes (excluding the docs workflow, which docs.yml owns).
+          if echo "$CHANGED" | grep -E '^\.github/' | grep -qv '^\.github/workflows/docs\.yml$'; then CICD=true; fi
+
+          emit "$PROXY" "$UI" "$CICD"
+
   Go-Module-Verify:
     name: Verify Go Modules
     if: |
@@ -113,6 +190,8 @@ jobs:
   Generate-Tag:
     runs-on: ubuntu-latest
     name: Generate Tag Name
+    needs:
+      - changes
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
       (
@@ -126,6 +205,12 @@ jobs:
       image_name: ${{ steps.gen_tag_name.outputs.image_name }}
       tee_image_name: ${{ steps.gen_tag_name.outputs.tee_image_name }}
       artifacts_base_url: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.gen_tag_name.outputs.tag_name }}
+      # Proxy-router "anchor" the desktop app downloads its bundled router from.
+      # On main this is always vX.Y.0 (the minor's proxy baseline); on test/dev
+      # it is the current self build (router executables are always built there).
+      anchor_vfull: ${{ steps.gen_tag_name.outputs.anchor_vfull }}
+      anchor_tag: ${{ steps.gen_tag_name.outputs.anchor_tag }}
+      anchor_artifacts_base_url: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.gen_tag_name.outputs.anchor_tag }}
     steps:
       - name: Clone repository
         uses: actions/checkout@v6
@@ -136,6 +221,8 @@ jobs:
       - name: Determine tag name
         id: gen_tag_name
         shell: bash
+        env:
+          PROXY_CHANGED: ${{ needs.changes.outputs.proxy }}
         run: |
           IMAGE_NAME="ghcr.io/morpheusais/morpheus-lumerin-node"
           VMAJ_NEW=7
@@ -159,15 +246,28 @@ jobs:
 
           if [ "$GITHUB_REF_NAME" = "main" ]; then
               if [ "$VMAJ_NEW" -gt "$VMAJ" ]; then
+                  # Forced major floor (e.g. first v7 release).
                   VMAJ=$VMAJ_NEW
                   VMIN=$VMIN_NEW
                   VPAT=$VPAT_NEW
-              else
+                  BUMP="major-floor"
+              elif [ "${PROXY_CHANGED}" = "true" ]; then
+                  # proxy-router changed → MINOR bump, re-anchor (patch resets to 0).
                   VMIN=$((VMIN+1))
                   VPAT=0
+                  BUMP="minor (proxy-router changed)"
+              else
+                  # UI/CLI-only change → PATCH bump on top of the current proxy anchor.
+                  VPAT=$((VPAT+1))
+                  BUMP="patch (UI-only, proxy unchanged)"
               fi
               VFULL=${VMAJ}.${VMIN}.${VPAT}
               VTAG=v$VFULL
+              # On main the desktop app always bundles the minor's proxy baseline
+              # (vX.Y.0). For a minor build this equals self; for a patch build it
+              # points back at the already-published proxy release.
+              ANCHOR_VFULL=${VMAJ}.${VMIN}.0
+              ANCHOR_TAG=v${ANCHOR_VFULL}
           else
               if [ "$VMAJ_NEW" -gt "$VMAJ" ]; then
                   VMAJ=$VMAJ_NEW
@@ -179,15 +279,23 @@ jobs:
               RNAME=${GITHUB_REF_NAME##*/}
               [ "$GITHUB_EVENT_NAME" = "pull_request" ] && RNAME=pr${GITHUB_REF_NAME%/merge}
               VTAG=v${VFULL}-${RNAME}
+              BUMP="prerelease"
+              # test/dev always build their own router executables, so the app
+              # anchors to this same prerelease build (self-contained).
+              ANCHOR_VFULL=${VFULL}
+              ANCHOR_TAG=${VTAG}
           fi
 
           # Output variables for use in subsequent jobs environment
           echo "tag_name=${VTAG}" >> $GITHUB_OUTPUT
           echo "vtag=${VTAG}" >> $GITHUB_OUTPUT
           echo "vfull=${VFULL}" >> $GITHUB_OUTPUT
+          echo "anchor_vfull=${ANCHOR_VFULL}" >> $GITHUB_OUTPUT
+          echo "anchor_tag=${ANCHOR_TAG}" >> $GITHUB_OUTPUT
           echo "image_name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
           echo "tee_image_name=${IMAGE_NAME}-tee" >> $GITHUB_OUTPUT
-          echo "✅ New Build Tag: $VTAG" >> $GITHUB_STEP_SUMMARY
+          echo "✅ New Build Tag: $VTAG ($BUMP)" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Proxy Anchor: $ANCHOR_TAG" >> $GITHUB_STEP_SUMMARY
           echo "✅ Docker Image: ${IMAGE_NAME}:${VTAG}" >> $GITHUB_STEP_SUMMARY
           echo "✅ TEE Image: ${IMAGE_NAME}-tee:${VTAG}" >> $GITHUB_STEP_SUMMARY
           echo "❌ Old Major Tag: $VLAST"  >> $GITHUB_STEP_SUMMARY
@@ -196,12 +304,14 @@ jobs:
     name: Test Proxy Router Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test' || github.ref == 'refs/heads/dev')) ||
         (github.event_name == 'workflow_dispatch') 
       )
     runs-on: ubuntu-latest
     needs:
+      - changes
       - Generate-Tag
       - Go-Module-Verify
     steps:
@@ -241,11 +351,13 @@ jobs:
     name: Build & Push Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/')|| github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
       )
     needs:
+      - changes
       - Generate-Tag
       - Build-Proxy-Router-Test
     runs-on: ubuntu-latest
@@ -341,11 +453,13 @@ jobs:
     name: Build & Push TEE Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/')|| github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
       )
     needs:
+      - changes
       - Generate-Tag
       - GHCR-Build-and-Push
     runs-on: ubuntu-latest
@@ -839,8 +953,11 @@ jobs:
 
   Deploy-SecretVM-Test:
     name: Deploy TEE Image to SecretVM (test)
-    if: github.ref == 'refs/heads/test' || startsWith(github.ref, 'refs/heads/cicd/')
+    if: |
+      (github.ref == 'refs/heads/test' || startsWith(github.ref, 'refs/heads/cicd/')) &&
+      (needs.changes.outputs.proxy == 'true' || github.event_name == 'workflow_dispatch')
     needs:
+      - changes
       - Generate-Tag
       - GHCR-Build-and-Push-TEE
     runs-on: ubuntu-latest
@@ -957,11 +1074,13 @@ jobs:
     name: Build Service Executables
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
       )
     needs:
+      - changes
       - Generate-Tag
       - Go-Module-Verify
     runs-on: ubuntu-latest
@@ -1095,11 +1214,13 @@ jobs:
     name: Deploy to Titan via GitHub Actions
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      (needs.changes.outputs.proxy == 'true' || github.event_name == 'workflow_dispatch') &&
       (
         (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true' && github.event.inputs.create_deployment == 'true')
       )
     needs:
+      - changes
       - Generate-Tag
       - GHCR-Build-and-Push
     runs-on: ubuntu-latest
@@ -1363,30 +1484,48 @@ jobs:
           fi
 
   Drain-Morpheus-C-Node:
-    # Quiet the C-Node BEFORE restarting any provider (P-Node) or the C-Node itself.
-    # 
-    # Why: the proxy-router on the C-Node keeps a BadgerDB of active sessions. On v6.x
-    # the BadgerDB is ephemeral on Fargate (no EFS) and the router has rehydration
-    # logic that rebuilds state on boot from on-chain data. While a P-Node restarts,
-    # any warm session streaming through the C-Node will see a clean upstream failure
-    # (NLB returns 503 / connection closed) instead of a half-dead mid-stream hang
-    # that would require manual BadgerDB cleanup afterwards.
+    # Quiet the C-Node immediately BEFORE the C-Node itself is rolled — and, per the
+    # job graph below, only AFTER both P-Nodes have already been updated one at a time
+    # (P-Node-1 -> P-Node-2). We deliberately do NOT drain during the provider rolls:
+    # with two independent on-chain providers serving the same models, the C-Node must
+    # stay live in the NLB so the API Gateway's provider-failover (mark the dead
+    # session FAILED -> reopen on the surviving provider; see
+    # Morpheus-Marketplace-API/src/api/v1/chat/chat_failover.py) keeps traffic flowing
+    # while each provider restarts.
+    #
+    # Why drain at all (for the C-Node roll): the proxy-router on the C-Node keeps a
+    # BadgerDB of active sessions. On prd the BadgerDB is ephemeral on Fargate (no EFS)
+    # and the router rehydrates state on boot from on-chain data. Draining first means
+    # warm sessions see a clean upstream failure (NLB returns 503 / connection closed)
+    # instead of a half-dead mid-stream hang during the C-Node restart.
     #
     # This job deregisters the running C-Node task ENI from every target group on the
     # C-Node NLB. The target groups have connection_termination=true (see
     # Morpheus-Infra/environments/02-morpheus_c_node/.terragrunt/02_mor_router_svc.tf),
     # so existing TCP sessions are closed promptly. The ECS service and its task
     # continue to run; we are only manipulating LB membership.
+    #
+    # `!cancelled()` + explicit result checks let this run on `test` (where both
+    # P-Node jobs are skipped — no dev provider node) while still requiring BOTH
+    # provider rolls to SUCCEED on `main` before the C-Node is touched.
     name: Drain Morpheus C-Node from NLB
     if: |
+      !cancelled() &&
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      (needs.changes.outputs.proxy == 'true' || github.event_name == 'workflow_dispatch') &&
+      needs.GHCR-Build-and-Push.result == 'success' &&
+      (needs.Deploy-to-Morpheus-P-Node.result == 'success' || needs.Deploy-to-Morpheus-P-Node.result == 'skipped') &&
+      (needs.Deploy-to-Morpheus-P-Node-2.result == 'success' || needs.Deploy-to-Morpheus-P-Node-2.result == 'skipped') &&
       (
         (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true' && github.event.inputs.create_deployment == 'true')
       )
     needs:
+      - changes
       - Generate-Tag
       - GHCR-Build-and-Push
+      - Deploy-to-Morpheus-P-Node
+      - Deploy-to-Morpheus-P-Node-2
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name }}
     outputs:
@@ -1464,8 +1603,8 @@ jobs:
 
           # connection_termination=true on router TGs closes live TCP sessions in under
           # a second; svc TG has deregistration_delay=0 and API TG has 30. 45s leaves
-          # plenty of margin for LB state to propagate across AZs before we let the
-          # P-Node deployment start disrupting upstream providers.
+          # plenty of margin for LB state to propagate across AZs before the C-Node
+          # task is rolled (both P-Nodes have already been updated by this point).
           DRAIN_WAIT=45
           echo ""
           echo "⏳ Waiting ${DRAIN_WAIT}s for deregistration to propagate..."
@@ -1485,38 +1624,42 @@ jobs:
             echo "**Target groups drained:** \`$TG_ARNS_CSV\`"
             echo "**Target IPs removed:** \`$IPS_CSV\`"
             echo ""
-            echo "Upstream providers may now be safely restarted; the NLB will return clean upstream errors until the new C-Node is re-registered."
+            echo "Both P-Nodes are already updated; the NLB will return clean upstream errors until the new C-Node task is re-registered."
           } >> "$GITHUB_STEP_SUMMARY"
 
   Deploy-to-Morpheus-C-Node:
     name: Deploy to Morpheus Consumer via GitHub
     # NOTE on `needs` + skipped dependencies:
     # GitHub Actions' default job condition is implicit `success()`, which returns
-    # false when ANY needed job was skipped. P-Node is main-only (see its own `if`),
-    # so on a `test` deploy `Deploy-to-Morpheus-P-Node` is always skipped. Without
-    # an explicit `if` that tolerates that skip, the C-Node deploy gets skipped
-    # too — which is exactly what bit us on the first v7 test run: the drain job
-    # ran and deregistered the C-Node, then the actual deploy silently skipped,
-    # leaving dev without a replacement task.
+    # false when ANY needed job was skipped. Both P-Node jobs are main-only (see their
+    # own `if`), so on a `test` deploy `Deploy-to-Morpheus-P-Node` and
+    # `Deploy-to-Morpheus-P-Node-2` are always skipped. Without an explicit `if` that
+    # tolerates those skips, the C-Node deploy gets skipped too — which is exactly what
+    # bit us on the first v7 test run: the drain job ran and deregistered the C-Node,
+    # then the actual deploy silently skipped, leaving dev without a replacement task.
     #
-    # This `if` explicitly allows the skipped P-Node outcome, while still gating
-    # on drain + GHCR success and requiring we're on a deploy-eligible branch.
+    # This `if` explicitly allows the skipped P-Node outcomes, while still gating on
+    # drain + GHCR success and requiring we're on a deploy-eligible branch.
     # `!cancelled()` keeps the guard working if a user cancels mid-run.
     if: |
       !cancelled() &&
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      (needs.changes.outputs.proxy == 'true' || github.event_name == 'workflow_dispatch') &&
       needs.GHCR-Build-and-Push.result == 'success' &&
       needs.Drain-Morpheus-C-Node.result == 'success' &&
       (needs.Deploy-to-Morpheus-P-Node.result == 'success' || needs.Deploy-to-Morpheus-P-Node.result == 'skipped') &&
+      (needs.Deploy-to-Morpheus-P-Node-2.result == 'success' || needs.Deploy-to-Morpheus-P-Node-2.result == 'skipped') &&
       (
         (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true' && github.event.inputs.create_deployment == 'true')
       )
     needs:
+      - changes
       - Generate-Tag
       - GHCR-Build-and-Push
       - Drain-Morpheus-C-Node
       - Deploy-to-Morpheus-P-Node
+      - Deploy-to-Morpheus-P-Node-2
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name }}
     steps:
@@ -1932,21 +2075,160 @@ jobs:
             echo "⚠️ Continuing with warning - ECS deployment completed but version verification inconclusive"
           fi
 
+  Sweep-Zombie-Sessions:
+    name: Sweep zombie routed_sessions (post C-Node)
+    # Final tactical step: after the C-Node task swap, a batch of routed_sessions
+    # rows are left state='OPEN' with a provider mapping the new ephemeral BadgerDB
+    # no longer has. The API Gateway self-heals these within ~30 min (failover marks
+    # FAILED; its automation loop expires OPEN-past-expires_at), but this job clears
+    # the whole batch immediately so users don't eat up to ~30 min of intermittent
+    # "provider not found" retries. The Lambda is safe/idempotent (summary-first,
+    # refuses a future cutoff, guarded by SWEEP_MAX_ROWS). See Morpheus-Infra
+    # 02-morpheus_c_node/.terragrunt/06_routed_sessions_sweep.tf.
+    #
+    # Runs only after a successful C-Node deploy; tolerates skipped P-Node jobs the
+    # same way Deploy-to-Morpheus-C-Node does. Never fails the pipeline on a sweep
+    # hiccup - the deploy already succeeded and the gateway self-heals as a backstop.
+    if: |
+      !cancelled() &&
+      github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      needs.Deploy-to-Morpheus-C-Node.result == 'success'
+    needs:
+      - Generate-Tag
+      - Deploy-to-Morpheus-C-Node
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.MORPHEUS_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.MORPHEUS_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - name: Invoke routed-sessions zombie sweep Lambda
+        run: |
+          BUILDTAG=${{ needs.Generate-Tag.outputs.tag_name }}
+
+          # Map branch -> environment (same convention as the C-Node deploy).
+          if [ "${{ github.ref_name }}" == "test" ]; then
+            ENV="dev"
+          elif [ "${{ github.ref_name }}" == "main" ]; then
+            ENV="prd"
+          else
+            echo "ℹ️ Branch ${{ github.ref_name }} is not a deploy branch; skipping sweep."
+            exit 0
+          fi
+
+          FUNCTION_NAME="${ENV}-routed-sessions-sweep"
+          # deploy_cutoff mode (default): the Lambda derives cutoff from the C-Node
+          # service deployments[0].updatedAt + rehydration + safety, then closes
+          # OPEN rows older than that. release_tag only annotates error_reason.
+          PAYLOAD="{\"release_tag\":\"${BUILDTAG}\"}"
+
+          # This job starts seconds after the C-Node deploy settles, but the
+          # Lambda's cutoff = deployments[0].updatedAt + 90s rehydration + 120s
+          # safety (~210s ahead) and it REFUSES a future cutoff. So the first
+          # invoke almost always lands before the cutoff and no-ops with a 400.
+          # Retry with backoff until the cutoff has passed (or the budget is
+          # exhausted) so the sweep actually runs. Budget: 10 * 30s = ~5 min,
+          # comfortably past the ~210s cutoff. Only the future-cutoff case is
+          # retried; any other status (200 / SWEEP_MAX_ROWS / error) is terminal.
+          MAX_ATTEMPTS=10
+          SLEEP_SECS=30
+          STATUS=""
+          BODY=""
+          FUNCTION_ERROR=""
+          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+            echo "🧹 [attempt ${attempt}/${MAX_ATTEMPTS}] Invoking ${FUNCTION_NAME} with payload: ${PAYLOAD}"
+            set +e
+            INVOKE_META=$(aws lambda invoke \
+              --function-name "$FUNCTION_NAME" \
+              --cli-binary-format raw-in-base64-out \
+              --payload "$PAYLOAD" \
+              /tmp/sweep_out.json 2>/tmp/sweep_err.txt)
+            INVOKE_RC=$?
+            set -e
+
+            if [ $INVOKE_RC -ne 0 ]; then
+              echo "⚠️ lambda invoke call failed (rc=$INVOKE_RC):"
+              cat /tmp/sweep_err.txt || true
+              echo "ℹ️ Deploy already succeeded; the API Gateway self-heals zombies within ~30 min. Not failing the pipeline."
+              exit 0
+            fi
+
+            echo "📡 Invoke metadata: $INVOKE_META"
+            FUNCTION_ERROR=$(echo "$INVOKE_META" | jq -r '.FunctionError // empty')
+            RESPONSE=$(cat /tmp/sweep_out.json)
+            echo "📦 Lambda response: $RESPONSE"
+
+            # The handler returns {"statusCode": N, "body": "<json string>"}.
+            STATUS=$(echo "$RESPONSE" | jq -r '.statusCode // empty' 2>/dev/null)
+            BODY=$(echo "$RESPONSE" | jq -r '.body // empty' 2>/dev/null)
+
+            # An unhandled Lambda error has no statusCode — terminal, don't retry.
+            if [ -n "$FUNCTION_ERROR" ]; then
+              break
+            fi
+
+            # Retry ONLY the "future cutoff" 400 — we just deployed and need to
+            # wait for the cutoff to pass. Everything else is a final result.
+            if [ "$STATUS" = "400" ] && echo "$BODY" | grep -qi "in the future"; then
+              if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+                echo "⏳ Cutoff not reached yet; sleeping ${SLEEP_SECS}s before retry."
+                sleep "$SLEEP_SECS"
+                continue
+              fi
+            fi
+            break
+          done
+
+          {
+            echo "### 🧹 Routed-sessions zombie sweep"
+            echo ""
+            echo "- **Function:** \`${FUNCTION_NAME}\`"
+            echo "- **Release tag:** \`${BUILDTAG}\`"
+            echo "- **Handler statusCode:** \`${STATUS:-unknown}\`"
+            if [ -n "$BODY" ]; then
+              echo ""
+              echo "\`\`\`json"
+              echo "$BODY"
+              echo "\`\`\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$FUNCTION_ERROR" ]; then
+            echo "⚠️ Lambda reported FunctionError='$FUNCTION_ERROR'. Check CloudWatch /aws/lambda/${FUNCTION_NAME}."
+            echo "ℹ️ Not failing the pipeline; gateway self-heal is the backstop."
+            exit 0
+          fi
+
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ Sweep completed."
+          else
+            echo "⚠️ Sweep returned non-200 statusCode '${STATUS}' (e.g. future-cutoff or > SWEEP_MAX_ROWS guard)."
+            echo "ℹ️ Review the response above and run the runbook sweep manually if needed. Not failing the pipeline."
+          fi
+
   Deploy-to-Morpheus-P-Node:
     name: Deploy to Morpheus Provider via GitHub
-    # Only deploy provider node on main branch (production) - no dev provider node exists.
-    # Gated behind Drain-Morpheus-C-Node so the C-Node NLB is already quiet before the
-    # P-Node restarts and takes its hosted models briefly offline.
+    # First half of the one-at-a-time provider roll (P-Node-1, then P-Node-2).
+    # Main/prd only — there is no dev provider node. This NO LONGER depends on the
+    # C-Node drain: with two independent on-chain providers serving the same models,
+    # the C-Node stays live during provider rolls and the API Gateway fails traffic
+    # over to the surviving provider. The drain now runs AFTER both providers, right
+    # before the C-Node roll (see Drain-Morpheus-C-Node).
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      (needs.changes.outputs.proxy == 'true' || github.event_name == 'workflow_dispatch') &&
       (
         (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true' && github.event.inputs.create_deployment == 'true' && github.ref == 'refs/heads/main')
       )
     needs:
+      - changes
       - Generate-Tag
       - GHCR-Build-and-Push
-      - Drain-Morpheus-C-Node
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name }}
     steps:
@@ -2194,20 +2476,290 @@ jobs:
             echo "⚠️ Continuing with warning - ECS deployment completed but version verification inconclusive"
           fi
 
+  Deploy-to-Morpheus-P-Node-2:
+    name: Deploy to Morpheus Provider 2 via GitHub
+    # Second half of the one-at-a-time provider roll. Strictly SEQUENTIAL after
+    # P-Node-1: `needs: Deploy-to-Morpheus-P-Node` + the implicit success() gate means
+    # this only starts once P-Node-1's new task is healthy and version-verified, so we
+    # never have both providers down at once (each service rolls stop-old-then-start-new
+    # via deployment_minimum_healthy_percent=0). Same shared models-config as P-Node-1
+    # but its own ECS service, EFS, wallet and on-chain identity (see
+    # Morpheus-Infra/environments/02-morpheus_p_node/.terragrunt/05_provider2.tf,
+    # gated on switches.provider2). Main/prd only.
+    if: |
+      github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      (needs.changes.outputs.proxy == 'true' || github.event_name == 'workflow_dispatch') &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true' && github.event.inputs.create_deployment == 'true' && github.ref == 'refs/heads/main')
+      )
+    needs:
+      - changes
+      - Generate-Tag
+      - GHCR-Build-and-Push
+      - Deploy-to-Morpheus-P-Node
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.MORPHEUS_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.MORPHEUS_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - name: Deploy to Morpheus Provider 2 ECS
+        run: |
+          BUILDTAG=${{ needs.Generate-Tag.outputs.tag_name }}
+          BUILDIMAGE=${{ needs.Generate-Tag.outputs.image_name }}
+          
+          # Provider node only exists in production environment
+          ENV="prd"
+          
+          echo "🚀 Deploying to Morpheus Provider 2 AWS - Environment: $ENV"
+          echo "📦 Container Image: $BUILDIMAGE:$BUILDTAG"
+          
+          # ECS deployment variables for provider2 (HA second node, shared cluster)
+          CLUSTER_NAME="ecs-${ENV}-morpheus-provider"
+          SERVICE_NAME="svc-${ENV}-provider2"
+          TASK_FAMILY="tsk-${ENV}-provider2"
+          CONTAINER_NAME="provider2-container"
+          
+          # Get current task definition
+          echo "📋 Retrieving current task definition..."
+          CURRENT_TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition "$TASK_FAMILY" \
+            --query 'taskDefinition' \
+            --output json)
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ Failed to retrieve current task definition"
+            exit 1
+          fi
+          
+          # Update the image in the task definition
+          echo "🔄 Creating new task definition with image: $BUILDIMAGE:$BUILDTAG"
+          NEW_TASK_DEF=$(echo "$CURRENT_TASK_DEF" | jq --arg IMAGE "$BUILDIMAGE:$BUILDTAG" --arg CONTAINER "$CONTAINER_NAME" '
+            {
+              family: .family,
+              networkMode: .networkMode,
+              requiresCompatibilities: .requiresCompatibilities,
+              cpu: .cpu,
+              memory: .memory,
+              taskRoleArn: .taskRoleArn,
+              executionRoleArn: .executionRoleArn,
+              volumes: .volumes,
+              containerDefinitions: (.containerDefinitions | map(
+                if .name == $CONTAINER then
+                  .image = $IMAGE
+                else
+                  .
+                end
+              ))
+            }
+          ')
+          
+          # Debug: Check if JSON is valid
+          echo "🔍 Validating JSON structure..."
+          echo "$NEW_TASK_DEF" | jq empty
+          if [ $? -ne 0 ]; then
+            echo "❌ Generated JSON is invalid"
+            echo "Generated JSON:"
+            echo "$NEW_TASK_DEF"
+            exit 1
+          fi
+          
+          # Debug: Show task definition summary
+          echo "🔍 Task definition summary:"
+          echo "$NEW_TASK_DEF" | jq '.family, .cpu, .memory, .networkMode, .requiresCompatibilities, (.containerDefinitions | length)'
+          
+          # Register new task definition
+          echo "📝 Registering new task definition..."
+          
+          # Save JSON to temporary file to avoid stdin issues
+          TEMP_JSON_FILE="/tmp/task_definition_$$.json"
+          echo "$NEW_TASK_DEF" > "$TEMP_JSON_FILE"
+          
+          # Validate the temp file
+          jq empty "$TEMP_JSON_FILE"
+          if [ $? -ne 0 ]; then
+            echo "❌ Temporary file contains invalid JSON"
+            rm -f "$TEMP_JSON_FILE"
+            exit 1
+          fi
+          
+          NEW_TASK_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "file://$TEMP_JSON_FILE" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          
+          # Clean up temp file
+          rm -f "$TEMP_JSON_FILE"
+          
+          if [ $? -ne 0 ] || [ -z "$NEW_TASK_ARN" ]; then
+            echo "❌ Failed to register new task definition"
+            exit 1
+          fi
+          
+          echo "✅ New task definition registered: $NEW_TASK_ARN"
+          
+          # Update the ECS service
+          echo "🔄 Updating ECS service..."
+          UPDATE_RESULT=$(aws ecs update-service \
+            --cluster "$CLUSTER_NAME" \
+            --service "$SERVICE_NAME" \
+            --task-definition "$NEW_TASK_ARN" \
+            --force-new-deployment \
+            --query 'service.{serviceName:serviceName,taskDefinition:taskDefinition,desiredCount:desiredCount,runningCount:runningCount,pendingCount:pendingCount}' \
+            --output json)
+          
+          echo "📊 Service Update Summary:"
+          echo "$UPDATE_RESULT" | jq .
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ Failed to update ECS service"
+            exit 1
+          fi
+          
+          echo "✅ ECS service update initiated successfully"
+          echo "🎯 Environment: $ENV"
+          echo "🏗️  Cluster: $CLUSTER_NAME"
+          echo "⚙️  Service: $SERVICE_NAME"
+          echo "📦 Image: $BUILDIMAGE:$BUILDTAG"
+          echo "📋 Task Definition: $NEW_TASK_ARN"
+          
+          # Wait for deployment to stabilize
+          # P-Node ECS lifecycle: stopTimeout + ALB drain + health checks can take several minutes.
+          # Enforce a 180s floor so health-check retries aren't wasted on the old task.
+          DEPLOY_WAIT_FLOOR_SECS=180
+          echo "⏳ Waiting for ECS service to stabilize (default waiter: up to 10 min at 40×15s)..."
+          WAIT_START=$(date +%s)
+          set +e
+          aws ecs wait services-stable \
+            --cluster "$CLUSTER_NAME" \
+            --services "$SERVICE_NAME" \
+            --cli-read-timeout 900 \
+            --cli-connect-timeout 60
+          STABILIZATION_STATUS=$?
+          WAIT_ELAPSED=$(( $(date +%s) - WAIT_START ))
+          set -e
+          
+          if [ $STABILIZATION_STATUS -eq 0 ]; then
+            echo "✅ ECS service stabilized after ${WAIT_ELAPSED}s"
+          else
+            echo "⚠️ ECS wait returned status $STABILIZATION_STATUS after ${WAIT_ELAPSED}s, continuing with health check..."
+          fi
+          
+          REMAINING=$(( DEPLOY_WAIT_FLOOR_SECS - WAIT_ELAPSED ))
+          if [ $REMAINING -gt 0 ]; then
+            echo "⏳ Ensuring minimum ${DEPLOY_WAIT_FLOOR_SECS}s deploy wait (sleeping ${REMAINING}s more)..."
+            sleep $REMAINING
+          fi
+          
+          # Provider2 node health endpoint
+          HEALTH_ENDPOINT="https://provider2api.mor.org/healthcheck"
+          
+          echo "🔍 Verifying deployment version at: $HEALTH_ENDPOINT"
+          
+          # Wait for the service to be reachable and verify version
+          MAX_HEALTH_RETRIES=20
+          HEALTH_RETRY_COUNT=0
+          VERSION_VERIFIED=false
+          
+          # Disable errexit for the health-check loop so curl timeouts (exit 28) don't kill the script
+          set +e
+          while [ $HEALTH_RETRY_COUNT -lt $MAX_HEALTH_RETRIES ]; do
+            echo "🔄 Health check attempt $((HEALTH_RETRY_COUNT + 1))/$MAX_HEALTH_RETRIES..."
+            
+            # Get health check response with browser-like headers to bypass WAF
+            HEALTH_RESPONSE=$(curl -s --max-time 10 \
+              -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36" \
+              -H "Accept: application/json, text/plain, */*" \
+              -H "Accept-Language: en-US,en;q=0.9" \
+              "$HEALTH_ENDPOINT" 2>/dev/null)
+            CURL_STATUS=$?
+            
+            if [ $CURL_STATUS -eq 0 ] && [ -n "$HEALTH_RESPONSE" ]; then
+              echo "📡 Health response: $HEALTH_RESPONSE"
+              
+              # Parse version from JSON response
+              DEPLOYED_VERSION=$(echo "$HEALTH_RESPONSE" | jq -r '(.version // .Version // empty)' 2>/dev/null)
+              UPTIME=$(echo "$HEALTH_RESPONSE" | jq -r '(.uptime // .Uptime // empty)' 2>/dev/null)
+              STATUS=$(echo "$HEALTH_RESPONSE" | jq -r '(.status // .Status // empty)' 2>/dev/null)
+              
+              if [ -n "$DEPLOYED_VERSION" ] && [ "$STATUS" = "healthy" ]; then
+                echo "🏥 Service Status: $STATUS"
+                echo "📦 Deployed Version: $DEPLOYED_VERSION"
+                echo "⏰ Service Uptime: $UPTIME"
+                
+                # Check if deployed version matches expected version
+                if [[ "$DEPLOYED_VERSION" == *"$BUILDTAG"* ]] || [[ "$BUILDTAG" == *"$DEPLOYED_VERSION"* ]]; then
+                  echo "✅ Version verification successful! Deployed version matches expected tag."
+                  VERSION_VERIFIED=true
+                  break
+                else
+                  echo "⚠️ Version mismatch - Expected: $BUILDTAG, Deployed: $DEPLOYED_VERSION"
+                fi
+              else
+                echo "⚠️ Service not healthy or version not available"
+              fi
+            else
+              echo "⚠️ Health check failed (curl status: $CURL_STATUS)"
+            fi
+            
+            HEALTH_RETRY_COUNT=$((HEALTH_RETRY_COUNT + 1))
+            if [ $HEALTH_RETRY_COUNT -lt $MAX_HEALTH_RETRIES ]; then
+              echo "⏳ Waiting 15 seconds before retry..."
+              sleep 15
+            fi
+          done
+          set -e
+          
+          # Final deployment status
+          if [ "$VERSION_VERIFIED" = true ]; then
+            echo ""
+            echo "🎉 Deployment completed successfully!"
+            echo "✅ Service is healthy and running the expected version"
+            echo "🌐 Health Check URL: $HEALTH_ENDPOINT"
+          else
+            echo ""
+            echo "❌ Deployment verification failed!"
+            echo "🔍 The service may still be starting up or there may be an issue"
+            echo "🌐 Manual check: $HEALTH_ENDPOINT"
+            echo "🏗️  Expected version: $BUILDTAG"
+            if [ -n "$DEPLOYED_VERSION" ]; then
+              echo "📦 Currently deployed: $DEPLOYED_VERSION"
+            fi
+            echo ""
+            echo "ℹ️ This may be a temporary issue. Check the health endpoint in a few minutes."
+            echo "ℹ️ If the issue persists, check AWS ECS console and CloudWatch logs."
+            
+            # Don't fail the deployment for version mismatch, as it might be a timing issue
+            # The ECS service update was successful, version verification is informational
+            echo "⚠️ Continuing with warning - ECS deployment completed but version verification inconclusive"
+          fi
+
   UI-macOS-latest-arm64:
     name: Build Morpheus UI macOS-arm64 Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      (needs.changes.outputs.ui == 'true' || needs.changes.outputs.proxy == 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true')
       )
     runs-on: macos-latest
     needs:
+      - changes
       - Generate-Tag
-      - Build-Service-Executables
     env:
-      SERVICE_PROXY_DOWNLOAD_URL_MAC_ARM64: ${{ needs.Generate-Tag.outputs.artifacts_base_url }}/mac-arm64-morpheus-router-${{ needs.Generate-Tag.outputs.vfull }}
+      SERVICE_PROXY_DOWNLOAD_URL_MAC_ARM64: ${{ needs.Generate-Tag.outputs.anchor_artifacts_base_url }}/mac-arm64-morpheus-router-${{ needs.Generate-Tag.outputs.anchor_vfull }}
     steps:
       - name: Clone
         id: checkout
@@ -2262,16 +2814,17 @@ jobs:
     name: Build Morpheus UI Ubuntu x64 Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      (needs.changes.outputs.ui == 'true' || needs.changes.outputs.proxy == 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true')
       )
     runs-on: ubuntu-22.04
     needs:
+      - changes
       - Generate-Tag
-      - Build-Service-Executables
     env:
-      SERVICE_PROXY_DOWNLOAD_URL_LINUX_X64: ${{ needs.Generate-Tag.outputs.artifacts_base_url }}/linux-x86_64-morpheus-router-${{ needs.Generate-Tag.outputs.vfull }}
+      SERVICE_PROXY_DOWNLOAD_URL_LINUX_X64: ${{ needs.Generate-Tag.outputs.anchor_artifacts_base_url }}/linux-x86_64-morpheus-router-${{ needs.Generate-Tag.outputs.anchor_vfull }}
     steps:
       - name: Clone
         id: checkout
@@ -2325,16 +2878,17 @@ jobs:
     name: Build Morpheus UI Ubuntu arm64 Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      (needs.changes.outputs.ui == 'true' || needs.changes.outputs.proxy == 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true')
       )
     runs-on: ubuntu-22.04
     needs:
+      - changes
       - Generate-Tag
-      - Build-Service-Executables
     env:
-      SERVICE_PROXY_DOWNLOAD_URL_LINUX_ARM64: ${{ needs.Generate-Tag.outputs.artifacts_base_url }}/linux-arm64-morpheus-router-${{ needs.Generate-Tag.outputs.vfull }}
+      SERVICE_PROXY_DOWNLOAD_URL_LINUX_ARM64: ${{ needs.Generate-Tag.outputs.anchor_artifacts_base_url }}/linux-arm64-morpheus-router-${{ needs.Generate-Tag.outputs.anchor_vfull }}
     steps:
       - name: Clone
         id: checkout
@@ -2388,16 +2942,17 @@ jobs:
     name: Build Morpheus UI macOS-x64 Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      (needs.changes.outputs.ui == 'true' || needs.changes.outputs.proxy == 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true')
       )
     runs-on: macos-15-intel
     needs:
+      - changes
       - Generate-Tag
-      - Build-Service-Executables
     env:
-      SERVICE_PROXY_DOWNLOAD_URL_MAC_X64: ${{ needs.Generate-Tag.outputs.artifacts_base_url }}/mac-x64-morpheus-router-${{ needs.Generate-Tag.outputs.vfull }}
+      SERVICE_PROXY_DOWNLOAD_URL_MAC_X64: ${{ needs.Generate-Tag.outputs.anchor_artifacts_base_url }}/mac-x64-morpheus-router-${{ needs.Generate-Tag.outputs.anchor_vfull }}
     steps:
       - name: Clone
         id: checkout
@@ -2452,16 +3007,17 @@ jobs:
     name: Build Morpheus UI Windows Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      (needs.changes.outputs.ui == 'true' || needs.changes.outputs.proxy == 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true')
       )
     runs-on: windows-latest
     needs:
+      - changes
       - Generate-Tag
-      - Build-Service-Executables
     env:
-      SERVICE_PROXY_DOWNLOAD_URL_WINDOWS_X64: ${{ needs.Generate-Tag.outputs.artifacts_base_url }}/win-x64-morpheus-router-${{ needs.Generate-Tag.outputs.vfull }}.exe
+      SERVICE_PROXY_DOWNLOAD_URL_WINDOWS_X64: ${{ needs.Generate-Tag.outputs.anchor_artifacts_base_url }}/win-x64-morpheus-router-${{ needs.Generate-Tag.outputs.anchor_vfull }}.exe
     steps:
       - name: Clone
         id: checkout
@@ -2535,14 +3091,30 @@ jobs:
 
   UI-Release:
     name: Upload UI-Desktop Release
+    # On a UI-only release the router/docker/TEE jobs are intentionally skipped,
+    # so we cannot rely on the implicit success() gate (it fails on any skipped
+    # need). Require the UI builds to have succeeded and tolerate skipped
+    # router/TEE/executables jobs (same pattern as Deploy-to-Morpheus-C-Node).
     if: |
+      !cancelled() &&
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
+      needs.Generate-Tag.result == 'success' &&
+      (needs.changes.outputs.ui == 'true' || needs.changes.outputs.proxy == 'true') &&
+      needs.UI-macOS-latest-arm64.result == 'success' &&
+      needs.UI-macOS-15-intel-x64.result == 'success' &&
+      needs.UI-Ubuntu-22-x64.result == 'success' &&
+      needs.UI-Ubuntu-22-arm64.result == 'success' &&
+      needs.UI-Windows-avx2-x64.result == 'success' &&
+      (needs.GHCR-Build-and-Push-TEE.result == 'success' || needs.GHCR-Build-and-Push-TEE.result == 'skipped') &&
+      (needs.Build-Service-Executables.result == 'success' || needs.Build-Service-Executables.result == 'skipped') &&
       (
         (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
       )
     needs:
+      - changes
       - Generate-Tag
+      - Build-Service-Executables
       - GHCR-Build-and-Push-TEE
       - UI-macOS-latest-arm64
       - UI-macOS-15-intel-x64
@@ -2571,8 +3143,25 @@ jobs:
           echo "🔍 Contents of ./artifact:"
           ls -lh ./artifact
 
+      - name: Determine release mode
+        id: mode
+        run: |
+          # "full" = router/docker/TEE/executables were built in this run and are
+          # attached to THIS release. "ui-only" = a UI/CLI patch on main where the
+          # router stays at the anchor (vX.Y.0) and is NOT re-attached here.
+          if [ "${{ github.ref }}" != "refs/heads/main" ] || \
+             [ "${{ needs.changes.outputs.proxy }}" = "true" ] || \
+             [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "Release mode: FULL"
+          else
+            echo "full=false" >> "$GITHUB_OUTPUT"
+            echo "Release mode: UI-ONLY (router anchored to ${{ needs.Generate-Tag.outputs.anchor_tag }})"
+          fi
+
       - name: Generate release notes
         id: release_notes
+        if: steps.mode.outputs.full == 'true'
         run: |
           VERSION=${{ needs.Generate-Tag.outputs.vfull }}
           TAG=${{ needs.Generate-Tag.outputs.tag_name }}
@@ -2715,7 +3304,53 @@ jobs:
           # Output for GitHub Actions
           echo "Generated release notes:"
           cat release_notes.md
-        
+
+      - name: Generate UI-only release notes
+        if: steps.mode.outputs.full != 'true'
+        env:
+          VERSION: ${{ needs.Generate-Tag.outputs.vfull }}
+          TAG: ${{ needs.Generate-Tag.outputs.tag_name }}
+          ANCHOR_VERSION: ${{ needs.Generate-Tag.outputs.anchor_vfull }}
+          ANCHOR_TAG: ${{ needs.Generate-Tag.outputs.anchor_tag }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          # Desktop-app-only release. The proxy-router, CLI, and Docker images are
+          # unchanged from the anchor release and are NOT re-published here; the app
+          # bundles the anchor router automatically.
+          cat > release_notes.md <<EOF
+          ## 🖥️ Desktop Application Update ($VERSION)
+
+          This is a **desktop-app-only** release. It bundles the unchanged
+          proxy-router from anchor release [\`$ANCHOR_TAG\`]($REPO_URL/releases/tag/$ANCHOR_TAG)
+          — **node operators do not need to update**; only the desktop app changed.
+
+          ### Download
+
+          | Platform | Download |
+          |----------|----------|
+          | **Windows** (x64) | [\`win-x64-morpheus-app-$VERSION.exe\`]($REPO_URL/releases/download/$TAG/win-x64-morpheus-app-$VERSION.exe) |
+          | **macOS** (Apple Silicon) | [\`mac-arm64-morpheus-app-$VERSION.dmg\`]($REPO_URL/releases/download/$TAG/mac-arm64-morpheus-app-$VERSION.dmg) |
+          | **macOS** (Intel) | [\`mac-x64-morpheus-app-$VERSION.dmg\`]($REPO_URL/releases/download/$TAG/mac-x64-morpheus-app-$VERSION.dmg) |
+          | **Linux** (x64) | [\`linux-x86_64-morpheus-app-$VERSION.AppImage\`]($REPO_URL/releases/download/$TAG/linux-x86_64-morpheus-app-$VERSION.AppImage) |
+          | **Linux** (ARM64/Raspberry Pi) | [\`linux-arm64-morpheus-app-$VERSION.AppImage\`]($REPO_URL/releases/download/$TAG/linux-arm64-morpheus-app-$VERSION.AppImage) |
+
+          > 🔧 Proxy-router, CLI, and Docker images for this version are provided by
+          > the anchor release **[$ANCHOR_TAG]($REPO_URL/releases/tag/$ANCHOR_TAG)**.
+          EOF
+
+          # Append the commit/PR body (same as full release notes).
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "## 📝 Release Notes"
+            echo ""
+            git log -1 --pretty=format:"%B" ${{ github.sha }}
+          } >> release_notes.md
+
+          echo "Generated UI-only release notes:"
+          cat release_notes.md
+
       - name: Create release and upload assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

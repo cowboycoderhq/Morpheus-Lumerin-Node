@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { LayoutHeader } from '../common/LayoutHeader'
 import { View } from '../common/View'
 import ProvidersList from './ProvidersList'
@@ -6,16 +6,17 @@ import ProvidersList from './ProvidersList'
 import { BtnAccent } from '../dashboard/BalanceBlock.styles';
 
 import withProvidersState from "../../store/hocs/withProvidersState";
+import { queryKeys } from '../../store/queries';
 const Providers = ({ fetchData, providerId }) => {
 
-    const [data, setData] = useState();
-
-    useEffect(() => {
-        (async () => {
-            const data = await fetchData(providerId);
-            setData(data);
-        })()
-    }, [])
+    // Cached, stale-while-revalidate: revisiting the Providers tab renders the
+    // last result instantly and revalidates in the background instead of
+    // re-running the expensive per-session balance fetch on every mount.
+    const { data } = useQuery({
+        queryKey: queryKeys.providerData(providerId),
+        queryFn: () => fetchData(providerId),
+        enabled: !!providerId,
+    });
 
     return (    
     <View data-testid="models-container">

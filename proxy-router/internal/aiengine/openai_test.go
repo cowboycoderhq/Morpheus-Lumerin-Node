@@ -40,8 +40,8 @@ func promptViaMockBackend(t *testing.T, statusCode int, responseBody string) *gc
 func TestReadErrorPropagatesUpstreamStatusCode(t *testing.T) {
 	resp := promptViaMockBackend(t, http.StatusTooManyRequests, `{"error":{"message":"Rate limit exceeded","code":"rate_limit_exceeded"}}`)
 
-	if resp.UpstreamStatusCode != http.StatusTooManyRequests {
-		t.Errorf("UpstreamStatusCode = %d, want %d", resp.UpstreamStatusCode, http.StatusTooManyRequests)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("StatusCode = %d, want %d", resp.StatusCode, http.StatusTooManyRequests)
 	}
 	if resp.ProviderModelError == nil {
 		t.Error("ProviderModelError should contain the parsed upstream body")
@@ -51,8 +51,8 @@ func TestReadErrorPropagatesUpstreamStatusCode(t *testing.T) {
 func TestReadErrorPropagatesStatusForNonJSONBody(t *testing.T) {
 	resp := promptViaMockBackend(t, http.StatusServiceUnavailable, "upstream capacity exhausted")
 
-	if resp.UpstreamStatusCode != http.StatusServiceUnavailable {
-		t.Errorf("UpstreamStatusCode = %d, want %d", resp.UpstreamStatusCode, http.StatusServiceUnavailable)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("StatusCode = %d, want %d", resp.StatusCode, http.StatusServiceUnavailable)
 	}
 	wrapped, ok := resp.ProviderModelError.(map[string]interface{})
 	if !ok {
@@ -81,7 +81,7 @@ func TestAiEngineErrorResponseHTTPStatusCode(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := gcs.NewAiEngineErrorResponseWithStatus(map[string]interface{}{}, tc.upstream)
+			resp := gcs.NewAiEngineErrorResponse(tc.upstream, map[string]interface{}{})
 			if got := resp.HTTPStatusCode(); got != tc.want {
 				t.Errorf("HTTPStatusCode() = %d, want %d", got, tc.want)
 			}

@@ -73,9 +73,9 @@ func promptWithModelError(t *testing.T, errResp *gsc.AiEngineErrorResponse) *htt
 }
 
 func TestPromptReturnsUpstreamStatusForModelError(t *testing.T) {
-	errResp := gsc.NewAiEngineErrorResponseWithStatus(
-		map[string]interface{}{"error": map[string]interface{}{"message": "Rate limit exceeded"}},
+	errResp := gsc.NewAiEngineErrorResponse(
 		http.StatusTooManyRequests,
+		map[string]interface{}{"error": map[string]interface{}{"message": "Rate limit exceeded"}},
 	)
 
 	w := promptWithModelError(t, errResp)
@@ -90,14 +90,14 @@ func TestPromptReturnsUpstreamStatusForModelError(t *testing.T) {
 	if body.ProviderModelError == nil {
 		t.Error("providerModelError missing from response body")
 	}
-	if body.UpstreamStatusCode != http.StatusTooManyRequests {
-		t.Errorf("upstreamStatusCode = %d, want %d", body.UpstreamStatusCode, http.StatusTooManyRequests)
+	if body.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("statusCode = %d, want %d", body.StatusCode, http.StatusTooManyRequests)
 	}
 }
 
 func TestPromptDefaultsTo400WhenStatusUnknown(t *testing.T) {
-	// Older providers don't send upstreamStatusCode; keep the historical 400.
-	errResp := gsc.NewAiEngineErrorResponse(map[string]interface{}{"error": "Authentication failed"})
+	// Older providers don't send statusCode; keep the historical 400.
+	errResp := gsc.NewAiEngineErrorResponse(0, map[string]interface{}{"error": "Authentication failed"})
 
 	w := promptWithModelError(t, errResp)
 

@@ -8,10 +8,13 @@ const ThemeProvider = StyledThemeProvider as unknown as React.FC<
   React.PropsWithChildren<{ theme: object }>
 >;
 
+import { QueryClientProvider } from '@tanstack/react-query';
+
 import theme from './ui/theme';
 import Root from './components/common/Root';
 import { Provider as ClientProvider } from './store/hocs/clientContext';
 import { Provider, createStore } from './store/store';
+import { queryClient } from './store/queryClient';
 
 import createClient from './client';
 import { subscribeToMainProcessMessages } from './subscriptions';
@@ -35,19 +38,21 @@ function App(): JSX.Element {
     <>
       <ClientProvider value={client}>
         <Provider store={client.store}>
-          <ThemeProvider theme={theme}>
-            <ToastsProvider>
-              <Root
-                StartupComponent={Startup}
-                OnboardingComponent={Onboarding}
-                LoadingComponent={Loading}
-                RouterComponent={Router}
-                LoginComponent={Login}
-              />
-              <GlobalTooltips />
-              <Web3ConnectionNotifier />
-            </ToastsProvider>
-          </ThemeProvider>
+          <QueryClientProvider client={queryClient}>
+            <ThemeProvider theme={theme}>
+              <ToastsProvider>
+                <Root
+                  StartupComponent={Startup}
+                  OnboardingComponent={Onboarding}
+                  LoadingComponent={Loading}
+                  RouterComponent={Router}
+                  LoginComponent={Login}
+                />
+                <GlobalTooltips />
+                <Web3ConnectionNotifier />
+              </ToastsProvider>
+            </ThemeProvider>
+          </QueryClientProvider>
         </Provider>
       </ClientProvider>
     </>
