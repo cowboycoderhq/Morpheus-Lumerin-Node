@@ -1,5 +1,6 @@
 import styled from 'styled-components';
 import React from 'react';
+import theme from '../../ui/theme';
 
 const Container = styled.svg`
   overflow: visible;
@@ -22,8 +23,8 @@ export default function Banner() {
             y2="198"
             gradientUnits="userSpaceOnUse"
           >
-            <stop stopColor="#014353" />
-            <stop offset="1" stopColor="#13E4EF" />
+            <stop stopColor={theme.colors.voidElevated} />
+            <stop offset="1" stopColor={theme.colors.secondaryLight} />
           </linearGradient>
         </defs>
         <path

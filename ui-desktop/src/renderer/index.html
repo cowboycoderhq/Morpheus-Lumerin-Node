@@ -14,61 +14,89 @@
 
     <!-- <meta http-equiv="Content-Security-Policy" content="default-src * self blob: data: gap:; style-src * self 'unsafe-inline' blob: data: gap:; script-src * 'self' 'unsafe-eval' 'unsafe-inline' blob: data: gap:; object-src * 'self' blob: data: gap:; img-src * self 'unsafe-inline' blob: data: gap:; connect-src self * 'unsafe-inline' blob: data: gap:; frame-src * self blob: data: gap:;"> -->
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap" rel="stylesheet">
-
     <style>
-  
-      .grecaptcha-badge { 
+
+      /* Aurora design system — fonts self-hosted locally (B7: no runtime
+         font fetch from Google). See src/renderer/src/assets/fonts/. */
+      @font-face {
+        font-family: 'Inter';
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: swap;
+        src: url('./src/assets/fonts/Inter-Variable.woff2') format('woff2');
+      }
+
+      @font-face {
+        font-family: 'Roboto Mono';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('./src/assets/fonts/RobotoMono-400.woff2') format('woff2');
+      }
+
+      @font-face {
+        font-family: 'Roboto Mono';
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: url('./src/assets/fonts/RobotoMono-500.woff2') format('woff2');
+      }
+
+      @font-face {
+        font-family: 'Roboto Mono';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('./src/assets/fonts/RobotoMono-700.woff2') format('woff2');
+      }
+
+      .grecaptcha-badge {
         visibility: hidden;
       }
-  
+
       html {
         font-size: 10px;
       }
 
       ::-webkit-scrollbar {
-          background-color: #03160d;
+          background-color: #04070c;
           width: 16px /* 20px / 16px */;
       }
 
       ::-webkit-scrollbar-thumb {
-          background-color: #20dc8e80;
+          background-color: #6fd6ff80;
           border: 0.25em /* 4px / 16px */ solid #03160d;
           border-radius: 16px /* 20px / 16px  #2c2c2c */;
       }
 
       ::-webkit-scrollbar-corner {
-        background-color: #03160d;
+        background-color: #04070c;
       }
-      
+
       body {
         margin: 0;
         padding: 0;
-        background: #03160e!important;
-        /* background-image: url("src/main.jpg");
-        background-position: right;
-        background-repeat: no-repeat;
-        -webkit-background-size: cover;
-        -moz-background-size: cover;
-        -o-background-size: cover;
-        background-size: cover; */
-        font-family: 'Montserrat', sans-serif;
+        /* JARVIS: near-black blue, monospace console voice. */
+        background: #04070c!important;
+        font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-style: normal;
         font-weight: 400!important;
-        color: white!important;
-        font-size: 1.6rem!important;
+        color: #e6f1fa!important;
+        font-size: 1.5rem!important;
         -webkit-font-smoothing: antialiased;
       }
-  
+
       *,
       *:before,
       *:after {
         box-sizing: border-box;
-        font-family: "Roboto Mono", monospace;
         font-optical-sizing: auto;
         font-style: normal;
+      }
+
+      /* Data/terminal texture — balances, addresses, hashes, session IDs. */
+      .mono {
+        font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
 
       /* Required by Reach UI. See https://github.com/reach/reach-ui/blob/master/packages/menu-button/styles.css#L1 */

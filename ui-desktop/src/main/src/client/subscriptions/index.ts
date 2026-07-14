@@ -11,6 +11,7 @@ const listeners = {
   'handle-client-error': handlers.handleClientSideError,
   'save-proxy-router-settings': handlers.saveProxyRouterSettings,
   'get-proxy-router-settings': handlers.getProxyRouterSettings,
+  'get-proxy-router-derived-config': handlers.getProxyRouterDerivedConfig,
   'get-default-currency-settings': handlers.getDefaultCurrency,
   'set-default-currency-settings': handlers.setDefaultCurrency,
   'get-custom-env-values': handlers.getCustomEnvs,
@@ -31,6 +32,11 @@ const listeners = {
   'get-todays-budget': handlers.getTodaysBudget,
   'get-supply': handlers.getTokenSupply,
   'get-auth-headers': handlers.getAuthHeaders,
+  // Transfers. These were NEVER registered: the renderer bound send-eth/send-lmr
+  // and main listened for neither, so a send hung until the 750s IPC timeout.
+  // The router signs and pays gas (POST /blockchain/send/{eth,mor}).
+  'send-eth': handlers.sendEth,
+  'send-mor': handlers.sendMor,
   // Chat history
   'get-chat-history-titles': handlers.getChatHistoryTitles,
   'get-chat-history': handlers.getChatHistory,

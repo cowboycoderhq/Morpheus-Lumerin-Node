@@ -64,11 +64,13 @@ const CaretContainer = styled.div`
 `;
 
 const MenuList = styled(DropdownMenu.Content)`
+  border-radius: ${(p) => p.theme.radii.md};
   background-color: ${p => p.theme.colors.light};
   width: var(--radix-dropdown-menu-trigger-width);
 `;
 
 const MenuItem = styled(DropdownMenu.Item)`
+  border-radius: ${(p) => p.theme.radii.md};
   color: ${p => p.theme.colors.primary};
   width: 100%;
   font-size: 1.3rem;

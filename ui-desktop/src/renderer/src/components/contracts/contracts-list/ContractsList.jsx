@@ -20,7 +20,7 @@ import Sort from './Sort';
 import { Btn } from '../../common';
 
 const Stats = styled.div`
-  color: #0e4353;
+  color: ${(p) => p.theme.colors.textPrimary};
   display: flex;
   justify-content: space-between;
   width: 100%;

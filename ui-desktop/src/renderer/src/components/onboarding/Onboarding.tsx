@@ -8,6 +8,15 @@ import PasswordStep from './PasswordStep'
 import TermsStep from './TermsStep'
 import { ImportFlow } from './ImportFlow'
 import { SetCustomEthStep } from './SetCustomEthStep'
+import { AltLayout, LoadingBar } from '../common'
+
+// Fallback shown while onboarding is finishing (phrase verified, wallet being
+// created) or for any unmapped step — so the dispatcher NEVER renders a blank.
+const FinishingStep = () => (
+  <AltLayout title="Setting up your wallet…">
+    <LoadingBar />
+  </AltLayout>
+)
 
 const Onboarding = (props) => {
   const page = () => {
@@ -26,8 +35,13 @@ const Onboarding = (props) => {
         return <ImportFlow {...props} />
       case 'set-custom-eth':
         return <SetCustomEthStep {...props} />
+      // `getCurrentStep()` returns 'config-proxy-router' once the phrase is
+      // verified, while onFinishOnboarding() runs. There is no dedicated
+      // screen for it, so show a "finishing" state — NEVER a blank page (a
+      // slow/failed finish would otherwise strand the user on white).
+      case 'config-proxy-router':
       default:
-        return null
+        return <FinishingStep />
     }
   }
 

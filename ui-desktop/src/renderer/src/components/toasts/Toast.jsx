@@ -20,7 +20,7 @@ const Container = styled.div`
       ? theme.colors.danger
       : theme.colors.primary};
   background-color: #454545;
-  border-radius: 4px;
+  border-radius: ${(p) => p.theme.radii.sm};
   padding: 8px 16px 12px;
   position: relative;
   box-shadow: 0 4px 12px -1px rgba(0, 0, 0, 0.35),
@@ -28,6 +28,7 @@ const Container = styled.div`
 `;
 
 const DismissBtn = styled.button`
+  border-radius: ${(p) => p.theme.radii.sm};
   position: absolute;
   top: 0;
   right: 0;
@@ -62,6 +63,7 @@ const Message = styled.div`
 `;
 
 const ShowMoreBtn = styled.button`
+  border-radius: ${(p) => p.theme.radii.pill};
   background: none;
   outline: none;
   cursor: pointer;

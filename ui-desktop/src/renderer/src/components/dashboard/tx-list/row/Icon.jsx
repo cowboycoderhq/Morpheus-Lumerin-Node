@@ -9,7 +9,7 @@ import { ContractIcon } from '../../../icons/ContractIcon';
 
 export const TxIcon = ({ txType, size = '3.6rem' }) => {
   if (txType === 'received') {
-    return <LeftArrowIcon fill={theme.colors.primaryLight} />;
+    return <LeftArrowIcon fill={theme.colors.brand} />;
   }
 
   if (txType === 'sent') {
@@ -18,7 +18,7 @@ export const TxIcon = ({ txType, size = '3.6rem' }) => {
 
   return (
     <>
-      <ContractIcon fill={theme.colors.primaryLight} />
+      <ContractIcon fill={theme.colors.brand} />
     </>
   );
 };

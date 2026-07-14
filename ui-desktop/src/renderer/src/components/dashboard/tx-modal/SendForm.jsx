@@ -5,7 +5,7 @@ import Select from 'react-select';
 
 import BackIcon from '../../icons/BackIcon';
 import SwapIcon from '../../icons/SwapIcon';
-import { BaseBtn } from '../../common';
+import { Btn } from '../../common';
 import Spinner from '../../common/Spinner';
 import theme from '../../../ui/theme';
 import {
@@ -15,6 +15,7 @@ import {
   Footer,
   FooterRow,
   FooterLabel,
+  FooterValue,
 } from './common.styles';
 
 const AmountContainer = styled.label`
@@ -23,20 +24,22 @@ const AmountContainer = styled.label`
   font-weight: bold;
 `;
 
+// Money surface (B1): the amount being sent — mono/tabular, solid background.
 const AmountInput = styled.input`
+  border-radius: ${(p) => p.theme.radii.md};
   display: flex;
+  font-family: ${(p) => p.theme.fontMono};
   font-weight: bold;
   font-size: 4rem;
   width: 100%;
   text-align: center;
-  background: #03160e !important;
+  background: ${(p) => p.theme.colors.voidAnchor} !important;
   outline: none;
   border: none;
-  color: ${({ isActive, theme }) =>
-    isActive ? theme.colors.morMain : theme.colors.morMain};
+  color: ${(p) => p.theme.colors.brand};
 
   ::placeholder {
-    color: ${(p) => p.theme.colors.morMain};
+    color: ${(p) => p.theme.colors.brand};
   }
 
   &[type='number']::-webkit-inner-spin-button,
@@ -46,15 +49,21 @@ const AmountInput = styled.input`
     appearance: none;
     margin: 0;
   }
+
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.secondaryLight};
+    outline-offset: 2px;
+  }
 `;
 const AmountSublabel = styled.label`
-  color: ${(p) => p.theme.colors.dark};
+  color: ${(p) => p.theme.colors.textPrimary};
   font-size: 1.4rem;
   text-align: center;
 `;
 
 const SubAmount = styled.div`
-  color: ${(p) => p.theme.colors.helpertextGray};
+  font-family: ${(p) => p.theme.fontMono};
+  color: ${(p) => p.theme.colors.textSecondary};
   font-size: 13px;
   text-align: center;
 `;
@@ -73,7 +82,13 @@ const FeeRow = styled.div`
 
 const FeeLabel = styled.div`
   font-size: 1.2rem;
-  color: ${(p) => p.theme.colors.dark};
+  color: ${(p) => p.theme.colors.textPrimary};
+`;
+
+// Money surface (B1): the estimated fee amount — mono/tabular.
+const FeeValue = styled(FeeLabel)`
+  font-family: ${(p) => p.theme.fontMono};
+  color: ${(p) => p.theme.colors.moneySurfaceText};
 `;
 
 const Column = styled.div`
@@ -94,37 +109,39 @@ const WalletInputLabel = styled.span`
   margin-left: 20px;
   -ms-transform: translateY(-50%);
   transform: translateY(-50%);
-  color: ${(p) => p.theme.colors.placeholderGray};
+  color: ${(p) => p.theme.colors.textMuted};
 `;
 
+// Money surface (B1): the destination address — mono/tabular, solid bg.
 const WalletInput = styled.input`
   width: 100%;
   height: 40px;
-  color: ${(p) => p.theme.colors.dark};
+  font-family: ${(p) => p.theme.fontMono};
+  color: ${(p) => p.theme.colors.moneySurfaceText};
   font-weight: 300;
   font-size: 16px;
-  background: #03160e !important;
+  background: ${(p) => p.theme.colors.voidAnchor} !important;
   outline: none;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   border-style: solid;
   padding: 8px 20px 6px 60px;
   border: none !important;
-`;
 
-const SendBtn = styled(BaseBtn)`
-  width: 100%;
-  height: 50px;
-  border-radius: 5px;
-  color: black;
-  font-weight: 600;
-  background-color: ${({ isActive, theme }) =>
-    isActive ? theme.colors.helpertextGray : theme.colors.morMain};
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.secondaryLight};
+    outline-offset: 2px;
+  }
 `;
 
 const IconContainer = styled.div`
   margin: 0 auto;
   padding: 5px;
   cursor: pointer;
+  min-width: 40px;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 `;
 
 const SendContainer = styled.div`
@@ -136,30 +153,102 @@ const SendContainer = styled.div`
   margin: 16px 0 0;
 `;
 
+// Money surface (B1): the confirmation is the last thing between the user and an
+// irreversible transfer — solid, opaque, max contrast, no glass/glow, and the
+// address in mono at full length so it can actually be checked.
+const ConfirmPanel = styled.div`
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border-radius: ${(p) => p.theme.radii.md};
+  background: ${(p) => p.theme.colors.moneySurfaceBg};
+  border: 1px solid ${(p) => p.theme.colors.moneySurfaceBorder};
+`;
+
+const ConfirmLine = styled.div`
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+`;
+
+const ConfirmLabel = styled.span`
+  font-size: 1.1rem;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: ${(p) => p.theme.colors.textSecondary};
+`;
+
+const ConfirmValue = styled.span`
+  font-family: ${(p) => p.theme.fontMono};
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: ${(p) => p.theme.colors.moneySurfaceText};
+  font-variant-numeric: tabular-nums;
+`;
+
+const ConfirmAddress = styled.div`
+  margin-top: 4px;
+  font-family: ${(p) => p.theme.fontMono};
+  font-size: 1.25rem;
+  line-height: 1.45;
+  color: ${(p) => p.theme.colors.moneySurfaceText};
+  word-break: break-all;
+`;
+
+const ConfirmWarning = styled.div`
+  margin-top: 8px;
+  font-size: 1.1rem;
+  line-height: 1.45;
+  color: ${(p) => p.theme.colors.warning};
+`;
+
 const LMR_MODE = 'coinAmount';
 const USD_MODE = 'usdAmount';
 
+// react-select renders its own inline styles, not styled-components, so the
+// theme's actual token values are read directly rather than templated.
 const selectorStyles = {
-  singleValue: (provided) => ({
-    ...provided,
-    color: 'white',
-  }),
   control: (base, state) => ({
     ...base,
-    borderColor: '#20dc8e',
-    color: '#FFFFFF',
-    backgroundColor: '#03160e',
+    backgroundColor: theme.colors.moneySurfaceBg,
+    borderColor: state.isFocused ? theme.colors.brand : theme.colors.moneySurfaceBorder,
+    boxShadow: 'none',
+    color: theme.colors.textPrimary,
     width: '100%',
+    minHeight: '44px',
+    ':hover': { borderColor: theme.colors.brand },
   }),
+  singleValue: (base) => ({ ...base, color: theme.colors.textPrimary }),
+  input: (base) => ({ ...base, color: theme.colors.textPrimary }),
+  placeholder: (base) => ({ ...base, color: theme.colors.textMuted }),
+  indicatorSeparator: (base) => ({ ...base, backgroundColor: theme.colors.moneySurfaceBorder }),
+  dropdownIndicator: (base) => ({ ...base, color: theme.colors.textSecondary }),
+
+  // react-select injects its OWN inline styles for the menu, so the theme never
+  // reached it: the popup rendered on react-select's default WHITE background
+  // with pale text, leaving the unselected option (ETH) effectively invisible.
+  // Every menu surface has to be styled explicitly.
+  menu: (base) => ({
+    ...base,
+    backgroundColor: theme.colors.moneySurfaceBg,
+    border: `1px solid ${theme.colors.moneySurfaceBorder}`,
+    borderRadius: '8px',
+    overflow: 'hidden',
+    zIndex: 30,
+  }),
+  menuList: (base) => ({ ...base, backgroundColor: theme.colors.moneySurfaceBg, padding: 0 }),
   option: (base, state) => ({
     ...base,
-    backgroundColor: state.isSelected ? '#03160e' : undefined,
-    color: state.isSelected ? '#FFFFFF' : undefined,
-    ':active': {
-      ...base[':active'],
-      backgroundColor: '#0e435380',
-      color: '#FFFFFF',
-    },
+    backgroundColor: state.isSelected
+      ? 'rgba(94, 208, 255, 0.18)'
+      : state.isFocused
+        ? 'rgba(94, 208, 255, 0.10)'
+        : 'transparent',
+    // Never dim an option to unreadable — the selectable choice is the whole
+    // point of the menu.
+    color: theme.colors.textPrimary,
+    cursor: 'pointer',
+    ':active': { backgroundColor: 'rgba(94, 208, 255, 0.24)' },
   }),
 };
 
@@ -177,6 +266,10 @@ export function SendForm(props) {
 
   const [mode, setMode] = useState(LMR_MODE);
   const [isPending, setIsPending] = useState(false);
+  // A transfer is irreversible and there is no undo. One click must not move
+  // funds: the first press validates and shows exactly what is about to happen
+  // (full destination address, amount, token); only the second press sends.
+  const [confirming, setConfirming] = useState(false);
   const context = useContext(ToastsContext);
   const selectedCurrency = props.selectedCurrency;
 
@@ -185,21 +278,31 @@ export function SendForm(props) {
 
     const errorObj = props.validate();
     if (errorObj) {
-      const message =
-        errorObj.coinAmount ||
-        errorObj.toAddress ||
-        errorObj.gasLimit ||
-        errorObj.gasPrice;
+      const message = errorObj.coinAmount || errorObj.toAddress;
       context.toast('error', message);
+      setConfirming(false);
+      return;
+    }
+
+    // First press: show the confirmation, send nothing.
+    if (!confirming) {
+      setConfirming(true);
       return;
     }
 
     try {
       setIsPending(true);
-      await props.onSubmit(selectedCurrency.value);
+      // client.sendMor/sendEth now REJECT on failure and resolve with a tx hash.
+      // (They used to swallow errors and resolve `undefined`, so a failed
+      // transfer landed on the success screen.) Treat a missing hash as failure.
+      const tx = await props.onSubmit(selectedCurrency.value);
+      if (!tx) {
+        throw new Error('No transaction hash returned — the transfer did not go through');
+      }
+      setConfirming(false);
       props.onTabSwitch('success');
     } catch (err) {
-      context.toast('error', err.message);
+      context.toast('error', err.message || 'Transfer failed');
     }
 
     setIsPending(false);
@@ -207,6 +310,7 @@ export function SendForm(props) {
 
   const handleDestinationAddressInput = (e) => {
     e.preventDefault();
+    setConfirming(false);
 
     props.onInputChange(e.target);
     props.onDestinationAddressInput(e.target.value);
@@ -214,6 +318,7 @@ export function SendForm(props) {
 
   const handleAmountInput = (e) => {
     e.preventDefault();
+    setConfirming(false);
 
     const { value } = e.target;
     props.onInputChange({ id: mode, value });
@@ -236,13 +341,13 @@ export function SendForm(props) {
   return (
     <>
       <HeaderWrapper>
-        <BackBtn data-modal="send" onClick={props.onRequestClose}>
-          <BackIcon size="2.4rem" fill="white" />
+        <BackBtn data-modal="send" onClick={props.onRequestClose} aria-label="Go back">
+          <BackIcon size="2.4rem" fill={theme.colors.textPrimary} />
         </BackBtn>
         <Header>You are sending</Header>
       </HeaderWrapper>
 
-      <div style={{ color: 'black' }}>
+      <div>
         <Select
           className="basic-single"
           classNamePrefix="select"
@@ -259,7 +364,6 @@ export function SendForm(props) {
           <AmountInput
             type="number"
             placeholder={0}
-            isActive={true}
             onChange={handleAmountInput}
             value={props.amountInput}
           />
@@ -270,7 +374,7 @@ export function SendForm(props) {
         <IconContainer>
           <SwapIcon
             onClick={onModeChange}
-            fill={theme.colors.helpertextGray}
+            fill={theme.colors.textSecondary}
           ></SwapIcon>
         </IconContainer>
         {mode === LMR_MODE ? (
@@ -285,9 +389,9 @@ export function SendForm(props) {
           {props.estimatedFee && (
             <FeeRow>
               <FeeLabel>Estimated fee:</FeeLabel>
-              <FeeLabel>
+              <FeeValue>
                 {props.estimatedFee} {props.symbolEth}
-              </FeeLabel>
+              </FeeValue>
             </FeeRow>
           )}
         </FeeContainer>
@@ -305,19 +409,42 @@ export function SendForm(props) {
       <Footer>
         <FooterRow>
           <FooterLabel>{selectedCurrency.label} Balance</FooterLabel>
-          <FooterLabel>
+          <FooterValue>
             {selectedCurrency.value === 'ETH'
               ? `${props.eth.value.toFixed(6)} ≈ ${props.eth.usd}`
               : `${props.mor.value.toFixed(6)} ≈ ${props.mor.usd}`}
-          </FooterLabel>
+          </FooterValue>
         </FooterRow>
+        {confirming && (
+          <ConfirmPanel data-testid="send-confirm">
+            <ConfirmLine>
+              <ConfirmLabel>Sending</ConfirmLabel>
+              <ConfirmValue>
+                {props.coinAmount} {selectedCurrency.label}
+              </ConfirmValue>
+            </ConfirmLine>
+            <ConfirmLine>
+              <ConfirmLabel>To</ConfirmLabel>
+            </ConfirmLine>
+            <ConfirmAddress>{props.destinationAddress}</ConfirmAddress>
+            <ConfirmWarning>
+              Check the address character by character. Transfers cannot be
+              undone or refunded.
+            </ConfirmWarning>
+          </ConfirmPanel>
+        )}
         <FooterRow>
           <SendContainer>
             {isPending && <Spinner size="16px" />}
             {!isPending && (
-              <SendBtn data-modal="success" onClick={handleSendLmr}>
-                Send now
-              </SendBtn>
+              <Btn
+                block
+                data-modal="success"
+                data-testid={confirming ? 'send-confirm-btn' : 'send-review-btn'}
+                onClick={handleSendLmr}
+              >
+                {confirming ? 'Confirm & send' : 'Review send'}
+              </Btn>
             )}
           </SendContainer>
         </FooterRow>

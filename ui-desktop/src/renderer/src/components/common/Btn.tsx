@@ -1,4 +1,4 @@
-import styled from 'styled-components';
+import styled, { css } from 'styled-components';
 
 type BaseBtnProps = {
   submit?: boolean;
@@ -9,19 +9,33 @@ type FieldBtnProps = BaseBtnProps & {
   float?: boolean;
 };
 
+type BtnProps = BaseBtnProps & {
+  // B1 (money-safe default): Btn is solid/effect-free by default because it
+  // doubles as the money action (Stake / Send / Confirm). `glow` is an
+  // explicit opt-in for non-money CTAs only — never enabled by default.
+  glow?: boolean;
+};
+
 export const BaseBtn = styled.button.attrs<BaseBtnProps>(({ submit }) => ({
   type: submit ? 'submit' : 'button',
 }))<BaseBtnProps>`
   display: ${({ block }) => (block ? 'block' : 'inline-block')};
   width: ${({ block }) => (block ? '100%' : 'auto')};
   font: inherit;
+  font-family: ${p => p.theme.fontUI};
   text-align: center;
   border: none;
   cursor: pointer;
-  transition: 0.3s;
+  transition:
+    background-color ${p => p.theme.motion.duration.base} ${p =>
+      p.theme.motion.easing.standard},
+    box-shadow ${p => p.theme.motion.duration.base} ${p =>
+      p.theme.motion.easing.standard},
+    filter ${p => p.theme.motion.duration.fast} ${p =>
+      p.theme.motion.easing.standard};
   background-color: transparent;
   padding: 0;
-  color: ${p => p.theme.colors.light};
+  color: ${p => p.theme.colors.textPrimary};
   outline: none;
 
   &[data-disabled='true'],
@@ -29,37 +43,77 @@ export const BaseBtn = styled.button.attrs<BaseBtnProps>(({ submit }) => ({
     opacity: 0.5;
     cursor: not-allowed;
   }
+
+  &:focus-visible {
+    outline: 2px solid ${p => p.theme.colors.secondaryLight};
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
 `;
 
-export const Btn = styled(BaseBtn)`
-  line-height: 2.5rem;
-  font-size: 2rem;
-  font-weight: 500;
-  color: black;
-  border-radius: 5px;
-  background-color: ${p => p.theme.colors.morMain};
-  box-shadow: inset 0 3px 0 0 rgba(255, 255, 255, 0.1);
-  padding: 1.6rem 2rem;
+// Default/primary Btn — used for money actions (Stake, Send, Confirm) as well
+// as everyday form submits. Solid, opaque, max-contrast; no glass, no glow.
+// JARVIS buttons are not solid fills — they are cyan-tinted panels with a
+// hairline and a glow on hover, in uppercase monospace. The label is a command,
+// so it reads like one.
+export const Btn = styled(BaseBtn)<BtnProps>`
+  line-height: 2.2rem;
+  font-family: ${p => p.theme.fontUI};
+  font-size: ${p => p.theme.type.sm};
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: ${p => p.theme.colors.brand};
+  border-radius: ${p => p.theme.radii.md};
+  background-color: rgba(94, 208, 255, 0.09);
+  border: 1px solid ${p => p.theme.colors.glassBorderBright};
+  box-shadow: none;
+  padding: 1.3rem 2rem;
 
   &:not([disabled], [data-disabled]):hover,
-  &:not([disabled], [data-disabled]):focus,
-  &:not([disabled], [data-disabled]):active {
-    box-shadow: 0 2px 8px 0 ${p => p.theme.colors.darkShade};
+  &:not([disabled], [data-disabled]):focus {
+    color: ${p => p.theme.colors.brandBright};
+    background-color: rgba(94, 208, 255, 0.17);
+    box-shadow: 0 0 16px rgba(94, 208, 255, 0.22);
   }
+
+  &:not([disabled], [data-disabled]):active {
+    filter: brightness(0.94);
+  }
+
+  /* Opt-in ambient glow (B6 dial via effects.glowStrength) — non-money CTAs
+     only. Never applied unless a screen explicitly passes the glow prop. */
+  ${p =>
+    p.glow &&
+    css`
+      box-shadow: 0 0 ${20 * p.theme.effects.glowStrength}px
+        rgba(94, 208, 255, ${0.3 * p.theme.effects.glowStrength});
+
+      &:not([disabled], [data-disabled]):hover,
+      &:not([disabled], [data-disabled]):focus {
+        box-shadow: 0 0 ${32 * p.theme.effects.glowStrength}px
+          rgba(94, 208, 255, ${0.45 * p.theme.effects.glowStrength});
+      }
+    `}
 `;
 
 export const FieldBtn = styled(BaseBtn)<FieldBtnProps>`
   float: ${p => (p.float ? 'right' : 'none')};
   line-height: 1.8rem;
-  opacity: 0.5;
-  font-size: 1.4rem;
+  opacity: 0.6;
+  font-size: ${p => p.theme.type.xs};
   font-weight: 600;
   letter-spacing: 1.4px;
-  text-shadow: 0 1px 1px ${p => p.theme.colors.darkShade};
+  color: ${p => p.theme.colors.textSecondary};
   margin-top: ${p => (p.float ? '0.4rem' : 0)};
   white-space: nowrap;
 
-  &:hover {
+  &:hover,
+  &:focus-visible {
     opacity: 1;
+    color: ${p => p.theme.colors.textPrimary};
   }
 `;

@@ -16,6 +16,9 @@ import {
   IconWorld,
   IconShieldLock,
   IconInfoCircle,
+  IconUsers,
+  IconCoin,
+  IconSparkles,
 } from '@tabler/icons-react';
 import Modal from '../../contracts/modals/Modal';
 import ModelRow from './ModelRow';
@@ -52,7 +55,7 @@ const Layout = styled.div`
    (32px button at top: 12px / right: 12px → clears ~52px from the right). */
 const Header = styled.div`
   padding: 1.8rem 5.5rem 1.4rem 2.4rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(94, 208, 255, 0.22);
 `;
 
 const TitleRow = styled.div`
@@ -79,16 +82,16 @@ const ResultCount = styled.div`
 
 const SearchWrapper = styled.div`
   .input-group {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(94, 208, 255, 0.04);
     border-radius: 8px;
     overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(94, 208, 255, 0.22);
     transition: border-color 0.15s ease, background 0.15s ease;
   }
 
   .input-group:focus-within {
     border-color: ${(p) => p.theme.colors.morMain};
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(94, 208, 255, 0.06);
   }
 
   .input-group-text {
@@ -122,10 +125,10 @@ const FilterPill = styled.button<{ $active: boolean }>`
   border: 1px solid
     ${(p) =>
       p.$active
-        ? 'rgba(32, 220, 142, 0.5)'
-        : 'rgba(255, 255, 255, 0.08)'};
+        ? 'rgba(94, 208, 255, 0.5)'
+        : 'rgba(94, 208, 255, 0.08)'};
   background: ${(p) =>
-    p.$active ? 'rgba(32, 220, 142, 0.14)' : 'rgba(255, 255, 255, 0.03)'};
+    p.$active ? 'rgba(94, 208, 255, 0.14)' : 'rgba(94, 208, 255, 0.03)'};
   color: ${(p) =>
     p.$active ? p.theme.colors.morMain : 'rgba(255, 255, 255, 0.7)'};
   font-size: 1.15rem;
@@ -136,15 +139,32 @@ const FilterPill = styled.button<{ $active: boolean }>`
 
   &:hover {
     background: ${(p) =>
-      p.$active ? 'rgba(32, 220, 142, 0.2)' : 'rgba(255, 255, 255, 0.06)'};
+      p.$active ? 'rgba(94, 208, 255, 0.2)' : 'rgba(94, 208, 255, 0.06)'};
     color: ${(p) =>
       p.$active ? p.theme.colors.morMain : 'rgba(255, 255, 255, 0.9)'};
   }
 
   &:focus-visible {
-    outline: 2px solid rgba(32, 220, 142, 0.5);
+    outline: 2px solid rgba(94, 208, 255, 0.5);
     outline-offset: 2px;
   }
+`;
+
+const SortRow = styled.div`
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+`;
+
+const SortLabel = styled.span`
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.4);
+  margin-right: 2px;
 `;
 
 const FilterCount = styled.span<{ $active: boolean }>`
@@ -152,7 +172,7 @@ const FilterCount = styled.span<{ $active: boolean }>`
   padding: 1px 6px;
   border-radius: 8px;
   background: ${(p) =>
-    p.$active ? 'rgba(32, 220, 142, 0.18)' : 'rgba(255, 255, 255, 0.06)'};
+    p.$active ? 'rgba(94, 208, 255, 0.18)' : 'rgba(94, 208, 255, 0.06)'};
   color: ${(p) =>
     p.$active ? p.theme.colors.morMain : 'rgba(255, 255, 255, 0.55)'};
 `;
@@ -168,7 +188,7 @@ const Body = styled.div`
   &::-webkit-scrollbar { width: 6px; }
   &::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.12);
-    border-radius: 3px;
+    border-radius: ${(p) => p.theme.radii.sm};
   }
 `;
 
@@ -210,7 +230,7 @@ const InfoToggle = styled.button`
   padding: 2px 6px;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: ${(p) => p.theme.radii.sm};
   color: rgba(173, 211, 255, 0.95);
   font-size: 1rem;
   font-weight: 500;
@@ -270,6 +290,30 @@ const BidsLoadingHint = styled.div`
 
 type FilterId = 'all' | 'llm' | 'embeddings' | 'tts' | 'stt' | 'local' | 'tee';
 
+type SortId = 'best' | 'providers' | 'price';
+
+const SORTS: { id: SortId; label: string }[] = [
+  { id: 'best', label: 'Best match' },
+  { id: 'providers', label: 'Most providers' },
+  { id: 'price', label: 'Lowest price' },
+];
+
+// Number of live bids = number of providers actually offering this model. This
+// is the number that decides whether the model survives a dead provider: the
+// router picks the provider, so a single-bid model has no fallback when that
+// one provider stops serving.
+const providerCount = (m: any) => (m?.bids || []).filter((b: any) => b?.Id).length;
+
+// Cheapest live bid, in wei/sec. Local models are free. A model with no live
+// bid sorts last (Infinity), never first.
+const minPricePerSec = (m: any) => {
+  if (m?.isLocal) return 0;
+  const prices = (m?.bids || [])
+    .map((b: any) => Number(b.PricePerSecond))
+    .filter((n: number) => Number.isFinite(n) && n > 0);
+  return prices.length ? Math.min(...prices) : Number.POSITIVE_INFINITY;
+};
+
 const FILTERS: { id: FilterId; label: string; modality?: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'llm', label: 'LLM', modality: 'llm' },
@@ -286,13 +330,64 @@ function hasModality(tags: any[] = [], modality: string) {
   return tags.some((t: any) => String(t).toLowerCase() === modality);
 }
 
-function matchesQuery(model: any, q: string) {
-  const needle = q.trim().toLowerCase();
-  if (!needle) return true;
-  if ((model.Name || '').toLowerCase().includes(needle)) return true;
-  return (model.Tags || []).some((t: any) =>
-    String(t).toLowerCase().includes(needle),
-  );
+// Search used to be a single contiguous substring test, so the separators in a
+// model's name silently decided whether you could find it: "deepseek" and "v4"
+// both matched `deepseek-v4-pro`, but "deepseek v4 pro" matched nothing, because
+// the hyphens are not spaces. Nobody types the hyphens.
+//
+// So: flatten every separator to a space on BOTH sides, then match on tokens
+// rather than on one exact run of characters. Word order stops mattering too
+// ("pro deepseek" finds it), which is what people expect from a search box.
+const normalize = (s: any) =>
+  String(s ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+// Any score at or above this means every token in the query was found.
+const FULL_MATCH = 600;
+
+/**
+ * How well a model matches the query. 0 means no token matched at all.
+ * Higher is closer, so results can be ranked rather than merely filtered.
+ */
+function scoreModel(model: any, q: string): number {
+  const query = normalize(q);
+  if (!query) return 1; // no query: everything ties, ordering falls to the sort below
+
+  const tokens = query.split(' ').filter(Boolean);
+  const name = normalize(model.Name);
+  const haystack = `${name} ${(model.Tags || []).map(normalize).join(' ')}`.trim();
+
+  if (name === query) return 1000; // exact name
+  if (name.startsWith(query)) return 900;
+  if (name.includes(query)) return 800; // contiguous run inside the name
+  if (tokens.every((t) => name.includes(t))) return 700; // all tokens, any order
+  if (tokens.every((t) => haystack.includes(t))) return FULL_MATCH; // ...incl. tags
+
+  // Not everything matched. Score by how much did, so we can still offer the
+  // closest results instead of an empty list.
+  const hits = tokens.filter((t) => haystack.includes(t)).length;
+  return hits === 0 ? 0 : Math.round((hits / tokens.length) * 100);
+}
+
+/**
+ * The models a query admits, best match first — the single source of truth for
+ * BOTH the visible list and the filter-pill counts, so the two can never
+ * disagree about what "matches".
+ */
+function searchModels(models: any[], q: string): any[] {
+  const scored = models
+    .map((model) => ({ model, score: scoreModel(model, q) }))
+    .filter((x) => x.score > 0);
+
+  // Prefer models that matched every token. Only if none did do we fall back to
+  // partial matches — so a real query never dead-ends on an empty list, but a
+  // good query is never polluted by loose matches either.
+  const complete = scored.filter((x) => x.score >= FULL_MATCH);
+  const pool = complete.length > 0 ? complete : scored;
+
+  return pool.sort((a, b) => b.score - a.score).map((x) => x.model);
 }
 
 const ModelSelectionModal = ({
@@ -306,6 +401,7 @@ const ModelSelectionModal = ({
 }: any) => {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterId>('all');
+  const [sortBy, setSortBy] = useState<SortId>('best');
   const [showTeeInfo, setShowTeeInfo] = useState(false);
 
   // Annotate each model with `isOnline` (true for local, otherwise derived
@@ -335,59 +431,86 @@ const ModelSelectionModal = ({
     [models, providersAvailability],
   );
 
-  // Count results per filter (using the current search query) so the pills
-  // can show live counts and disabled-look for empty filters.
+  // Everything the query admits, ranked. Both the counts and the list below are
+  // derived from this one array, so a pill can never claim 0 while the list
+  // underneath it shows results.
+  const searched = useMemo(
+    () => searchModels(enriched, search),
+    [enriched, search],
+  );
+
+  const matchesFilter = (m: any, f: FilterId) => {
+    const tags = m.Tags || [];
+    switch (f) {
+      case 'all':
+        return true;
+      case 'local':
+        return !!m.isLocal;
+      case 'tee':
+        return isTee(m);
+      case 'llm':
+        return hasModality(tags, 'llm') || hasModality(tags, 'chat');
+      case 'embeddings':
+        return (
+          hasModality(tags, 'embeddings') || hasModality(tags, 'embedding')
+        );
+      case 'tts':
+        return hasModality(tags, 'tts');
+      case 'stt':
+        return hasModality(tags, 'stt');
+    }
+  };
+
+  // Live counts per pill, so an empty filter can look disabled.
   const counts: Record<FilterId, number> = useMemo(() => {
     const c: Record<FilterId, number> = {
       all: 0, llm: 0, embeddings: 0, tts: 0, stt: 0, tee: 0, local: 0,
     };
-    for (const m of enriched) {
-      if (!matchesQuery(m, search)) continue;
-      c.all++;
-      if (m.isLocal) c.local++;
-      if (isTee(m)) c.tee++;
-      const tags = m.Tags || [];
-      if (hasModality(tags, 'llm') || hasModality(tags, 'chat')) c.llm++;
-      if (hasModality(tags, 'embeddings') || hasModality(tags, 'embedding'))
-        c.embeddings++;
-      if (hasModality(tags, 'tts')) c.tts++;
-      if (hasModality(tags, 'stt')) c.stt++;
+    for (const m of searched) {
+      for (const f of Object.keys(c) as FilterId[]) {
+        if (matchesFilter(m, f)) c[f]++;
+      }
     }
     return c;
-  }, [enriched, search]);
+  }, [searched]);
 
   const visible = useMemo(() => {
-    const filtered = enriched.filter((m: any) => {
-      if (!matchesQuery(m, search)) return false;
-      const tags = m.Tags || [];
-      switch (filter) {
-        case 'all':
-          return true;
-        case 'local':
-          return !!m.isLocal;
-        case 'tee':
-          return isTee(m);
-        case 'llm':
-          return hasModality(tags, 'llm') || hasModality(tags, 'chat');
-        case 'embeddings':
-          return (
-            hasModality(tags, 'embeddings') || hasModality(tags, 'embedding')
-          );
-        case 'tts':
-          return hasModality(tags, 'tts');
-        case 'stt':
-          return hasModality(tags, 'stt');
-      }
-    });
+    const byTab = searched.filter((m: any) => matchesFilter(m, filter));
+    const byName = (x: any, y: any) =>
+      (x.Name || '').localeCompare(y.Name || '');
 
-    // Stable sort: online first, then local first inside online group,
-    // then alphabetical by name.
-    return filtered.sort((a: any, b: any) => {
-      if (!!b.isOnline !== !!a.isOnline) return b.isOnline ? 1 : -1;
-      if (!!b.isLocal !== !!a.isLocal) return b.isLocal ? 1 : -1;
-      return (a.Name || '').localeCompare(b.Name || '');
-    });
-  }, [enriched, search, filter]);
+    // An explicit sort overrides relevance ranking — the user asked for this
+    // order, so give them exactly it.
+    if (sortBy === 'providers') {
+      return [...byTab].sort(
+        (x: any, y: any) => providerCount(y) - providerCount(x) || byName(x, y),
+      );
+    }
+
+    if (sortBy === 'price') {
+      return [...byTab].sort((x: any, y: any) => {
+        const a = minPricePerSec(x);
+        const b = minPricePerSec(y);
+        // `!==` keeps Infinity - Infinity (NaN) out of the comparator; models
+        // with no live bid tie with each other and fall to the bottom.
+        if (a !== b) return a - b;
+        return byName(x, y);
+      });
+    }
+
+    // `searched` is already ranked best-match-first. With no query every score
+    // ties, so this sort is what actually orders the list: online first, then
+    // local, then alphabetical — the original behaviour.
+    if (!normalize(search)) {
+      return [...byTab].sort((x: any, y: any) => {
+        if (!!y.isOnline !== !!x.isOnline) return y.isOnline ? 1 : -1;
+        if (!!y.isLocal !== !!x.isLocal) return y.isLocal ? 1 : -1;
+        return byName(x, y);
+      });
+    }
+
+    return byTab;
+  }, [searched, search, filter, sortBy]);
 
   // Bail out *after* all hooks have run.
   if (!isActive) return null;
@@ -400,9 +523,20 @@ const ModelSelectionModal = ({
   // Section buckets: Local → TEE → Marketplace.
   // TEE models surface in their own section (not duplicated under Marketplace)
   // so privacy-sensitive options are visually unambiguous.
-  const localModels = visible.filter((m: any) => m.isLocal);
-  const teeModels = visible.filter((m: any) => !m.isLocal && isTee(m));
-  const remoteModels = visible.filter((m: any) => !m.isLocal && !isTee(m));
+  //
+  // An explicit sort COLLAPSES the sections. Sorting inside Local → TEE →
+  // Marketplace buckets cannot put the cheapest model at the top of the list —
+  // the buckets outrank the sort — so "Lowest price" would reorder nothing the
+  // user can see. When they ask for a ranking, give them one flat ranked list.
+  const isRanked = sortBy !== 'best';
+  const localModels = isRanked ? [] : visible.filter((m: any) => m.isLocal);
+  const teeModels = isRanked
+    ? []
+    : visible.filter((m: any) => !m.isLocal && isTee(m));
+  const remoteModels = isRanked
+    ? []
+    : visible.filter((m: any) => !m.isLocal && !isTee(m));
+  const rankedModels = isRanked ? visible : [];
 
   const filterIconFor = (id: FilterId) => {
     switch (id) {
@@ -421,6 +555,7 @@ const ModelSelectionModal = ({
       onClose={() => {
         setSearch('');
         setFilter('all');
+        setSortBy('best');
         setShowTeeInfo(false);
         handleClose();
       }}
@@ -479,6 +614,30 @@ const ModelSelectionModal = ({
               );
             })}
           </FilterRow>
+          <SortRow>
+            <SortLabel>Sort</SortLabel>
+            {SORTS.map((s) => {
+              const active = sortBy === s.id;
+              return (
+                <FilterPill
+                  key={s.id}
+                  $active={active}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setSortBy(s.id)}
+                >
+                  {s.id === 'providers' ? (
+                    <IconUsers size={13} stroke={2} />
+                  ) : s.id === 'price' ? (
+                    <IconCoin size={13} stroke={2} />
+                  ) : (
+                    <IconSparkles size={13} stroke={2} />
+                  )}
+                  {s.label}
+                </FilterPill>
+              );
+            })}
+          </SortRow>
           {bidsLoading && (
             <BidsLoadingHint>
               Loading marketplace options… local models are ready to use.
@@ -496,6 +655,30 @@ const ModelSelectionModal = ({
                   : 'No models available for this filter.'}
               </div>
             </EmptyState>
+          )}
+
+          {rankedModels.length > 0 && (
+            <Section>
+              <SectionLabel>
+                {sortBy === 'price' ? (
+                  <IconCoin size={13} stroke={2} />
+                ) : (
+                  <IconUsers size={13} stroke={2} />
+                )}
+                {sortBy === 'price' ? 'Lowest price first' : 'Most providers first'}
+                <SectionHint>all models</SectionHint>
+              </SectionLabel>
+              <SectionList>
+                {rankedModels.map((m: any) => (
+                  <ModelRow
+                    key={m.Id}
+                    model={m}
+                    symbol={symbol}
+                    onChangeModel={handlePick}
+                  />
+                ))}
+              </SectionList>
+            </Section>
           )}
 
           {localModels.length > 0 && (

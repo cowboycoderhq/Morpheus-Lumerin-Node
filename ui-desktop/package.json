@@ -1,6 +1,6 @@
 {
   "name": "morpheus-app",
-  "version": "1.0.0",
+  "version": "7.5.9",
   "description": "The Morpheus Decentralized AI Desktop App",
   "repository": "https://github.com/MorpheusAIs/morpheus-lumerin-node.git//ui-desktop",
   "main": "./out/main/index.mjs",
@@ -93,7 +93,7 @@
     "redux": "^5.0.1",
     "redux-actions": "2.3.0",
     "reselect": "^5.1.0",
-    "styled-components": "4.1.2",
+    "styled-components": "5.3.11",
     "tar-stream": "^3.1.7",
     "web3-utils": "1.10.4",
     "yauzl": "^3.2.0",

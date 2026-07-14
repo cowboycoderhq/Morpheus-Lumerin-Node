@@ -5,12 +5,18 @@ import CloseIcon from '../icons/CloseIcon';
 
 type Variant = 'primary' | 'secondary';
 
+// Modal houses money/security-sensitive surfaces (reveal secret phrase,
+// transaction/allowance views) — solid, opaque, max-contrast per B1. No
+// glass, no glow; only the entrance/exit transition (state-bound to
+// isOpen/closing, not ambient) and it honors prefers-reduced-motion.
 const Container = styled(ReactModal)`
   &.ReactModal__Content {
     opacity: 0;
     transition:
-      transform 0.3s,
-      opacity 0.3s;
+      transform ${(p) => p.theme.motion.duration.base} ${(p) =>
+        p.theme.motion.easing.enter},
+      opacity ${(p) => p.theme.motion.duration.base} ${(p) =>
+        p.theme.motion.easing.enter};
     will-change: transform, opacity;
     transform: translate3d(-50%, 10%, 0);
   }
@@ -23,48 +29,74 @@ const Container = styled(ReactModal)`
     opacity: 0;
     transform: translate3d(-50%, -10%, 0);
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    &.ReactModal__Content,
+    &.ReactModal__Content--after-open,
+    &.ReactModal__Content--before-close {
+      transition: none;
+      transform: translate3d(-50%, 0, 0);
+    }
+  }
 `;
 
 const Header = styled.header<{
   variant: Variant;
   hasTitle: boolean;
 }>`
+  border-radius: ${(p) => p.theme.radii.md};
   padding: 1.6rem;
   display: flex;
   background-color: ${(p) =>
-    p.variant === 'primary' ? p.theme.colors.primary : 'transparent'};
+    p.variant === 'primary' ? p.theme.colors.voidElevated : 'transparent'};
+  border-bottom: ${(p) =>
+    p.variant === 'primary' ? `1px solid ${p.theme.colors.moneySurfaceBorder}` : 'none'};
   justify-content: ${(p) => (p.hasTitle ? 'space-between' : 'flex-end')};
   flex-shrink: 0;
 `;
 
 const Title = styled.h1<{ variant: Variant }>`
-  font-size: 1.8rem;
+  font-family: ${(p) => p.theme.fontUI};
+  font-size: ${(p) => p.theme.type.md};
   line-height: 2.4rem;
-  font-weight: normal;
+  font-weight: 600;
   color: ${(p) =>
-    p.variant === 'primary' ? p.theme.colors.light : p.theme.colors.copy};
+    p.variant === 'primary' ? p.theme.colors.textPrimary : p.theme.colors.textSecondary};
   margin: 0;
   flex-grow: 1;
   cursor: default;
 `;
 
 const HeaderButton = styled.button<{ variant: Variant }>`
+  border-radius: ${(p) => p.theme.radii.sm};
   margin-left: 2rem;
   background: transparent;
   border: none;
-  padding: 0;
+  padding: 0.4rem;
+  min-width: 40px;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   outline: none;
   cursor: pointer;
   color: ${(p) =>
-    p.variant === 'primary' ? p.theme.colors.light : p.theme.colors.primary};
+    p.variant === 'primary' ? p.theme.colors.textPrimary : p.theme.colors.textSecondary};
+  transition: opacity ${(p) => p.theme.motion.duration.fast} ${(p) =>
+    p.theme.motion.easing.standard};
 
   &[disabled] {
-    color: ${(p) => p.theme.colors.weak};
+    color: ${(p) => p.theme.colors.textMuted};
+    cursor: not-allowed;
   }
 
   &:not([disabled]):hover,
-  &:hover {
-    opacity: 0.5;
+  &:not([disabled]):focus-visible {
+    opacity: 0.6;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 `;
 
@@ -96,21 +128,21 @@ export default function Modal({
       isOpen={isOpen}
       style={{
         overlay: {
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          backgroundColor: 'rgba(2, 18, 11, 0.72)',
           zIndex: '3',
         },
         content: {
-          background: theme.colors.primaryDark,
+          background: theme.colors.moneySurfaceBg,
           flexDirection: 'column',
           marginBottom: '1.6rem',
-          borderRadius: '5px',
-          boxShadow: `0 0 16px 0 ${theme.colors.darkShade}`,
+          borderRadius: theme.radii.lg,
+          border: `1px solid ${theme.colors.moneySurfaceBorder}`,
+          boxShadow: theme.shadows.elevated,
           overflowY: 'auto',
           position: 'absolute',
           outline: 'none',
           display: 'flex',
           padding: '0',
-          border: 'none',
           width: '420px',
           right: 'auto',
           left: '50%',
@@ -126,7 +158,9 @@ export default function Modal({
         <HeaderButton onClick={onRequestClose} variant={variant}>
           <CloseIcon
             color={
-              variant === 'primary' ? theme.colors.light : theme.colors.copy
+              variant === 'primary'
+                ? theme.colors.textPrimary
+                : theme.colors.textSecondary
             }
           />
         </HeaderButton>

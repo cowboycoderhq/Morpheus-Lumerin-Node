@@ -6,6 +6,7 @@ import selectors from '../selectors';
 import {
   getSessionsByUser,
   getBidsByModelId,
+  getActiveBidsByProvider,
   getBidInfoById,
 } from '../utils/apiCallsHelper';
 import { ApiGateway } from 'src/main/src/client/apiGateway';
@@ -239,6 +240,31 @@ const withChatState = (WrappedComponent: ComponentType<any>) => {
       );
     };
 
+    // Every active bid on the network, keyed by model id — fetched by walking
+    // PROVIDERS (21) rather than MODELS (391). Replaces the per-model fan-out
+    // that made the model picker take minutes to populate.
+    getAllActiveBidsByModel = async (providers) => {
+      const authHeaders = await this.props.client.getAuthHeaders();
+      const url = this.props.config.chain.localProxyRouterUrl;
+
+      const perProvider = await Promise.all(
+        (providers ?? []).map((p) =>
+          getActiveBidsByProvider(url, p.Address, authHeaders),
+        ),
+      );
+
+      const byModel = new Map();
+      for (const bid of perProvider.flat()) {
+        // Same filters the per-model path applied.
+        if (+bid.DeletedAt !== 0) continue;
+        if (bid.Provider == this.props.address) continue;
+        const list = byModel.get(bid.ModelAgentId ?? bid.ModelId);
+        if (list) list.push(bid);
+        else byModel.set(bid.ModelAgentId ?? bid.ModelId, [bid]);
+      }
+      return byModel;
+    };
+
     getBidsByModelId = async (modelId) => {
       if (!modelId) {
         return;
@@ -302,6 +328,8 @@ const withChatState = (WrappedComponent: ComponentType<any>) => {
           getBidInfo={this.getBidInfo}
           getMetaInfo={this.getMetaInfo}
           getBidsByModelId={this.getBidsByModelId}
+          getAllActiveBidsByModel={this.getAllActiveBidsByModel}
+          getLocalModels={this.getLocalModels}
           getModelsData={this.getModelsData}
           getSessionsByUser={this.getSessionsByUser}
           closeSession={this.closeSession}

@@ -19,19 +19,16 @@ const withSettingsState = WrappedComponent => {
       return this.props.client.logout();
     };
 
+    // Fetched via the MAIN process: a renderer fetch during router boot
+    // paints 500s into the devtools console; main-side it fails silently to
+    // the safe default and the Settings screen just shows empty fields.
     getConfig = async () => {
       try {
-        const authHeaders = await this.props.client.getAuthHeaders();
-        const path = `${this.props.config.chain.localProxyRouterUrl}/config`;
-        const response = await fetch(path, {
-          headers: authHeaders
-        });
-        const data = await response.json();
-        return data;
+        return await this.props.client.getProxyRouterDerivedConfig();
       }
       catch (e) {
         console.log("Error", e)
-        return [];
+        return {};
       }
     }
 

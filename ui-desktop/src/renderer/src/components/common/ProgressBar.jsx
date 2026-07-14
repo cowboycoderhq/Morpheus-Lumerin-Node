@@ -6,12 +6,13 @@ const ProgressBarWrapper = styled.div`
   width: 100%;
   min-width: 30px;
   display: flex;
-  border-radius: 5px;
+  border-radius: ${theme.radii.sm};
   overflow: hidden;
 `;
 
 const Completed = styled.div`
-  background-color: ${theme.colors.active};
+  background-color: ${theme.colors.brand};
+  border-radius: ${theme.radii.pill} 0 0 ${theme.radii.pill};
   height: 30px;
   width: ${props => props.width};
   display: flex;
@@ -19,7 +20,8 @@ const Completed = styled.div`
 `;
 
 const Remaining = styled.div`
-  background-color: ${theme.colors.cancelled};
+  background-color: ${theme.colors.glassSurfaceHover};
+  border-radius: 0 ${theme.radii.pill} ${theme.radii.pill} 0;
   height: 30px;
   width: ${props => props.width};
   display: flex;
@@ -27,7 +29,8 @@ const Remaining = styled.div`
 `;
 
 const Value = styled.span`
-  color: #ffffff;
+  color: ${theme.colors.textPrimary};
+  font-family: ${theme.fontUI};
   font-weight: bold;
   padding: 0 8px;
   display: inline-block;

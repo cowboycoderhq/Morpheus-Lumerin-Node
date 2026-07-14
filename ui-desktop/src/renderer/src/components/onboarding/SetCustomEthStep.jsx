@@ -1,53 +1,50 @@
-import TermsAndConditions from '../../components/common/TermsAndConditions';
 import PropTypes from 'prop-types';
 import styled from 'styled-components';
 import React from 'react';
-import SecondaryBtn from './SecondaryBtn';
 import { AltLayout, AltLayoutNarrow, Btn, Sp, TextInput } from '../common';
-import Message from './Message';
+import { Callout } from './WizardChrome';
 
-const DisclaimerWarning = styled.div`
+const Heading = styled.p`
+  margin: 0 0 2rem;
+  font-size: ${p => p.theme.type.base};
+  line-height: 1.55;
+  color: ${p => p.theme.colors.textPrimary};
   text-align: left;
-  color: ${p => p.theme.colors.dark};
-  font-size: 16px;
-  margin-top: 16px;
-  text-align: justify;
 `;
 
-const DisclaimerMessage = styled.div`
-  width: 100%;
-  height: 130px;
-  border-radius: 2px;
-  background-color: rgba(0, 0, 0, 0.1);
-  color: ${p => p.theme.colors.dark};
-  overflow: auto;
-  font-size: 12px;
-  padding: 10px 16px 0 16px;
-  margin: 16px 0;
-`;
+const GhostBtn = styled(Btn)`
+  border-radius: ${(p) => p.theme.radii.md};
+  background: transparent;
+  border: 1px solid ${p => p.theme.colors.glassBorder};
+  box-shadow: none;
 
-const P = styled.p`
-  color: ${p => p.theme.colors.dark};
-`;
-
-const Subtext = styled.span`
-  color: ${p => p.theme.colors.dark};
+  &:not([disabled]):hover,
+  &:not([disabled]):focus {
+    background: ${p => p.theme.colors.glassSurface};
+    box-shadow: none;
+  }
 `;
 
 export const SetCustomEthStep = props => {
 
   return (
-    <AltLayout title="ETH Node Url" data-testid="onboarding-container">
+    <AltLayout title="Advanced: Custom ETH Node" data-testid="onboarding-container">
       <AltLayoutNarrow>
-        <DisclaimerWarning>
-          Set Custom ETH node url that will be used for blockchain interactions instead of default. This can be set later in Settings
-        </DisclaimerWarning>
+        <Heading>
+          Optional — used to talk to the Ethereum blockchain through your own
+          node instead of the default one.
+        </Heading>
+      </AltLayoutNarrow>
 
+      <Callout>
+        Most people should skip this — it&apos;s only for advanced users
+        running their own node. You can always set this later in Settings.
+      </Callout>
+
+      <AltLayoutNarrow>
         <Sp mt={3}>
           <TextInput
-
             data-testid="ethNode-field"
-            autoFocus
             onChange={props.onInputChange}
             placeholder={"{wss|https}://{url}"}
             onPaste={e => {
@@ -64,28 +61,35 @@ export const SetCustomEthStep = props => {
 
         <Sp mt={6}>
           <Btn
-            data-testid="accept-btn"
+            data-testid="skip-btn"
             autoFocus
-            onClick={props.onEthNodeSet}
+            onClick={(e) => {
+              e.preventDefault();
+              props.onInputChange({ value: "", id: 'customEthNode' });
+              props.onEthNodeSet(e)
+            }}
             block
           >
-            Accept
+            Skip — use the default
           </Btn>
         </Sp>
         <Sp mt={2}>
-            <SecondaryBtn
-              data-testid="skip-btn"
-              onClick={(e) => {
-                e.preventDefault();
-                props.onInputChange({ value: "", id: 'customEthNode' });
-                props.onEthNodeSet(e)
-              }}
-              block
-            >
-              Skip
-            </SecondaryBtn>
-          </Sp>
+          <GhostBtn
+            data-testid="accept-btn"
+            onClick={props.onEthNodeSet}
+            block
+          >
+            Use this node instead
+          </GhostBtn>
+        </Sp>
       </AltLayoutNarrow>
     </AltLayout>
   );
+};
+
+SetCustomEthStep.propTypes = {
+  onInputChange: PropTypes.func.isRequired,
+  onEthNodeSet: PropTypes.func.isRequired,
+  customEthNode: PropTypes.string,
+  errors: PropTypes.object
 };

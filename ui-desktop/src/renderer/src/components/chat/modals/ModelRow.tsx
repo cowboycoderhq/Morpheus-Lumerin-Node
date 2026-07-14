@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import styled from 'styled-components';
+import { formatModelName } from '../utils';
 import {
   IconMessage,
   IconMicrophone,
@@ -39,7 +40,7 @@ const RowContainer = styled.button<{ $online: boolean }>`
   padding: 1.2rem 1.4rem;
   margin: 0;
   background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(94, 208, 255, 0.22);
   border-radius: 10px;
   color: rgba(255, 255, 255, 0.92);
   cursor: ${(p) => (p.$online ? 'pointer' : 'not-allowed')};
@@ -49,8 +50,10 @@ const RowContainer = styled.button<{ $online: boolean }>`
   opacity: ${(p) => (p.$online ? 1 : 0.55)};
 
   &:hover {
-    background: ${(p) => (p.$online ? 'rgba(32, 220, 142, 0.08)' : 'rgba(255, 255, 255, 0.04)')};
-    border-color: ${(p) => (p.$online ? 'rgba(32, 220, 142, 0.4)' : 'rgba(255, 255, 255, 0.08)')};
+    /* Hover is a surface, not a status. Green is reserved for liveness (the
+       StatusDot); tinting the row itself green made the whole panel read green. */
+    background: rgba(94, 208, 255, 0.06);
+    border-color: rgba(94, 208, 255, 0.28);
   }
 
   &:active:not(:disabled) {
@@ -58,7 +61,7 @@ const RowContainer = styled.button<{ $online: boolean }>`
   }
 
   &:focus-visible {
-    outline: 2px solid rgba(32, 220, 142, 0.6);
+    outline: 2px solid rgba(94, 208, 255, 0.6);
     outline-offset: 2px;
   }
 
@@ -71,7 +74,7 @@ const IconWrap = styled.div`
   width: 36px;
   height: 36px;
   border-radius: 8px;
-  background: rgba(32, 220, 142, 0.12);
+  background: rgba(94, 208, 255, 0.12);
   color: ${(p) => p.theme.colors.morMain};
   display: flex;
   align-items: center;
@@ -104,9 +107,9 @@ const StatusDot = styled.span<{ $online: boolean }>`
   height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: ${(p) => (p.$online ? '#20dc8e' : 'rgba(255, 255, 255, 0.25)')};
+  background: ${(p) => (p.$online ? '#59e3a7' : 'rgba(255, 255, 255, 0.25)')};
   box-shadow: ${(p) =>
-    p.$online ? '0 0 0 3px rgba(32, 220, 142, 0.18)' : 'none'};
+    p.$online ? '0 0 0 3px rgba(89, 227, 167, 0.18)' : 'none'};
 `;
 
 const MetaLine = styled.div`
@@ -125,13 +128,13 @@ const Pill = styled.span<{ $accent?: boolean }>`
   display: inline-flex;
   align-items: center;
   padding: 1px 7px;
-  border-radius: 4px;
+  border-radius: ${(p) => p.theme.radii.sm};
   font-size: 1rem;
   font-weight: 600;
   letter-spacing: 0.3px;
   text-transform: uppercase;
   background: ${(p) =>
-    p.$accent ? 'rgba(32, 220, 142, 0.16)' : 'rgba(255, 255, 255, 0.07)'};
+    p.$accent ? 'rgba(94, 208, 255, 0.16)' : 'rgba(94, 208, 255, 0.07)'};
   color: ${(p) =>
     p.$accent ? p.theme.colors.morMain : 'rgba(255, 255, 255, 0.65)'};
 `;
@@ -144,7 +147,7 @@ const TeePill = styled.span`
   align-items: center;
   gap: 3px;
   padding: 1px 7px 1px 5px;
-  border-radius: 4px;
+  border-radius: ${(p) => p.theme.radii.sm};
   font-size: 1rem;
   font-weight: 600;
   letter-spacing: 0.3px;
@@ -180,8 +183,8 @@ const LocalBadge = styled.div`
   align-items: center;
   gap: 4px;
   padding: 3px 8px 3px 6px;
-  border-radius: 6px;
-  background: rgba(32, 220, 142, 0.16);
+  border-radius: ${(p) => p.theme.radii.sm};
+  background: rgba(94, 208, 255, 0.16);
   color: ${(p) => p.theme.colors.morMain};
   font-size: 1.1rem;
   font-weight: 600;
@@ -193,8 +196,8 @@ const OfflineBadge = styled.div`
   align-items: center;
   gap: 4px;
   padding: 3px 8px 3px 6px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.06);
+  border-radius: ${(p) => p.theme.radii.sm};
+  background: rgba(94, 208, 255, 0.06);
   color: rgba(255, 255, 255, 0.55);
   font-size: 1.1rem;
   font-weight: 600;
@@ -320,7 +323,7 @@ function ModelRow(props: {
       <NameStack>
         <NameLine>
           <StatusDot $online={isOnline} />
-          <NameText>{model.Name}</NameText>
+          <NameText>{formatModelName(model.Name)}</NameText>
         </NameLine>
         <MetaLine>
           {modalityKeys.slice(0, 1).map((key) => (

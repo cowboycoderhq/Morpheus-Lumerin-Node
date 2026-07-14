@@ -15,7 +15,7 @@ import { Input } from './common';
 
 const PrivateKey = styled.div`
   word-break: break-word;
-  color: black;
+  color: ${(p) => p.theme.colors.textPrimary};
   opacity: 0.8;
   margin-bottom: 2.4rem;
 `;

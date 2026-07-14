@@ -139,6 +139,41 @@ const withOnboardingState = WrappedComponent => {
       this.setState({ isMnemonicVerified: true, useEthStep: true });
     }
 
+    // Structural Back: reverses ONLY the navigation flag that produced the
+    // current step (per getCurrentStep()'s resolution order), so the same
+    // component tree that got the user here re-renders in reverse. This
+    // NEVER touches password/passwordAgain/mnemonic/userMnemonic or any
+    // wallet/crypto call — those inputs live untouched in this same state
+    // object, which is why reversing a flag preserves them automatically.
+    onBack = () => {
+      const step = this.getCurrentStep();
+      switch (step) {
+        case 'verify-mnemonic':
+          this.setState({ isMnemonicCopied: false });
+          return;
+        case 'copy-mnemonic':
+          this.setState({ isPasswordDefined: false });
+          return;
+        case 'define-password':
+          this.setState({ areTermsAccepted: false });
+          return;
+        case 'set-custom-eth':
+          this.setState({ useEthStep: false });
+          return;
+        case 'recover-from-mnemonic':
+          this.setState({ useUserMnemonic: false });
+          return;
+        case 'import-flow':
+          this.setState({ useImportFlow: false });
+          return;
+        case 'ask-for-terms':
+        default:
+          // First step (or an unrecognized/terminal step) — nothing to go
+          // back to.
+          return;
+      }
+    };
+
 
     validateDefaultPoolAddress() {
       const errors = validators.validatePoolAddress(
@@ -162,13 +197,25 @@ const withOnboardingState = WrappedComponent => {
         privateKey: ''
       };
 
-      if(this.state.userPrivateKey) {
-        payload.privateKey = this.state.userPrivateKey;
-      }
-      else {
+      if (this.state.userPrivateKey) {
+        // Route by CONTENT, not just by which field was used. A private key is a
+        // single hex string; a BIP39 mnemonic is space-separated words. The
+        // Private-Key field never validated its input (onPrivateKeyAccepted does
+        // no check), so a mnemonic pasted there was sent to the hex-only
+        // /wallet/privateKey endpoint and the router rejected it with
+        // "invalid hex string" — onboarding failed with no usable wallet. If the
+        // value looks like a phrase, treat it as a mnemonic so it reaches the
+        // right endpoint regardless of which field it was typed into.
+        const entered = String(this.state.userPrivateKey).trim();
+        if (/\s/.test(entered)) {
+          payload.mnemonic = utils.sanitizeMnemonic(entered);
+        } else {
+          payload.privateKey = entered;
+        }
+      } else {
         payload.mnemonic = this.state.useUserMnemonic
-        ? utils.sanitizeMnemonic(this.state.userMnemonic)
-        : this.state.mnemonic;
+          ? utils.sanitizeMnemonic(this.state.userMnemonic)
+          : this.state.mnemonic;
       }
 
       await this.props.onOnboardingCompleted(payload);
@@ -259,6 +306,7 @@ const withOnboardingState = WrappedComponent => {
           onPrivateKeyAccepted={this.onPrivateKeyAccepted}
           onMnemonicSet={this.onMnemonicSet}
           onEthNodeSet={this.onEthNodeSet}
+          onBack={this.onBack}
           {...this.state}
         />
       );

@@ -69,6 +69,7 @@ const MenuList = styled(DropdownMenu.Content)`
 `;
 
 const MenuItem = styled(DropdownMenu.Item)`
+  border-radius: ${(p) => p.theme.radii.md};
   background-color: ${({ theme }) => theme.colors.lightShade};
   display: block;
   cursor: pointer;

@@ -13,7 +13,7 @@ const StyledBtn = styled(BaseBtn)`
   width: 40%;
   height: 40px;
   font-size: 1.5rem;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   padding: 0 0.6rem;
   background-color: ${(p) => p.theme.colors.primary};
   color: ${(p) => p.theme.colors.light};

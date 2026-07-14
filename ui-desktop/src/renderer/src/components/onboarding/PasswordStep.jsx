@@ -1,90 +1,91 @@
-import React, { useState } from 'react';
+import React from 'react';
 import styled from 'styled-components';
 import PropTypes from 'prop-types';
-import 'react-hint/css/index.css';
 import * as utils from '../../store/utils';
 import {
   PasswordStrengthMeter,
   TextInput,
-  AltLayout,
   AltLayoutNarrow,
   Btn,
-  Sp,
-  Tooltip
+  Sp
 } from '../common';
-import Message from './Message';
+import WizardChrome, { Callout } from './WizardChrome';
 
-const PasswordMessage = styled(Message)`
+const Explainer = styled.p`
+  margin: 0 0 2.4rem;
+  font-size: ${p => p.theme.type.base};
+  line-height: 1.55;
+  color: ${p => p.theme.colors.textPrimary};
   text-align: left;
-  color: ${p => p.theme.colors.dark};
-  text-align: justify;
 `;
 
-const Green = styled.div`
-  display: inline-block;
-  color: ${p => p.theme.colors.success};
-`;
-
-const PasswordInputWrap = styled.div`
-  position: relative;
+const MeterHint = styled.p`
+  margin: 0.8rem 0 0;
+  font-size: ${p => p.theme.type.xs};
+  color: ${p => p.theme.colors.textSecondary};
 `;
 
 const SecondaryBtn = styled(Btn)`
-    border: 1px solid #20dc8e;
-    color: #20dc8e;
-    background: transparent;
-`
+  border-radius: ${(p) => p.theme.radii.md};
+  border: 1px solid ${p => p.theme.colors.brand};
+  color: ${p => p.theme.colors.brand};
+  background: transparent;
+
+  &:not([disabled]):hover,
+  &:not([disabled]):focus {
+    background: rgba(94, 208, 255, 0.08);
+  }
+`;
 
 const PasswordStep = props => {
-  const [typed, setTyped] = useState(false);
-  const [suggestion, setSuggestion] = useState('');
   const onPasswordSubmit = (e, useImportFlow) => {
     e.preventDefault();
     props.onPasswordSubmit({ clearOnError: false, useImportFlow });
   };
-  let tooltipTimeout;
 
   return (
-    <AltLayout title="Let`s get started" data-testid="onboarding-container">
+    <WizardChrome
+      title="Create a Password"
+      step={2}
+      totalSteps={4}
+      onBack={props.onBack}
+      data-testid="onboarding-container"
+    >
+      <AltLayoutNarrow>
+        <Explainer>
+          This password unlocks the app on this Mac. It does not recover
+          your wallet — your Recovery Phrase does that, in the next step.
+        </Explainer>
+      </AltLayoutNarrow>
+
+      <Callout>
+        A wallet is a secure account only you control — no signup, no
+        company holds it. This app creates one for you on this device.
+      </Callout>
+
       <AltLayoutNarrow>
         <form data-testid="pass-form">
-          <PasswordMessage>
-            Enter a strong password until the meter turns <Green>green</Green>.
-          </PasswordMessage>
-          <PasswordInputWrap>
-            <Sp mt={2}>
-              <Tooltip
-                content={suggestion}
-                show={typed && props.password && suggestion.length}
-              />
-              <TextInput
-                data-testid="pass-field"
-                autoFocus
-                onChange={e => {
-                  if (!typed) {
-                    tooltipTimeout && clearTimeout(tooltipTimeout);
-                    setTyped(true);
-                    tooltipTimeout = setTimeout(() => setTyped(false), 5000);
-                  }
-                  return props.onInputChange(e);
-                }}
-                error={props.errors.password}
-                label="Password"
-                value={props.password}
-                type="password"
-                id="password"
-              />
-              {!props.errors.password && (
-                <PasswordStrengthMeter
-                  password={props.password}
-                  onChange={res => {
-                    const string = res?.suggestions?.join(`\n`);
-                    setSuggestion(string);
-                  }}
-                />
-              )}
-            </Sp>
-          </PasswordInputWrap>
+          <Sp mt={4}>
+            <TextInput
+              data-testid="pass-field"
+              autoFocus
+              onChange={props.onInputChange}
+              error={props.errors.password}
+              label="Password"
+              value={props.password}
+              type="password"
+              id="password"
+            />
+            {!props.errors.password && (
+              <>
+                <PasswordStrengthMeter password={props.password} />
+                <MeterHint>
+                  This bar is a guide, not a requirement — longer and more
+                  unique is safer.
+                </MeterHint>
+              </>
+            )}
+          </Sp>
           <Sp mt={3}>
             <TextInput
               data-testid="pass-again-field"
@@ -108,13 +109,14 @@ const PasswordStep = props => {
           </Sp>
         </form>
       </AltLayoutNarrow>
-    </AltLayout>
+    </WizardChrome>
   );
 };
 
 PasswordStep.propTypes = {
   onPasswordSubmit: PropTypes.func.isRequired,
   onInputChange: PropTypes.func.isRequired,
+  onBack: PropTypes.func,
   passwordAgain: PropTypes.string,
   password: PropTypes.string,
   errors: utils.errorPropTypes('passwordAgain', 'password')

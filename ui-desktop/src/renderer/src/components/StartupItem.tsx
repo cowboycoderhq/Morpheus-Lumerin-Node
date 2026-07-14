@@ -25,7 +25,7 @@ const Entry = styled.div`
   margin: 0.5rem 0;
   padding: 1rem;
   background: ${(p) => p.theme.colors.morLight};
-  border-radius: 4px;
+  border-radius: ${(p) => p.theme.radii.sm};
   min-height: 3.5rem;
   display: flex;
   flex-direction: column;
@@ -80,8 +80,12 @@ const StatusIcon = styled.span`
   align-items: center;
 `;
 
-const Status = styled.span<{ color: string }>`
-  color: ${(p) => p.color};
+// color is optional: status text passes a semantic color; button labels omit
+// it and inherit the button's own text color (passing a literal here silently
+// overrides the control's styling — that's how Ping/Restart ended up
+// near-black-on-dark at 1.4:1 contrast).
+const Status = styled.span<{ color?: string }>`
+  color: ${(p) => p.color || 'inherit'};
   font-weight: 500;
 `;
 
@@ -102,7 +106,7 @@ export const StatusIconText = (props: {
 const IconText = (p: {
   icon: React.ReactNode;
   text: string;
-  color: string;
+  color?: string;
 }) => {
   return (
     <Flex.Row align="center" gap="0.5rem">
@@ -127,7 +131,7 @@ const Port = styled.span`
 
 const ProgressBarContainer = styled.div`
   background: ${(p) => p.theme.colors.morMain};
-  border-radius: 4px;
+  border-radius: ${(p) => p.theme.radii.sm};
   padding: 0;
   border: 2px solid ${(p) => p.theme.colors.morMain};
 `;
@@ -138,8 +142,9 @@ const ProgressBar = styled.div.attrs<{ progress: number }>(({ progress }) => ({
   },
 }))<{ progress: number }>`
   background: ${(p) => p.theme.colors.primary};
+  border-radius: ${(p) => p.theme.radii.pill};
   height: 3px;
-  border-radius: 4px;
+  border-radius: ${(p) => p.theme.radii.sm};
   margin: 0;
 `;
 
@@ -152,6 +157,7 @@ const Error = styled.div`
 const LogsButton = styled.button`
   background: none;
   border: none;
+  border-radius: ${(p) => p.theme.radii.sm};
   color: ${(p) => p.theme.colors.dark};
   font-size: 0.875em;
   padding: 0.5rem 0;
@@ -170,7 +176,7 @@ const LogsButton = styled.button`
 const ProcessLogs = styled.pre`
   background: ${(p) => p.theme.colors.copy};
   padding: 1rem;
-  border-radius: 4px;
+  border-radius: ${(p) => p.theme.radii.sm};
   margin-top: 0.5rem;
   font-size: 0.875em;
   white-space: pre-wrap;
@@ -200,17 +206,51 @@ export const DownloadItemComponent: FC<{ item: DownloadItem }> = ({ item }) => {
   );
 };
 
-const RestartBtn = styled(Btn)`
-  padding: 0rem 0.5rem;
-  font-size: 1.3rem;
-  background-color: ${(p) => p.theme.colors.warning};
+// Ping and Restart are quiet diagnostic actions on an advanced panel, but they
+// were rendered as loud solid fills: Ping in brand green (which is reserved for
+// primary actions) and Restart in `warning` amber — and amber MEANS something in
+// this palette. A restart is not a warning, so colouring it like one taught the
+// user to distrust the one colour that should mean "pay attention". Both are now
+// quiet glass buttons that sit under the status they belong to.
+// These sit ON a glass card, so a glass fill (4% white) plus secondary text put
+// glass on glass and the buttons read as disabled — which is worse than the loud
+// amber they replaced: an action nobody can tell is clickable. They are outline
+// buttons instead: a border with enough contrast to hold an edge against the
+// card, and full-strength label text. Quiet, but unmistakably actionable.
+const ServiceBtn = styled(Btn)`
+  padding: 0.5rem 1.2rem;
+  font-size: ${(p) => p.theme.type.xs};
+  letter-spacing: 0.12em;
+  /* Was a white-tinted glass button on a dark panel: the label washed out to
+     near-invisible. Cyan tint + cyan label, like every other HUD control. */
+  /* Cyan-on-9%-cyan sits too close to the blue panel underneath — the label
+     washed out. Brightest text, a real edge, and a fill with enough weight to
+     separate the control from the surface it sits on. */
+  color: ${(p) => p.theme.colors.brandBright};
+  font-weight: 700;
+  background: rgba(94, 208, 255, 0.16);
+  border: 1px solid rgba(94, 208, 255, 0.65);
+  box-shadow: none;
+
+  svg {
+    color: ${(p) => p.theme.colors.brandBright};
+  }
+
+  &:hover:not(:disabled) {
+    color: ${(p) => p.theme.colors.brandBright};
+    background: rgba(94, 208, 255, 0.18);
+    box-shadow: 0 0 14px rgba(94, 208, 255, 0.22);
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.brand};
+    outline-offset: 2px;
+  }
 `;
 
-const PingBtn = styled(Btn)`
-  padding: 0rem 0.5rem;
-  font-size: 1.3rem;
-  background-color: ${(p) => p.theme.colors.morMain};
-`;
+const RestartBtn = styled(ServiceBtn)``;
+
+const PingBtn = styled(ServiceBtn)``;
 
 export const StartupItemComponent: FC<{
   item: StartupItem;
@@ -260,28 +300,26 @@ export const StartupItemComponent: FC<{
         )}
         {props.alwaysShowPingRestart || props.item.status === 'stopped' ? (
           <Flex.Row gap="0.5rem" justify="flex-end" grow="1">
+            {/* No color props: label + icons inherit ServiceBtn's own text
+                color (brandBright). morLight is a near-black panel tone — on
+                these dark buttons it measured 1.4:1. */}
             <PingBtn onClick={handlePing}>
               <IconText
                 icon={
                   isPinging ? (
-                    <SpinningLoaderIcon
-                      size={14}
-                      color={theme.colors.morLight}
-                    />
+                    <SpinningLoaderIcon size={14} color="currentColor" />
                   ) : (
-                    <IconBell size={14} color={theme.colors.morLight} />
+                    <IconBell size={14} color="currentColor" />
                   )
                 }
                 text="Ping"
-                color={theme.colors.morLight}
               />
             </PingBtn>
             {isManagedProcess && (
               <RestartBtn onClick={handleRestart}>
                 <IconText
-                  icon={<IconRefresh size={14} color={theme.colors.morLight} />}
+                  icon={<IconRefresh size={14} color="currentColor" />}
                   text="Restart"
-                  color={theme.colors.morLight}
                 />
               </RestartBtn>
             )}

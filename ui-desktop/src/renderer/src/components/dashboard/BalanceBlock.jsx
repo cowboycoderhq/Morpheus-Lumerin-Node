@@ -3,6 +3,7 @@ import withBalanceBlockState from '../../store/hocs/withBalanceBlockState';
 import { EtherIcon } from '../icons/EtherIcon';
 import { LumerinLogoFull } from '../icons/LumerinLogoFull';
 import { toUSD } from '../../store/utils/syncAmounts';
+import theme from '../../ui/theme';
 import { Balance } from './Balance';
 import {
   WalletBalanceHeader,
@@ -27,7 +28,7 @@ const WalletBalance = ({
           currency={mor.symbol}
           value={+mor.value}
           icon={
-            <LumerinLogoFull style={{ color: 'white', height: "2rem"}}/> 
+            <LumerinLogoFull style={{ color: theme.colors.moneySurfaceText, height: "2rem"}}/>
           }
           equivalentUSD={mor.usd}
           maxSignificantFractionDigits={0}

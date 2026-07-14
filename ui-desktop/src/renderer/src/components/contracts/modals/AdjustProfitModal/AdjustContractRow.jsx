@@ -55,7 +55,7 @@ export const Input = styled.input`
   width: 35%;
   font-size: 16px;
   font-weight: 400;
-  color: #0e4353;
+  color: ${(p) => p.theme.colors.textPrimary};
   min-width: 60px;
   ::placeholder {
     color: rgba(1, 67, 83, 0.56);

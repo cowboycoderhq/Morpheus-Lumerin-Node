@@ -1,185 +1,25 @@
-import styled from 'styled-components';
-
-import Card from 'react-bootstrap/Card';
 import { abbreviateAddress } from '../../utils';
-import { IconPinnedOff, IconCopy, IconFile, IconTag, IconHash } from '@tabler/icons-react';
+import { SECURE_BADGE_TOOLTIP } from '../chat/utils';
+import { IconPinnedOff, IconCopy, IconFile, IconTag, IconHash, IconShieldLock, IconBoxOff } from '@tabler/icons-react';
+import {
+  Grid,
+  Card,
+  CardBody,
+  CardHeader,
+  CardTitle,
+  IconButton,
+  InfoSection,
+  InfoRow,
+  InfoLabel,
+  InfoValue,
+  HashChip,
+  CopyIcon,
+  TagRow,
+  Tag,
+  SecureTag,
+  EmptyState,
+} from './ModelCard.styles';
 
-
-const CustomCard = styled(Card)`
-  background: linear-gradient(145deg, #244a47 0%, #1d3c39 100%) !important;
-  color: #21dc8f !important;
-  border: 1px solid rgba(33, 220, 143, 0.2) !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  transition: all 0.2s ease-in-out;
-  border-radius: 12px !important;
-  overflow: hidden;
-  
-  &:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25);
-    border-color: rgba(33, 220, 143, 0.4) !important;
-  }
-
-  p {
-    color: white !important;
-  }
-
-  .card-title {
-    font-weight: 600;
-    font-size: 1.3rem;
-    letter-spacing: 0.02em;
-    text-overflow: ellipsis;
-    color: #21dc8f;
-  }
-
-  .card-subtitle {
-    font-size: 0.85rem;
-    color: rgba(255, 255, 255, 0.7) !important;
-  }
-
-  .card-body {
-    padding: 1.5rem;
-  }
-
-  .model-info-section {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding-top: 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-  }
-
-  .model-info-item {
-    display: flex;
-    align-items: center;
-    font-size: 1.1rem;
-    padding: 4px 0;
-  }
-
-  .info-label {
-    font-weight: 600;
-    min-width: 90px;
-    color: rgba(255, 255, 255, 0.9);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .info-value {
-    color: white;
-    display: flex;
-    align-items: center;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    display: inline-block;
-  }
-
-  .icon-button {
-    cursor: pointer;
-    padding: 8px;
-    border-radius: 50%;
-    transition: all 0.2s;
-    background: rgba(255, 255, 255, 0.05);
-    color: rgba(255, 255, 255, 0.8);
-    
-    &:hover {
-      background: rgba(255, 0, 0, 0.15);
-      color: #ff6b6b;
-      transform: rotate(8deg);
-    }
-  }
-  
-  .copy-button {
-    background: rgba(33, 220, 143, 0.15);
-    color: white;
-    padding: 4px 8px;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    cursor: pointer;
-    margin-left: 10px;
-    transition: all 0.2s;
-    
-    &:hover {
-      background: rgba(33, 220, 143, 0.3);
-    }
-    
-    svg {
-      margin-right: 4px;
-    }
-  }
-  
-  .tag-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .tag-item {
-    background: rgba(33, 220, 143, 0.15);
-    padding: 4px 8px;
-    border-radius: 6px;
-    font-size: 1rem;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    height: 22px;
-    line-height: 1;
-    transition: all 0.2s;
-    border: 1px solid rgba(33, 220, 143, 0.1);
-    
-    &:hover {
-      background: rgba(33, 220, 143, 0.25);
-      transform: translateY(-2px);
-    }
-  }
-  
-  .monospace {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.85rem;
-    letter-spacing: -0.03em;
-  }
-  
-  .hash-container {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 6px;
-    padding: 6px 10px;
-    display: flex;
-    align-items: center;
-    font-size: 1.1rem;
-  }
-`;
-
-const Container = styled.div`
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: 28px;
-  max-height: 75vh;
-  padding: 8px 4px;
-  overflow-y: auto;
-  
-  &::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-  
-  &::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.1);
-    border-radius: 4px;
-  }
-  
-  &::-webkit-scrollbar-thumb {
-    background: rgba(33, 220, 143, 0.3);
-    border-radius: 4px;
-  }
-  
-  &::-webkit-scrollbar-thumb:hover {
-    background: rgba(33, 220, 143, 0.5);
-  }
-`;
 
 interface PinnedFile {
   fileCID: string;
@@ -238,110 +78,122 @@ function ModelCard({ model, toasts, unpinFile }: { model: PinnedFile, toasts: an
     }
   };
 
+  // TEE ("tee") is a security attribute, not a family tag — surfaced as its
+  // own Secure pill (same copy/treatment as the chat model picker) instead of
+  // a raw tag string.
+  const isSecure = (model.tags || []).some((t) => String(t).toLowerCase().trim() === 'tee');
+  const visibleTags = (model.tags || []).filter(
+    (t) => String(t).toLowerCase().trim() !== 'tee',
+  );
+
   return (
-    <CustomCard style={{ width: '36rem' }}>
-      <Card.Body>
-        <Card.Title
-          as={'div'}
-          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-        >
-          <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', maxWidth: '90%' }}>
-            {model.fileName || "Unnamed File"}
-          </span>
-          <IconPinnedOff
-            className="icon-button"
-            style={{ width: '2.5rem', height: '2.5rem' }}
+    <Card>
+      <CardBody>
+        <CardHeader>
+          <CardTitle>{model.fileName || "Unnamed File"}</CardTitle>
+          <IconButton
+            $danger
             onClick={onUnpinFile}
-          />
-        </Card.Title>
+            aria-label="Unpin file"
+            title="Unpin file"
+          >
+            <IconPinnedOff size={18} />
+          </IconButton>
+        </CardHeader>
 
-        <div className="model-info-section">
-        <div className="model-info-item">
-            <span className="info-label">
+        {isSecure && (
+          <TagRow style={{ marginBottom: '0.6rem' }}>
+            <SecureTag title={SECURE_BADGE_TOOLTIP}>
+              <IconShieldLock size={13} strokeWidth={2.2} />
+              Secure
+            </SecureTag>
+          </TagRow>
+        )}
+
+        <InfoSection>
+          <InfoRow>
+            <InfoLabel>
               <IconHash size={16} strokeWidth={2} />
-              CID:</span>
-              <div className="info-value">
-              <span className="hash-container monospace">
+              CID
+            </InfoLabel>
+            <InfoValue>
+              <HashChip>
                 {abbreviateAddress(model.metadataCID, 6)}
-                <IconCopy
-                  style={{ width: '1rem', height: '1rem', marginLeft: '8px', cursor: 'pointer', opacity: 0.8 }}
-                  onClick={() => copyCID()}
-                />
-              </span>
-            </div>
-          </div>
+                <CopyIcon onClick={() => copyCID()}>
+                  <IconCopy size={14} />
+                </CopyIcon>
+              </HashChip>
+            </InfoValue>
+          </InfoRow>
 
-          <div className="model-info-item">
-            <span className="info-label">
+          <InfoRow>
+            <InfoLabel>
               <IconHash size={16} strokeWidth={2} />
-              CID Hash:</span>
-            <div className="info-value">
-              <span className="hash-container monospace">
+              CID hash
+            </InfoLabel>
+            <InfoValue>
+              <HashChip>
                 {abbreviateAddress(model.metadataCIDHash, 6)}
-                <IconCopy
-                  style={{ width: '1rem', height: '1rem', marginLeft: '8px', cursor: 'pointer', opacity: 0.8 }}
-                  onClick={() => copyHash()}
-                />
-              </span>
-            </div>
-          </div>
-          
+                <CopyIcon onClick={() => copyHash()}>
+                  <IconCopy size={14} />
+                </CopyIcon>
+              </HashChip>
+            </InfoValue>
+          </InfoRow>
+
           {model.fileSize ? (
-            <div className="model-info-item">
-              <span className="info-label">
+            <InfoRow>
+              <InfoLabel>
                 <IconFile size={16} strokeWidth={2} />
-                Size:
-              </span>
-              <span className="info-value">{formatFileSize(model.fileSize)}</span>
-            </div>
+                Size
+              </InfoLabel>
+              <InfoValue>{formatFileSize(model.fileSize)}</InfoValue>
+            </InfoRow>
           ) : null}
 
           {model.modelName ? (
-            <div className="model-info-item">
-              <span className="info-label">
+            <InfoRow>
+              <InfoLabel>
                 <IconHash size={16} strokeWidth={2} />
-                Name:</span>
-              <span className="info-value">{model.modelName}</span>
-            </div>
+                Name
+              </InfoLabel>
+              <InfoValue>{model.modelName}</InfoValue>
+            </InfoRow>
           ) : null}
 
           {model.id && model.id.length > 2 ? (
-            <div className="model-info-item">
-              <span className="info-label">
+            <InfoRow>
+              <InfoLabel>
                 <IconHash size={16} strokeWidth={2} />
-                ID:</span>
-              <div className="info-value">
-              <span className="hash-container monospace">
-                {abbreviateAddress(model.id, 6)}
-                <IconCopy
-                  style={{ width: '1rem', height: '1rem', marginLeft: '8px', cursor: 'pointer', opacity: 0.8 }}
-                  onClick={() => copyId()}
-                  />
-                </span>
-              </div>
-            </div>
+                ID
+              </InfoLabel>
+              <InfoValue>
+                <HashChip>
+                  {abbreviateAddress(model.id, 6)}
+                  <CopyIcon onClick={() => copyId()}>
+                    <IconCopy size={14} />
+                  </CopyIcon>
+                </HashChip>
+              </InfoValue>
+            </InfoRow>
           ) : null}
 
-          {model.tags && model.tags.length > 0 ? (
-            <div className="model-info-item">
-              <span className="info-label">
+          {visibleTags.length > 0 ? (
+            <InfoRow>
+              <InfoLabel>
                 <IconTag size={16} strokeWidth={2} />
-                Tags:
-              </span>
-              <div className="info-value">
-                <div className="tag-container">
-                  {model.tags.map((tag, index) => (
-                    <span key={index} className="tag-item">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
+                Tags
+              </InfoLabel>
+              <TagRow>
+                {visibleTags.map((tag, index) => (
+                  <Tag key={index}>{tag}</Tag>
+                ))}
+              </TagRow>
+            </InfoRow>
           ) : null}
-        </div>
-      </Card.Body>
-    </CustomCard>
+        </InfoSection>
+      </CardBody>
+    </Card>
   );
 }
 
@@ -352,27 +204,17 @@ function PinnedFilesTable({
   unpinFile
 }: any) {
   return (
-    <Container>
+    <Grid>
       {pinnedFiles?.length ?
         pinnedFiles.map(x => (
-          <div key={x.fileCIDHash}>
-            {ModelCard({ model: x, toasts, unpinFile })}
-          </div>
+          <ModelCard key={x.fileCIDHash} model={x} toasts={toasts} unpinFile={unpinFile} />
         )) :
-        <div style={{
-          width: '100%',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: '40px 0',
-          color: 'rgba(255, 255, 255, 0.6)',
-          fontSize: '1.1rem',
-          fontStyle: 'italic'
-        }}>
-          No pinned files found
-        </div>
+        <EmptyState>
+          <IconBoxOff size={36} strokeWidth={1.5} />
+          <div>No pinned files found</div>
+        </EmptyState>
       }
-    </Container>
+    </Grid>
   );
 }
 

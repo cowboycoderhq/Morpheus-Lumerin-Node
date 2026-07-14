@@ -1,16 +1,29 @@
 import { LayoutHeader } from '../common/LayoutHeader';
 import { View } from '../common/View';
-import { Sp } from '../common';
+import { Btn, Flex, Modal, Tabs, TextInput } from '../common';
 import withSettingsState from '../../store/hocs/withSettingsState';
-import { StyledBtn, Subtitle, StyledParagraph, Input } from '../tools/common';
 import { useContext, useEffect, useState } from 'react';
-import Tabs from 'react-bootstrap/esm/Tabs';
-import Tab from 'react-bootstrap/esm/Tab';
+import { IconRouter, IconServerCog, IconTrash } from '@tabler/icons-react';
 import { Client } from 'src/renderer/src/client';
 import { StartupItemComponent } from '@renderer/components/StartupItem';
 import withServicesState from '@renderer/store/hocs/withServicesState';
 import { LoadingState } from 'src/main/orchestrator/orchestrator.types';
 import { ToastsContext } from '@renderer/components/toasts';
+import {
+  ConfirmActions,
+  ConfirmBody,
+  ConfirmMessage,
+  DangerBtn,
+  FieldRow,
+  GhostBtn,
+  SectionCard,
+  SectionDescription,
+  SectionHeader,
+  SettingsCallout,
+  ToggleInput,
+  ToggleLabel,
+  ToggleRow,
+} from './Settings.styles';
 
 type CommonProps = {
   client: Client;
@@ -25,6 +38,7 @@ type CommonProps = {
 const Common = (props: CommonProps) => {
   const [ethNodeUrl, setEthUrl] = useState<string>('');
   const [useFailover, setUseFailover] = useState<boolean>(false);
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -40,55 +54,104 @@ const Common = (props: CommonProps) => {
 
   return (
     <>
-      <Sp mt={3}>
-        <Subtitle>Reset</Subtitle>
-        <StyledParagraph>Set up your wallet from scratch.</StyledParagraph>
-        <StyledBtn onClick={() => props.logout()}>Reset</StyledBtn>
-      </Sp>
-      <Sp mt={3}>
-        <Subtitle>Set Custom ETH Node</Subtitle>
-        <Input
-          id="eth-node-url"
-          placeholder={'{wss|https}://{url}'}
-          style={{ width: '500px', marginBottom: '1.5em', marginTop: '0' }}
-          value={ethNodeUrl}
-          onChange={(e) => setEthUrl(e.value)}
-        />
-        <StyledBtn onClick={() => props.updateEthNodeUrl(ethNodeUrl)}>
-          Set
-        </StyledBtn>
-      </Sp>
-      <Sp mt={3}>
-        <Subtitle>Failover Mechanism</Subtitle>
-        <StyledParagraph>
+      <SectionCard>
+        <Flex.Row align="center" gap="0.8rem">
+          <IconTrash size={20} stroke={1.75} color="currentColor" />
+          <SectionHeader>Reset Wallet</SectionHeader>
+        </Flex.Row>
+        <SectionDescription>
+          Remove this wallet from this device and set one up from scratch.
+          This does not touch any funds on-chain — but without your recovery
+          phrase, you won&apos;t be able to get back into this wallet.
+        </SectionDescription>
+        <SettingsCallout tone="warning">
+          This can&apos;t be undone. Make sure you&apos;ve saved your recovery
+          phrase somewhere safe before continuing.
+        </SettingsCallout>
+        <DangerBtn
+          data-testid="reset-wallet-btn"
+          onClick={() => setIsResetConfirmOpen(true)}
+        >
+          Reset Wallet
+        </DangerBtn>
+      </SectionCard>
+
+      <SectionCard>
+        <Flex.Row align="center" gap="0.8rem">
+          <IconServerCog size={20} stroke={1.75} color="currentColor" />
+          <SectionHeader>Custom ETH Node</SectionHeader>
+        </Flex.Row>
+        <SectionDescription>
+          Connect through your own Ethereum node instead of the default one.
+        </SectionDescription>
+        <SettingsCallout tone="info">
+          Advanced — most people can leave this blank and keep using the
+          default node.
+        </SettingsCallout>
+        <FieldRow>
+          <TextInput
+            id="eth-node-url"
+            label="Custom ETH Node URL"
+            placeholder={'{wss|https}://{url}'}
+            value={ethNodeUrl}
+            onChange={(e) => setEthUrl(e.value)}
+          />
+        </FieldRow>
+        <Btn onClick={() => props.updateEthNodeUrl(ethNodeUrl)}>Save</Btn>
+      </SectionCard>
+
+      <SectionCard>
+        <Flex.Row align="center" gap="0.8rem">
+          <IconRouter size={20} stroke={1.75} color="currentColor" />
+          <SectionHeader>Failover Mechanism</SectionHeader>
+        </Flex.Row>
+        <SectionDescription>
           A failover policy is applied when a provider is unable to service an
           open session. This policy ensures continuity by automatically
-          rerouting or reassigning sessions to an alternate provider, minimizing
-          service disruptions and maintaining a seamless user experience
-        </StyledParagraph>
-        <Sp mt={2} mb={2}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'left',
-            }}
-          >
-            <input
-              type="checkbox"
+          rerouting or reassigning sessions to an alternate provider,
+          minimizing service disruptions and maintaining a seamless user
+          experience.
+        </SectionDescription>
+        <FieldRow>
+          <ToggleRow htmlFor="use-default-failover-policy">
+            <ToggleInput
+              id="use-default-failover-policy"
               checked={useFailover}
-              onChange={(e) => {
-                setUseFailover(Boolean(e.target.checked));
-              }}
-              style={{ marginRight: '5px' }}
+              onChange={(e) => setUseFailover(Boolean(e.target.checked))}
             />
-            <div>Use Default Policy (set by proxy-router)</div>
-          </div>
-        </Sp>
-        <StyledBtn onClick={() => props.updateFailoverSetting(useFailover)}>
+            <ToggleLabel>Use Default Policy (set by proxy-router)</ToggleLabel>
+          </ToggleRow>
+        </FieldRow>
+        <Btn onClick={() => props.updateFailoverSetting(useFailover)}>
           Apply
-        </StyledBtn>
-      </Sp>
+        </Btn>
+      </SectionCard>
+
+      <Modal
+        variant="primary"
+        title="Reset Wallet?"
+        isOpen={isResetConfirmOpen}
+        onRequestClose={() => setIsResetConfirmOpen(false)}
+      >
+        <ConfirmBody data-testid="confirm-reset-wallet-modal">
+          <ConfirmMessage>
+            This removes your wallet from this device. If you haven&apos;t
+            saved your recovery phrase, any funds in this wallet will become
+            unreachable.
+          </ConfirmMessage>
+          <ConfirmActions>
+            <GhostBtn onClick={() => setIsResetConfirmOpen(false)}>
+              Cancel
+            </GhostBtn>
+            <DangerBtn
+              data-testid="confirm-reset-wallet-btn"
+              onClick={() => props.logout()}
+            >
+              Yes, reset wallet
+            </DangerBtn>
+          </ConfirmActions>
+        </ConfirmBody>
+      </Modal>
     </>
   );
 };
@@ -99,22 +162,38 @@ type SettingsProps = CommonProps & {
 
 const Settings = (props: SettingsProps) => {
   const toast = useContext(ToastsContext);
+  const [activeTab, setActiveTab] = useState('common');
 
   return (
     <View data-testid="agents-container">
       <LayoutHeader title="Settings" />
 
-      <Tabs defaultActiveKey="common" className="mb-3">
-        <Tab eventKey="common" title="Common">
-          <Common
-            client={props.client}
-            getConfig={props.getConfig}
-            logout={props.logout}
-            updateEthNodeUrl={props.updateEthNodeUrl}
-            updateFailoverSetting={props.updateFailoverSetting}
-          />
-        </Tab>
-        <Tab eventKey="services" title="Services">
+      <Tabs
+        active={activeTab}
+        onClick={(tab) => tab && setActiveTab(tab)}
+        items={[
+          { label: 'General', id: 'common' },
+          { label: 'Services', id: 'services' },
+        ]}
+      />
+
+      {activeTab === 'common' && (
+        <Common
+          client={props.client}
+          getConfig={props.getConfig}
+          logout={props.logout}
+          updateEthNodeUrl={props.updateEthNodeUrl}
+          updateFailoverSetting={props.updateFailoverSetting}
+        />
+      )}
+
+      {activeTab === 'services' && (
+        <SectionCard>
+          <SectionHeader>Services</SectionHeader>
+          <SectionDescription>
+            Advanced diagnostics for the background services that power your
+            node. Most people won&apos;t need to touch this.
+          </SectionDescription>
           {props.services.startup.map((item) => (
             <StartupItemComponent
               key={item.id}
@@ -135,8 +214,8 @@ const Settings = (props: SettingsProps) => {
               }}
             />
           ))}
-        </Tab>
-      </Tabs>
+        </SectionCard>
+      )}
     </View>
   );
 };

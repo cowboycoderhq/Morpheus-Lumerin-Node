@@ -21,7 +21,7 @@ export const Container = styled.div`
   /* react-bootstrap Tabs root */
   #history-tabs {
     flex-shrink: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid rgba(94, 208, 255, 0.22);
 
     .nav-link {
       color: rgba(255, 255, 255, 0.5);
@@ -72,7 +72,7 @@ export const Container = styled.div`
     }
     &::-webkit-scrollbar-thumb {
       background: rgba(255, 255, 255, 0.12);
-      border-radius: 3px;
+      border-radius: ${(p) => p.theme.radii.sm};
     }
   }
 `;
@@ -106,7 +106,7 @@ export const SearchWrapper = styled.div`
   flex-shrink: 0;
 
   .input-group {
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(94, 208, 255, 0.05);
     border-radius: 8px;
     overflow: hidden;
     border: 1px solid transparent;
@@ -163,17 +163,17 @@ export const HistoryItem = styled.div`
 `;
 
 export const HistoryEntryContainer = styled.div`
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(94, 208, 255, 0.04);
+  border: 1px solid rgba(94, 208, 255, 0.22);
   border-radius: 8px;
-  color: white;
+  color: ${(p) => p.theme.colors.textPrimary};
   margin: 0 0.4rem 1rem;
   cursor: pointer;
   padding: 1rem 1.2rem;
   transition: background 0.12s ease, border-color 0.12s ease;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(94, 208, 255, 0.08);
     border-color: rgba(255, 255, 255, 0.12);
   }
 `;
@@ -228,7 +228,7 @@ export const HistoryEntryTitle = styled.div`
   }
 
   &:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(94, 208, 255, 0.06);
     color: rgba(255, 255, 255, 0.95);
     .icons {
       opacity: 1;
@@ -236,7 +236,7 @@ export const HistoryEntryTitle = styled.div`
   }
 
   &[data-active='true'] {
-    background: rgba(33, 220, 143, 0.1);
+    background: rgba(94, 208, 255, 0.1);
     color: ${(p) => p.theme.colors.morMain};
     .icons {
       opacity: 1;
@@ -258,7 +258,7 @@ export const CloseBtn = styled(Btn)`
 `;
 
 export const Duration = styled.div`
-  color: white;
+  color: ${(p) => p.theme.colors.textPrimary};
 `;
 
 export const IconsContainer = styled.div`
@@ -287,11 +287,11 @@ export const IconButton = styled.button`
   justify-content: center;
   color: inherit;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: ${(p) => p.theme.radii.sm};
   transition: background 0.12s ease, color 0.12s ease;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(94, 208, 255, 0.08);
     color: rgba(255, 255, 255, 1);
   }
 
@@ -325,7 +325,7 @@ export const ChangeTitleContainer = styled.div`
     color: rgba(255, 255, 255, 0.95);
     border: none;
     border-bottom: 1px solid ${(p) => p.theme.colors.morMain}40;
-    border-radius: 0;
+    border-radius: ${(p) => p.theme.radii.sm};
     box-shadow: none;
     padding: 0.4rem 0.2rem;
     font-size: 1.3rem;

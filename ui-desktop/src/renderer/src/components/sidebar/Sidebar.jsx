@@ -8,27 +8,44 @@ import { LumerinLogoFull } from '../icons/LumerinLogoFull';
 import { AddressHeader } from '../common/AddressHeader';
 import withSidebarState from '../../store/hocs/withSidebarState';
 
+// Ambient chrome, not a money surface — glass/glow are allowed here (B1).
+// Solid void-elevated base with a subtle glass sheen on top so the rail
+// stays legibly distinct from page content in both the overlay (<800px)
+// and docked (>=800px) layouts.
+// A WHITE sheen (5%->2%) over a translucent panel is what made the rail read as
+// a different, greyer material than the page it sits against — white lifts
+// toward grey, not toward the HUD's blue. The rail is now the same panel colour
+// as every other surface, lifted by a cyan hairline instead of by whitening it.
 const Container = styled.div`
-  background: rgba(5, 35, 22, 0.84);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(94, 208, 255, 0.04),
+      rgba(94, 208, 255, 0.01)
+    ),
+    rgba(9, 17, 28, 0.96);
+  backdrop-filter: blur(12px);
   width: 7rem;
   padding-bottom: 4.5rem;
   display: flex;
   flex-direction: column;
-  transition: width 0.2s;
+  transition: width ${p => p.theme.motion.duration.base} ${p =>
+    p.theme.motion.easing.standard};
   position: absolute;
   overflow: hidden;
   top: 0;
   left: 0;
   bottom: 0;
   z-index: 3;
-  border-right: 1px solid rgba(255, 255, 255, 0.16);
-  background: #03160e!important .sidebar-address {
+  border-right: 1px solid ${p => p.theme.colors.glassBorder};
+
+  .sidebar-address {
     display: none;
   }
 
   &:hover {
     width: 250px;
-    box-shadow: 0 0 16px 0 rgba(0, 0, 0, 0.2);
+    box-shadow: ${p => p.theme.shadows.elevated};
 
     .sidebar-address {
       display: block;
@@ -46,6 +63,10 @@ const Container = styled.div`
     &:hover {
       box-shadow: none;
     }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 `;
 

@@ -108,12 +108,13 @@ function parseSegments(text: string): Segment[] {
 }
 
 const ThinkingContainer = styled.div`
-  border-left: 2px solid rgba(33, 220, 143, 0.35);
+  border-left: 2px solid rgba(94, 208, 255, 0.35);
   margin: 6px 0 10px;
   padding: 2px 0 2px 12px;
 `;
 
 const ThinkingHeader = styled.button`
+  border-radius: ${(p) => p.theme.radii.sm};
   background: transparent;
   border: none;
   padding: 0;
@@ -145,8 +146,8 @@ const EmptyTag = styled.span`
   letter-spacing: 0.5px;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.5);
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 3px;
+  background: rgba(94, 208, 255, 0.08);
+  border-radius: ${(p) => p.theme.radii.sm};
 `;
 
 const ThinkingDots = styled.span`
@@ -194,6 +195,13 @@ const markdownComponents = {
         PreTag="div"
         language={match[1]}
         style={coldarkDark}
+        // The highlighter theme paints its own square block; round it and seat
+        // it on the HUD panel so a code fence is the same material as the rest.
+        customStyle={{
+          borderRadius: '12px',
+          border: '1px solid rgba(94, 208, 255, 0.22)',
+          background: 'rgba(9, 17, 28, 0.9)',
+        }}
       >
         {String(children).replace(/\n$/, '')}
       </SyntaxHighlighter>

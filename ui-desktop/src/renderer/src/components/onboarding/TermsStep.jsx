@@ -1,95 +1,86 @@
-import TermsAndConditions from '../../components/common/TermsAndConditions';
 import PropTypes from 'prop-types';
 import styled from 'styled-components';
 import React from 'react';
 
-import { AltLayout, AltLayoutNarrow, Btn, Sp } from '../common';
-import Message from './Message';
+import { AltLayoutNarrow, Btn, Checkbox, Sp } from '../common';
+import WizardChrome from './WizardChrome';
 
-const DisclaimerWarning = styled.div`
+const Summary = styled.p`
+  margin: 0 0 2.4rem;
+  font-size: ${p => p.theme.type.base};
+  line-height: 1.55;
+  color: ${p => p.theme.colors.textPrimary};
   text-align: left;
-  color: ${p => p.theme.colors.dark};
-  font-size: 16px;
-  margin-top: 16px;
-  text-align: justify;
 `;
 
-const DisclaimerMessage = styled.div`
-  width: 100%;
-  height: 130px;
-  border-radius: 2px;
-  background-color: rgba(0, 0, 0, 0.5);
-  color: ${p => p.theme.colors.dark};
-  overflow: auto;
-  font-size: 12px;
-  padding: 10px 16px 0 16px;
-  margin: 16px 0;
+const CheckboxRow = styled.label`
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  min-height: 40px;
+  padding: 0.4rem 0;
+  cursor: pointer;
+  font-size: ${p => p.theme.type.sm};
+  color: ${p => p.theme.colors.textPrimary};
 `;
 
-const P = styled.p`
-  color: ${p => p.theme.colors.dark};
-`;
+// Checkbox comes from common/ — see the note there on why a raw <input> can't
+// simply be tinted (unchecked, the platform still paints its white box).
 
-const Subtext = styled.span`
-  color: ${p => p.theme.colors.dark};
-  margin-left: 5px;
+const LicenseLink = styled.a`
+  color: ${p => p.theme.colors.secondaryLight};
+  text-decoration: underline;
+  cursor: pointer;
 `;
 
 const TermsStep = props => {
+  // Presentation shows ONE checkbox, but the (unchanged) onboarding state
+  // machine gates `onTermsAccepted` on BOTH `termsCheckbox` and
+  // `licenseCheckbox` being true — so a single toggle sets both via the
+  // existing `onInputChange` handler. No state-machine logic is touched.
   const onCheckboxToggle = e => {
-    props.onInputChange({ id: e.target.id, value: e.target.checked });
+    props.onInputChange({ id: 'termsCheckbox', value: e.target.checked });
+    props.onInputChange({ id: 'licenseCheckbox', value: e.target.checked });
   };
 
+  const accepted = props.termsCheckbox && props.licenseCheckbox;
+
   return (
-    <AltLayout title="Accept to Continue" data-testid="onboarding-container">
+    <WizardChrome title="Before You Begin" step={1} totalSteps={4} data-testid="onboarding-container">
       <AltLayoutNarrow>
-        <DisclaimerWarning>
-          Please read and accept these terms and conditions.
-        </DisclaimerWarning>
+        <Summary>
+          This is free, open-source software provided as-is, with no
+          warranty. By continuing, you accept the terms.{' '}
+          <LicenseLink onClick={props.onTermsLinkClick}>
+            Read the full license
+          </LicenseLink>
+          .
+        </Summary>
 
-        <DisclaimerMessage>
-          <TermsAndConditions ParagraphComponent={props => <P {...props} />} />
-        </DisclaimerMessage>
+        <CheckboxRow htmlFor="termsCheckbox">
+          <Checkbox
+            data-testid="accept-terms-chb"
+            onChange={onCheckboxToggle}
+            checked={accepted}
+            type="checkbox"
+            id="termsCheckbox"
+          />
+          I have read and accept the terms
+        </CheckboxRow>
 
-        <Message>
-          <div style={{ display: 'flex' }}>
-            <input
-              data-testid="accept-terms-chb"
-              onChange={onCheckboxToggle}
-              checked={props.termsCheckbox}
-              type="checkbox"
-              id="termsCheckbox"
-            />
-            <Subtext>I have read and accept these terms</Subtext>
-          </div>
-          <div style={{ display: 'flex' }}>
-            <input
-              data-testid="accept-license-chb"
-              onChange={onCheckboxToggle}
-              checked={props.licenseCheckbox}
-              type="checkbox"
-              id="licenseCheckbox"
-            />
-            <Subtext>I have read and accept the</Subtext>
-            <a onClick={props.onTermsLinkClick} style={{ marginLeft: '5px' }}>
-              software license
-            </a>
-          </div>
-        </Message>
-
-        <Sp mt={6}>
+        <Sp mt={5}>
           <Btn
             data-testid="accept-terms-btn"
             autoFocus
-            disabled={!props.licenseCheckbox || !props.termsCheckbox}
+            disabled={!accepted}
             onClick={props.onTermsAccepted}
             block
           >
-            Accept
+            Continue
           </Btn>
         </Sp>
       </AltLayoutNarrow>
-    </AltLayout>
+    </WizardChrome>
   );
 };
 

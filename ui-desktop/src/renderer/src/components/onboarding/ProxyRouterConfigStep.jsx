@@ -4,7 +4,7 @@ import React from 'react';
 import styled from 'styled-components';
 import { useForm } from 'react-hook-form';
 
-import { TextInput, AltLayout, Btn, Sp, AltLayoutNarrow } from '../common';
+import { TextInput, AltLayout, Btn, Sp, AltLayoutNarrow, Checkbox } from '../common';
 import SecondaryBtn from './SecondaryBtn';
 
 const Subtext = styled.span`
@@ -27,12 +27,11 @@ const ProxyRouterConfigStep = props => {
           data-testid="pr-config-form"
         >
           <div style={{ display: 'flex' }}>
-            <input
+            <Checkbox
               style={{ marginLeft: '0' }}
               data-testid="use-titan-lightning"
               onChange={onCheckboxToggle}
               checked={props.isTitanLightning}
-              type="checkbox"
               id="isTitanLightning"
             />
             <Subtext>Use Titan Pool for Lightning Payouts</Subtext>

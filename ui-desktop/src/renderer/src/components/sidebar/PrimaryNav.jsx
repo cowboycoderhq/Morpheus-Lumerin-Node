@@ -28,17 +28,37 @@ const Button = styled(NavLink)`
   min-height: 6rem;
   align-items: center;
   text-decoration: none;
-  color: white;
+  font-family: ${(p) => p.theme.fontUI};
+  color: ${(p) => p.theme.colors.textSecondary};
   padding: 1.6rem;
-  border-top: 1px solid transparent;
+  border-left: 2px solid transparent;
+  transition:
+    color ${(p) => p.theme.motion.duration.fast} ${(p) =>
+      p.theme.motion.easing.standard},
+    border-color ${(p) => p.theme.motion.duration.fast} ${(p) =>
+      p.theme.motion.easing.standard},
+    background-color ${(p) => p.theme.motion.duration.fast} ${(p) =>
+      p.theme.motion.easing.standard};
 
-  &:focus {
-    outline: none;
+  &:hover {
+    color: ${(p) => p.theme.colors.textPrimary};
+    background-color: ${(p) => p.theme.colors.glassSurfaceHover};
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.secondaryLight};
+    outline-offset: -2px;
   }
 
   &.active {
-    color: ${(p) => p.theme.colors.morMain};
+    color: ${(p) => p.theme.colors.brand};
+    border-left-color: ${(p) => p.theme.colors.brand};
+    background-color: ${(p) => p.theme.colors.glassSurfaceHover};
     pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 `;
 
@@ -46,35 +66,58 @@ const IconWrapper = styled.div`
   margin-right: 0.75rem;
   margin-left: 0.3rem;
   width: 3rem;
-  opacity: 0.5;
+  opacity: 0.7;
 
   ${Button}.active & {
     opacity: 1;
   }
 `;
 
+// The collapsed rail is 7rem wide and clips its overflow, so a label rendered
+// unconditionally showed up as a half-word — "W", "Ch", "Ag". A truncated word
+// is worse than no word: it reads as a rendering bug. Stay fully hidden until
+// the sidebar has actually expanded (on hover, or permanently at >=800px, where
+// it is a fixed 250px), and fade in with the width so the text never appears
+// mid-animation while it would still be cut off.
 const Label = styled.span`
   opacity: 0;
+  visibility: hidden;
   flex-grow: 1;
-  font-weight: 500;
   text-align: left;
+  /* HUD voice: uppercase, letter-spaced, monospace. */
+  font-size: ${(p) => p.theme.type.xs};
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   padding-bottom: 2px;
+  white-space: nowrap;
+  transition:
+    opacity ${(p) => p.theme.motion.duration.base} ${(p) =>
+      p.theme.motion.easing.standard},
+    visibility ${(p) => p.theme.motion.duration.base};
 
   ${({ parent }) => parent}:hover ${Button}.active & {
     opacity: 1;
+    visibility: visible;
   }
 
   ${({ parent }) => parent}:hover & {
     opacity: 1;
+    visibility: visible;
   }
 
   @media (min-width: 800px) {
-    opacity: 0.9;
+    opacity: 1;
+    visibility: visible;
 
     ${Button}.active & {
       opacity: 1;
       font-weight: 600;
     }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 `;
 

@@ -7,6 +7,7 @@ import { BaseBtn } from './common';
 import CloseIcon from './icons/CloseIcon';
 
 const Container = styled.div`
+  border-radius: ${(p) => p.theme.radii.lg};
   position: fixed;
   top: 0;
   z-index: 3;

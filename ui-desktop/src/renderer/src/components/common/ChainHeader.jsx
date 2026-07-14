@@ -53,9 +53,9 @@ const ChainContainer = styled.div`
     color: white;
     font-size: 1.2rem;
     padding: 0.6rem 1.2rem;
-    background: rgba(255,255,255,0.04);
+    background: rgba(94, 208, 255, 0.04);
     border-width: 1px;
-    border: 1px solid rgba(255,255,255,0.04);
+    border: 1px solid rgba(94, 208, 255, 0.22);
 `
 
 const getChainLogo = (chainId) => {

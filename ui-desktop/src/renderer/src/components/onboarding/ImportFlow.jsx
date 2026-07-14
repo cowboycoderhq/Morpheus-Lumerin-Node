@@ -2,9 +2,10 @@ import TermsAndConditions from '../common/TermsAndConditions';
 import PropTypes from 'prop-types';
 import styled from 'styled-components';
 import React, { useState } from 'react';
-import { TextInput, AltLayout, AltLayoutNarrow, Btn, Sp } from '../common';
+import { TextInput, AltLayoutNarrow, Btn, Sp } from '../common';
 import { abbreviateAddress } from '../../utils';
 
+import { WizardChrome } from './WizardChrome';
 import Message from './Message';
 
 const DisclaimerWarning = styled.div`
@@ -18,7 +19,7 @@ const DisclaimerWarning = styled.div`
 const DisclaimerMessage = styled.div`
   width: 100%;
   height: 130px;
-  border-radius: 2px;
+  border-radius: ${(p) => p.theme.radii.sm};
   background-color: rgba(0, 0, 0, 0.5);
   color: ${(p) => p.theme.colors.dark};
   overflow: auto;
@@ -52,7 +53,7 @@ const Select = styled.select`
   line-height: 1.2rem;
   font-size: 1.2rem;
   background: transparent;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   font-weight: bold;
   font: inherit;
   color: white;
@@ -75,8 +76,26 @@ export const ImportFlow = (props) => {
     setAddresses(addresses);
   };
 
+  // Back has two levels here. Picking an address is a sub-step *within* the
+  // import screen, so Back returns to the phrase/key entry (keeping what was
+  // typed) rather than dumping the user out of the import flow entirely. Only
+  // from entry does Back leave the branch, via the structural onBack.
+  const handleBack = () => {
+    if (isSelectingAddress) {
+      setIsSelectingAddress(false);
+      setAddresses([]);
+      setDerivationIndex(0);
+      return;
+    }
+    props.onBack?.();
+  };
+
   return (
-    <AltLayout title="Access to wallet" data-testid="onboarding-container">
+    <WizardChrome
+      title="Access to wallet"
+      onBack={handleBack}
+      data-testid="onboarding-container"
+    >
       <AltLayoutNarrow>
         {isSelectingAddress ? (
           <>
@@ -88,7 +107,7 @@ export const ImportFlow = (props) => {
 
             <AltLayoutNarrow>
               <Message>
-                Select one of 10 accounts derivied from mnemonic
+                Select one of 10 accounts derived from mnemonic
               </Message>
             </AltLayoutNarrow>
             <Sp mt={3}>
@@ -208,7 +227,7 @@ export const ImportFlow = (props) => {
           </Sp>
         )}
       </AltLayoutNarrow>
-    </AltLayout>
+    </WizardChrome>
   );
 };
 

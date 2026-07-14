@@ -11,16 +11,16 @@ import styled from 'styled-components';
 
 const BidTable = styled(Table)`
     text-align: center!important;
-    border: 0.5px solid#21dc8f!important;
+    border: 0.5px solid#6fd6ff!important;
 
     th {
         background: #244a47!important;
-        color: #21dc8f!important;
+        color: #6fd6ff!important;
     }
 
     td {
         background: #244a47!important;
-        color: #21dc8f!important;
+        color: #6fd6ff!important;
         padding: 12px 0!important
     }
 `
@@ -28,7 +28,7 @@ const BidTable = styled(Table)`
 const StartBtn = styled(Button)`    
     background: rgba(0,0,0, 0.9)!important;
     border-radius: 0!important;
-    border: 1px solid #21dc8f!important;
+    border: 1px solid #6fd6ff!important;
 `
 
 function renderTable({ onStart, bids, providers }) {
