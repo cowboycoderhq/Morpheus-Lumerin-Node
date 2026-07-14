@@ -351,7 +351,7 @@ func start() error {
 		if !blockchainapi.IsTeeModel(tags) {
 			continue
 		}
-		attestURL, err := attestation.DeriveAttestationURL(mc.ApiURL)
+		attestURL, err := attestation.DeriveBackendAttestationURL(mc.ApiURL)
 		if err != nil {
 			appLog.Warnf("cannot derive attestation URL for model %s: %s", modelIDs[i].Hex(), err)
 			continue

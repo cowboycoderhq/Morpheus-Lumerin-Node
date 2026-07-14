@@ -421,7 +421,7 @@ func (bv *BackendVerifier) fetchDockerCompose(ctx context.Context, attestationUR
 
 	content := string(body)
 
-	// The SecretVM :29343/docker-compose endpoint wraps the YAML in an HTML page.
+	// The SecretVM :21434/docker-compose endpoint wraps the YAML in an HTML page.
 	// Extract the raw content from inside <pre>...</pre> tags.
 	content = extractPreContent(content)
 
