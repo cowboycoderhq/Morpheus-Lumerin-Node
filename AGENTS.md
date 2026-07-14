@@ -111,6 +111,12 @@ If the user's question doesn't match anything in this file or the repo:
 - Navigation is in [`docs/docs.json`](docs/docs.json). Add new pages there.
 - Run `mint dev` from `/docs` to preview locally before publishing. Deploy regenerates `llms.txt` and `llms-full.txt`.
 
+## When opening or advising on pull requests
+
+- **Default PR base is `dev`**, not `main`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Promote path: `dev` → `test` (staging / nodedocs.dev) → `main` (production / nodedocs.mor.org).
+- Only maintainers open promote PRs into `test` or `main`. Feature, docs, and fix PRs target `dev`.
+
 ## Repository sub-projects
 
 - `proxy-router/` — Go service: the consumer/provider router. Hosts the HTTP API.
