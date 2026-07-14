@@ -44,10 +44,14 @@ func (c *collateralField) UnmarshalJSON(data []byte) error {
 }
 
 const (
-	AttestationPort     = "29343"
-	DefaultPortalURL    = "https://secretai.scrtlabs.com/api/quote-parse"
-	DefaultPortalURLSEV = "https://secretai.scrtlabs.com/api/quote-parse-sev"
-	VerifyTimeout       = 30 * time.Second
+	// AttestationPort is Phase 1 (consumer → P-Node): SecretVM host attestation.
+	AttestationPort = "29343"
+	// BackendAttestationPort is Phase 2 (P-Node → backend): SecretAI GPU/LLM TEE
+	// attestation co-located with the inference endpoint.
+	BackendAttestationPort = "21434"
+	DefaultPortalURL       = "https://secretai.scrtlabs.com/api/quote-parse"
+	DefaultPortalURLSEV    = "https://secretai.scrtlabs.com/api/quote-parse-sev"
+	VerifyTimeout          = 30 * time.Second
 )
 
 // deriveSEVPortalURL returns the SEV-specific portal URL by appending "-sev"
@@ -606,24 +610,35 @@ func qf(q *QuoteFields, field string) string {
 	}
 }
 
-// DeriveAttestationURL constructs the SecretVM attestation base URL from an endpoint.
+// DeriveAttestationURL constructs the Phase 1 SecretVM host attestation base URL.
 // Input format: "host:port" or "https://host:port/path"
 // Output format: "https://host:29343"
 func DeriveAttestationURL(endpoint string) (string, error) {
+	return deriveAttestationURLWithPort(endpoint, AttestationPort)
+}
+
+// DeriveBackendAttestationURL constructs the Phase 2 backend TEE attestation base URL.
+// Input format: "host:port" or "https://host:port/path"
+// Output format: "https://host:21434"
+func DeriveBackendAttestationURL(endpoint string) (string, error) {
+	return deriveAttestationURLWithPort(endpoint, BackendAttestationPort)
+}
+
+func deriveAttestationURLWithPort(endpoint, port string) (string, error) {
 	if strings.Contains(endpoint, "://") {
 		parsed, err := url.Parse(endpoint)
 		if err != nil {
 			return "", fmt.Errorf("invalid endpoint URL: %w", err)
 		}
 		host := parsed.Hostname()
-		return fmt.Sprintf("https://%s:%s", host, AttestationPort), nil
+		return fmt.Sprintf("https://%s:%s", host, port), nil
 	}
 
 	host, _, err := net.SplitHostPort(endpoint)
 	if err != nil {
 		host = endpoint
 	}
-	return fmt.Sprintf("https://%s:%s", host, AttestationPort), nil
+	return fmt.Sprintf("https://%s:%s", host, port), nil
 }
 
 // deriveAttestationURL is the old unexported alias kept for internal compatibility.
