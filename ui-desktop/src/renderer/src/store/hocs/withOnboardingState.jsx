@@ -162,8 +162,16 @@ const withOnboardingState = WrappedComponent => {
         privateKey: ''
       };
 
-      if(this.state.userPrivateKey) {
-        payload.privateKey = this.state.userPrivateKey;
+      if (this.state.userPrivateKey) {
+        // The import field accepts either a private key or a recovery phrase.
+        // A phrase contains whitespace and must go to the mnemonic endpoint;
+        // the hex-only privateKey endpoint would reject it. Route by content.
+        const entered = String(this.state.userPrivateKey).trim();
+        if (/\s/.test(entered)) {
+          payload.mnemonic = utils.sanitizeMnemonic(entered);
+        } else {
+          payload.privateKey = entered;
+        }
       }
       else {
         payload.mnemonic = this.state.useUserMnemonic
