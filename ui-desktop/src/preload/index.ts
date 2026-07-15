@@ -49,6 +49,16 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('openLink', openLink)
     contextBridge.exposeInMainWorld('getAppVersion', getAppVersion)
     contextBridge.exposeInMainWorld('copyToClipboard', copyToClipboard)
+
+    // Dev-console hygiene: React prints "Download the React DevTools…" on
+    // every boot when no devtools hook exists. Predeclare a disabled hook so
+    // the message never fires (the devtools extension is off by default here
+    // anyway — it crashes relaunched dev renderers, see main/index.ts).
+    if (process.env.NODE_ENV === 'development') {
+      contextBridge.exposeInMainWorld('__REACT_DEVTOOLS_GLOBAL_HOOK__', {
+        isDisabled: true
+      })
+    }
     
     // contextBridge.exposeInMainWorld('isDev', !remote.app.isPackaged)
     contextBridge.exposeInMainWorld('isDev', true)
