@@ -286,13 +286,25 @@ function hasModality(tags: any[] = [], modality: string) {
   return tags.some((t: any) => String(t).toLowerCase() === modality);
 }
 
+// Search used to be a single contiguous substring test, so the separators in a
+// model's name silently decided whether you could find it: "deepseek" matched
+// `deepseek-v4-pro` but "deepseek v4 pro" matched nothing, because the hyphens
+// are not spaces and nobody types the hyphens. Flatten every separator to a
+// space on both sides and match on tokens in any order.
+const normalize = (s: any) =>
+  String(s ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
 function matchesQuery(model: any, q: string) {
-  const needle = q.trim().toLowerCase();
-  if (!needle) return true;
-  if ((model.Name || '').toLowerCase().includes(needle)) return true;
-  return (model.Tags || []).some((t: any) =>
-    String(t).toLowerCase().includes(needle),
-  );
+  const query = normalize(q);
+  if (!query) return true;
+  const tokens = query.split(' ').filter(Boolean);
+  const haystack = `${normalize(model.Name)} ${(model.Tags || [])
+    .map(normalize)
+    .join(' ')}`.trim();
+  return tokens.every((t) => haystack.includes(t));
 }
 
 const ModelSelectionModal = ({
