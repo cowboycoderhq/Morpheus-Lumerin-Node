@@ -75,8 +75,24 @@ export const ImportFlow = (props) => {
     setAddresses(addresses);
   };
 
+  // Two-level back: from address selection, return to phrase entry and clear the
+  // derived accounts; from phrase entry, exit the import flow entirely.
+  const handleBack = () => {
+    if (isSelectingAddress) {
+      setIsSelectingAddress(false);
+      setAddresses([]);
+      setDerivationIndex(0);
+      return;
+    }
+    props.onBack?.();
+  };
+
   return (
-    <AltLayout title="Access to wallet" data-testid="onboarding-container">
+    <AltLayout
+      title="Access to wallet"
+      onBack={handleBack}
+      data-testid="onboarding-container"
+    >
       <AltLayoutNarrow>
         {isSelectingAddress ? (
           <>
@@ -88,7 +104,7 @@ export const ImportFlow = (props) => {
 
             <AltLayoutNarrow>
               <Message>
-                Select one of 10 accounts derivied from mnemonic
+                Select one of 10 accounts derived from mnemonic
               </Message>
             </AltLayoutNarrow>
             <Sp mt={3}>
@@ -116,8 +132,8 @@ export const ImportFlow = (props) => {
               Import your wallet using a private key or mnemonic
             </DisclaimerWarning>
             <Sp mt={2} mb={2}>
-              <Select onChange={(e) => setMode(e.target.value)}>
-                <option key={'mnemonic'} value={'mnemonic'} selected={true}>
+              <Select value={mode} onChange={(e) => setMode(e.target.value)}>
+                <option key={'mnemonic'} value={'mnemonic'}>
                   Mnemonic
                 </option>
                 <option key={'key'} value={'key'}>

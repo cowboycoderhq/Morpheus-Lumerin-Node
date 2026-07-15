@@ -45,7 +45,7 @@ const PasswordStep = props => {
   let tooltipTimeout;
 
   return (
-    <AltLayout title="Let`s get started" data-testid="onboarding-container">
+    <AltLayout title="Let`s get started" onBack={props.onBack} data-testid="onboarding-container">
       <AltLayoutNarrow>
         <form data-testid="pass-form">
           <PasswordMessage>
