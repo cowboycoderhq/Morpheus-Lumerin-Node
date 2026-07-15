@@ -19,10 +19,9 @@ const installExtension = (install as any).default as typeof install
 
 // Dev-console hygiene: the Electron CSP warning fires on every dev boot and
 // (by its own text) never shows in a packaged app. Suppressing it in dev only
-// keeps the console readable for real errors. NOTE the underlying gap is
-// real — no CSP is defined anywhere — but a correct policy needs its own pass
-// (connect-src must cover the router's streaming endpoints), tracked as a
-// follow-up, not silenced by this line.
+// keeps the console readable for real errors. Content-Security-Policy hardening
+// is tracked as a separate follow-up (a correct connect-src must cover the
+// router's streaming endpoints); this line only silences the dev-only warning.
 if (!app.isPackaged) {
   process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true'
 }
