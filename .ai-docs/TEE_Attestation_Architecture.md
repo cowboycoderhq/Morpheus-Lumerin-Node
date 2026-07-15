@@ -786,7 +786,7 @@ Phase 1 P-Node host attestation remains on `:29343`.
 **Priority:** Phase 2a — **shipped in v7.0.0**
 **PRs:** #699 (Phase 2 main), #700 (Phase 2 merge to test), #704 (error wrapping), #705 (request_id in logs), #708 / #709 (consolidate `tee` tag as sole TEE switch)
 
-See also: [`proxy-router/docs/tee-backend-verification.md`](../proxy-router/docs/tee-backend-verification.md) (developer reference with mermaid sequence + trust-chain diagrams).
+See also: [TEE backend verification](https://nodedocs.mor.org/providers/full/tee-backend-verification) (developer reference with mermaid sequence + trust-chain diagrams; source at `docs/providers/full/tee-backend-verification.mdx`).
 
 ---
 
@@ -911,7 +911,7 @@ See also: [`proxy-router/docs/tee-backend-verification.md`](../proxy-router/docs
 | Supply-chain hardening doc (in LMN) | `Morpheus-Lumerin-Node/.ai-docs/TEE_CICD_Supply_Chain_Hardening.md` |
 | Provider/consumer TEE guide (in LMN) | `Morpheus-Lumerin-Node/docs/02.3-proxy-router-tee.md` |
 | SecretVM provider quick-start (in LMN) | `Morpheus-Lumerin-Node/docs/02.4-proxy-router-secretvm-quickstart.md` |
-| **Phase 2 developer reference (in LMN)** | `Morpheus-Lumerin-Node/proxy-router/docs/tee-backend-verification.md` |
+| **Phase 2 developer reference (in LMN)** | `Morpheus-Lumerin-Node/docs/providers/full/tee-backend-verification.mdx` (published at https://nodedocs.mor.org/providers/full/tee-backend-verification) |
 | PR #644 — TEE image + BASE migration | https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/pull/644 |
 | PR #646 — Supply-chain hardening | https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/pull/646 |
 | PR #648 — Compose canonical format | https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/pull/648 |
