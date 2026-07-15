@@ -136,6 +136,38 @@ const SendContainer = styled.div`
   margin: 16px 0 0;
 `;
 
+const ConfirmPanel = styled.div`
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border-radius: 5px;
+  background: #03160e;
+  border: 1px solid ${(p) => p.theme.colors.morMain};
+`;
+const ConfirmLine = styled.div`
+  display: flex;
+  justify-content: space-between;
+  font-size: 1.3rem;
+`;
+const ConfirmLabel = styled.span`
+  color: ${(p) => p.theme.colors.dark};
+`;
+const ConfirmValue = styled.span`
+  color: ${(p) => p.theme.colors.morMain};
+  font-weight: 600;
+`;
+const ConfirmAddress = styled.div`
+  margin-top: 4px;
+  font-size: 1.25rem;
+  line-height: 1.45;
+  color: white;
+  word-break: break-all;
+`;
+const ConfirmWarning = styled.div`
+  margin-top: 8px;
+  font-size: 1.1rem;
+  color: ${(p) => p.theme.colors.helpertextGray};
+`;
+
 const LMR_MODE = 'coinAmount';
 const USD_MODE = 'usdAmount';
 
@@ -177,29 +209,46 @@ export function SendForm(props) {
 
   const [mode, setMode] = useState(LMR_MODE);
   const [isPending, setIsPending] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const context = useContext(ToastsContext);
   const selectedCurrency = props.selectedCurrency;
 
   const handleSendLmr = async (e) => {
     e.preventDefault();
+    if (isPending) return;
 
     const errorObj = props.validate();
     if (errorObj) {
-      const message =
-        errorObj.coinAmount ||
-        errorObj.toAddress ||
-        errorObj.gasLimit ||
-        errorObj.gasPrice;
+      const message = errorObj.coinAmount || errorObj.toAddress;
       context.toast('error', message);
+      setConfirming(false);
+      return;
+    }
+
+    // First press: show the confirmation, send nothing.
+    if (!confirming) {
+      setConfirming(true);
       return;
     }
 
     try {
       setIsPending(true);
-      await props.onSubmit(selectedCurrency.value);
+      // sendMor/sendEth reject on failure and resolve with a tx hash; a missing
+      // hash means the transfer did not go through, so never show success for it.
+      const tx = await props.onSubmit(selectedCurrency.value);
+      if (!tx) {
+        throw new Error(
+          'No transaction hash returned — the transfer did not go through',
+        );
+      }
+      setConfirming(false);
       props.onTabSwitch('success');
     } catch (err) {
-      context.toast('error', err.message);
+      context.toast('error', err.message || 'Transfer failed');
+      // The transfer may have reached the chain before the promise rejected
+      // (timeout / lost node after POST). Force a fresh review before any retry
+      // so an ambiguous failure can't be one-click re-broadcast.
+      setConfirming(false);
     }
 
     setIsPending(false);
@@ -207,6 +256,7 @@ export function SendForm(props) {
 
   const handleDestinationAddressInput = (e) => {
     e.preventDefault();
+    setConfirming(false);
 
     props.onInputChange(e.target);
     props.onDestinationAddressInput(e.target.value);
@@ -214,6 +264,7 @@ export function SendForm(props) {
 
   const handleAmountInput = (e) => {
     e.preventDefault();
+    setConfirming(false);
 
     const { value } = e.target;
     props.onInputChange({ id: mode, value });
@@ -311,12 +362,34 @@ export function SendForm(props) {
               : `${props.mor.value.toFixed(6)} ≈ ${props.mor.usd}`}
           </FooterLabel>
         </FooterRow>
+        {confirming && (
+          <ConfirmPanel data-testid="send-confirm">
+            <ConfirmLine>
+              <ConfirmLabel>Sending</ConfirmLabel>
+              <ConfirmValue>
+                {props.coinAmount} {selectedCurrency.label}
+              </ConfirmValue>
+            </ConfirmLine>
+            <ConfirmLine>
+              <ConfirmLabel>To</ConfirmLabel>
+            </ConfirmLine>
+            <ConfirmAddress>{props.toAddress}</ConfirmAddress>
+            <ConfirmWarning>
+              Check the address character by character. Transfers cannot be
+              undone or refunded.
+            </ConfirmWarning>
+          </ConfirmPanel>
+        )}
         <FooterRow>
           <SendContainer>
             {isPending && <Spinner size="16px" />}
             {!isPending && (
-              <SendBtn data-modal="success" onClick={handleSendLmr}>
-                Send now
+              <SendBtn
+                data-modal="success"
+                data-testid={confirming ? 'send-confirm-btn' : 'send-review-btn'}
+                onClick={handleSendLmr}
+              >
+                {confirming ? 'Confirm & send' : 'Review send'}
               </SendBtn>
             )}
           </SendContainer>
