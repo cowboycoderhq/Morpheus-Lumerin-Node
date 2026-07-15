@@ -6,10 +6,6 @@ import * as utils from './utils';
 import keys from './keys';
 import './sentry';
 
-// Where the Help button sends a user with a question. Kept as one named
-// constant so redirecting support (e.g. to your own support page for the
-// consumer build) is a one-line change, not a hunt through the client.
-export const SUPPORT_URL = 'https://discord.com/invite/ztPxPwwMuA';
 // This repo's OWN documentation. It is authored in `docs/` at the repo root
 // (Mintlify — see docs/docs.json) and published to nodedocs.mor.org; the
 // top-level README names it as the docs home ("The canonical documentation lives
@@ -83,7 +79,7 @@ const createClient = function (createStore) {
   // UNVERIFIED: mor.org blocks automated fetches (429) and no official invite
   // is published in the MorpheusAIs repos, so this invite code could not be
   // confirmed against a first-party source. Confirm before shipping to users.
-  const onHelpLinkClick = () => window.openLink(SUPPORT_URL);
+  const onHelpLinkClick = () => window.openLink(DOCS_URL);
 
   const onLinkClick = (url) => window.openLink(url);
 
