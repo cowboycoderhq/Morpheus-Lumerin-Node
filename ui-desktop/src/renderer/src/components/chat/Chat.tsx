@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 // import component 👇
 import Drawer from 'react-modern-drawer';
 import {
@@ -115,6 +116,7 @@ type ChatProps = {
 const Chat = (props: ChatProps) => {
   const chatBlockRef = useRef<null | HTMLDivElement>(null);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const initializedRef = useRef(false);
 
   const [promptInput, setPromptInput] = useState('');
@@ -436,23 +438,58 @@ const Chat = (props: ChatProps) => {
 
   const onOpenSession = async (isReopen: boolean, isDirectPay: boolean) => {
     setIsActionLoading(true);
+    // On reopen, selectedModel may be unset (a saved chat opened directly), so
+    // fall back to the chat's model rather than reading `.bids` off undefined.
+    const model =
+      selectedModel ?? chainData?.models?.find((m: any) => m.Id == chat?.modelId);
+    if (!model?.bids?.length) {
+      props.toasts.toast(
+        'error',
+        'This model is no longer available — pick another to continue.',
+      );
+      setIsActionLoading(false);
+      return;
+    }
+    if (!selectedModel) {
+      setSelectedModel(model);
+    }
     if (!isReopen) {
       setChat({
         id: generateHashId(),
         createdAt: new Date(),
-        modelId: selectedModel.Id,
+        modelId: model.Id,
       });
     }
 
-    const prices = selectedModel.bids.map((x) => Number(x.PricePerSecond));
+    const prices = model.bids.map((x) => Number(x.PricePerSecond));
     const maxPrice = Math.max(...prices);
     const duration = isDirectPay
       ? calculateAcceptableDurationForDirectPay(meta)
       : calculateAcceptableDuration(maxPrice, Number(balances.mor), meta);
 
+    // Don't attempt an on-chain open the wallet can't cover — it reverts with
+    // "transfer amount exceeds balance" and strands the user in a dead session.
+    // Skips itself when the stake can't be priced yet (meta not loaded) so it
+    // can never false-block a session it can't evaluate.
+    const stakeNeeded = isDirectPay
+      ? maxPrice * MIN_REQUEST_SECONDS
+      : Number(calculateStake(maxPrice, duration / 60));
+    if (
+      Number.isFinite(stakeNeeded) &&
+      stakeNeeded > 0 &&
+      Number(balances.mor) < stakeNeeded
+    ) {
+      props.toasts.toast(
+        'error',
+        'Not enough MOR to open this session — add MOR and try again.',
+      );
+      setIsActionLoading(false);
+      return;
+    }
+
     try {
       const openedSession = await props.onOpenSession({
-        modelId: selectedModel.Id,
+        modelId: model.Id,
         duration,
         isDirectPay,
       });
@@ -603,7 +640,7 @@ const Chat = (props: ChatProps) => {
 
     if (openSession) {
       setActiveSession(openSession);
-      const activeBid = selectedModel.bids.find(
+      const activeBid = selectedModel?.bids?.find(
         (b) => b.Id == openSession.BidID,
       );
       setSelectedBid(activeBid);
@@ -617,8 +654,10 @@ const Chat = (props: ChatProps) => {
   };
 
   const handleReopen = async (isDirectPay: boolean) => {
-    await onOpenSession(true, isDirectPay);
-    setIsReadonly(false);
+    const opened = await onOpenSession(true, isDirectPay);
+    if (opened) {
+      setIsReadonly(false);
+    }
   };
 
   const registerScrollEvent = (register) => {
@@ -1126,6 +1165,22 @@ const Chat = (props: ChatProps) => {
     return stake;
   };
 
+  // The stake depends on two async inputs — the model's bids AND the marketplace
+  // meta (supply/budget). Recompute whenever either lands, so a reopened session
+  // (opened without going through onCreateNewChat) gets the real requirement
+  // instead of the {min:0, max:0} default that makes the duration fall back to
+  // 24h. Idempotent with onCreateNewChat (same formula), so no conflict.
+  useEffect(() => {
+    const bids = selectedModel?.bids;
+    if (!bids?.length || !Number(meta.supply) || !Number(meta.budget)) return;
+    const maxPrice = Math.max(...bids.map((x: any) => Number(x.PricePerSecond)));
+    if (!Number.isFinite(maxPrice) || maxPrice <= 0) return;
+    setRequiredStake({
+      min: calculateStake(maxPrice, MIN_REQUEST_SECONDS / 60),
+      max: calculateStake(maxPrice, 24 * 60),
+    });
+  }, [selectedModel, meta.supply, meta.budget]);
+
   const onCreateNewChat = ({ modelId, isLocal }) => {
     abort = true;
     setMessages([]);
@@ -1205,40 +1260,68 @@ const Chat = (props: ChatProps) => {
     const isEnoughFundsForDirectPay =
       requiredStakeForDirectPay > 0 &&
       Number(balances.mor) >= requiredStakeForDirectPay;
+    // When neither path is affordable, offer a way forward (add MOR) instead of
+    // two dead, greyed-out buttons.
+    const cannotPayAtAll = stakeKnown && !isEnoughFunds && !isEnoughFundsForDirectPay;
 
     return (
       <>
         {isCreateSessionMode ? (
           <ChatIntroContainer>
             <ChatIntroInner>
-              <ChatIntroInnerTitle>Select payment method</ChatIntroInnerTitle>
-              <ChatIntroInnerText>
-                Stake MOR to get a free compute. Session will last from 5 mins
-                up to 24 hours depending on the amount you stake (min:{' '}
-                {formatMor(requiredStake.min, 18) ?? '…'} MOR, max:{' '}
-                {formatMor(requiredStake.max, 18) ?? '…'} MOR). You can claim your
-                stake in 24h.
-              </ChatIntroInnerText>
-              <div style={{ display: 'flex', justifyContent: 'center' }}>
-                <ChatIntroButton
-                  onClick={() => onOpenSession(false, false)}
-                  disabled={!isEnoughFunds}
-                >
-                  Stake MOR
-                </ChatIntroButton>
-              </div>
-              <ChatIntroInnerText>
-                Pay with your MOR tokens directly. The duration of the session
-                is limited only with your MOR balance.
-              </ChatIntroInnerText>
-              <div style={{ display: 'flex', justifyContent: 'center' }}>
-                <ChatIntroButton
-                  onClick={() => onOpenSession(false, true)}
-                  disabled={!isEnoughFundsForDirectPay}
-                >
-                  Direct Pay
-                </ChatIntroButton>
-              </div>
+              {cannotPayAtAll ? (
+                <>
+                  <ChatIntroInnerTitle>You’ll need some MOR</ChatIntroInnerTitle>
+                  <ChatIntroInnerText>
+                    Opening a session needs at least{' '}
+                    {formatMor(requiredStake.min, 18) ?? '…'} MOR to stake (or
+                    enough to pay a provider directly). Add MOR to your wallet,
+                    then come back to start a session.
+                  </ChatIntroInnerText>
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    <ChatIntroButton
+                      onClick={() =>
+                        navigate('/wallet', { state: { openModal: 'receive' } })
+                      }
+                    >
+                      Receive MOR
+                    </ChatIntroButton>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <ChatIntroInnerTitle>
+                    Select payment method
+                  </ChatIntroInnerTitle>
+                  <ChatIntroInnerText>
+                    Stake MOR to get a free compute. Session will last from 5 mins
+                    up to 24 hours depending on the amount you stake (min:{' '}
+                    {formatMor(requiredStake.min, 18) ?? '…'} MOR, max:{' '}
+                    {formatMor(requiredStake.max, 18) ?? '…'} MOR). You can claim
+                    your stake in 24h.
+                  </ChatIntroInnerText>
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    <ChatIntroButton
+                      onClick={() => onOpenSession(false, false)}
+                      disabled={!isEnoughFunds}
+                    >
+                      Stake MOR
+                    </ChatIntroButton>
+                  </div>
+                  <ChatIntroInnerText>
+                    Pay with your MOR tokens directly. The duration of the session
+                    is limited only with your MOR balance.
+                  </ChatIntroInnerText>
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    <ChatIntroButton
+                      onClick={() => onOpenSession(false, true)}
+                      disabled={!isEnoughFundsForDirectPay}
+                    >
+                      Direct Pay
+                    </ChatIntroButton>
+                  </div>
+                </>
+              )}
             </ChatIntroInner>
           </ChatIntroContainer>
         ) : (
