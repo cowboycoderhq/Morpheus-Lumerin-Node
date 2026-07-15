@@ -114,4 +114,4 @@ Each user-facing flow was exercised end-to-end:
 
 The repo's legacy `src/**/__tests__/*.test.jsx` reference a removed test runner
 (no jest config/deps/script remain), so they don't run; reviving that harness is
-out of scope for this PR. This kit is self-contained and does not depend on it.
+out of scope for this PR. This kit is independent of that legacy harness.
