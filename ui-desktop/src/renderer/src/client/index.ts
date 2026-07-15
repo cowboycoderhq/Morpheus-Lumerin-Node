@@ -6,6 +6,25 @@ import * as utils from './utils';
 import keys from './keys';
 import './sentry';
 
+// Where the Help button sends a user with a question. Kept as one named
+// constant so redirecting support (e.g. to your own support page for the
+// consumer build) is a one-line change, not a hunt through the client.
+export const SUPPORT_URL = 'https://discord.com/invite/ztPxPwwMuA';
+// This repo's OWN documentation. It is authored in `docs/` at the repo root
+// (Mintlify — see docs/docs.json) and published to nodedocs.mor.org; the
+// top-level README names it as the docs home ("The canonical documentation lives
+// at nodedocs.mor.org").
+//
+// The menu item is labelled "Documentation", so it lands on the ROOT rather than
+// a deep link: the site self-routes a new user into the consumer quickstart while
+// staying correct for a returning user hunting Troubleshooting or Reference.
+// Deep-linking the quickstart would drop an already-installed user onto install
+// instructions.
+//
+// NOT tech.mor.org (a separate ecosystem site, listed in these docs as one entry
+// under Ecosystem) and NOT apidocs.mor.org (developer/API reference only).
+export const DOCS_URL = 'https://nodedocs.mor.org';
+
 const createClient = function (createStore) {
   const reduxDevtoolsOptions = {
     // actionsBlacklist: ['price-updated$'],
@@ -57,7 +76,14 @@ const createClient = function (createStore) {
       'https://github.com/Lumerin-protocol/WalletDesktop/blob/main/LICENSE',
     );
 
-  const onHelpLinkClick = () => window.openLink('https://mor.org/fair-launch');
+  // Help used to open mor.org/fair-launch — a tokenomics page with nothing to
+  // say to a user who needs help. Point it at somewhere a question can actually
+  // be asked.
+  //
+  // UNVERIFIED: mor.org blocks automated fetches (429) and no official invite
+  // is published in the MorpheusAIs repos, so this invite code could not be
+  // confirmed against a first-party source. Confirm before shipping to users.
+  const onHelpLinkClick = () => window.openLink(SUPPORT_URL);
 
   const onLinkClick = (url) => window.openLink(url);
 
@@ -106,7 +132,16 @@ const createClient = function (createStore) {
       'refresh-all-contracts',
       120000,
     ),
-    onOnboardingCompleted: utils.forwardToMainProcess('onboarding-completed'),
+    // Onboarding imports the wallet into the router and reads it back — a chain-
+    // touching first-run operation that easily exceeds 10s on a cold machine.
+    // It was the ONLY such call left on the default 10s timeout, so the IPC gave
+    // up mid-import and surfaced "Failed to finish onboarding, please wait a few
+    // minutes and try again" — a timeout, not a real failure (the import was
+    // still completing in the background). Match the sibling chain reads (120s).
+    onOnboardingCompleted: utils.forwardToMainProcess(
+      'onboarding-completed',
+      120000,
+    ),
     suggestAddresses: utils.forwardToMainProcess('suggest-addresses'),
     getTokenGasLimit: utils.forwardToMainProcess('get-token-gas-limit'),
     validatePassword: utils.forwardToMainProcess('validate-password'),
@@ -124,7 +159,7 @@ const createClient = function (createStore) {
       'get-past-transactions',
       750000,
     ),
-    sendLmr: utils.forwardToMainProcess('send-lmr', 750000),
+    sendMor: utils.forwardToMainProcess('send-mor', 750000),
     sendEth: utils.forwardToMainProcess('send-eth', 750000),
     clearCache: utils.forwardToMainProcess('clear-cache'),
     handleClientSideError: utils.forwardToMainProcess('handle-client-error'),
@@ -140,6 +175,9 @@ const createClient = function (createStore) {
     getPrivateKey: utils.forwardToMainProcess('get-private-key'),
     getProxyRouterSettings: utils.forwardToMainProcess(
       'get-proxy-router-settings',
+    ),
+    getProxyRouterDerivedConfig: utils.forwardToMainProcess(
+      'get-proxy-router-derived-config',
     ),
     getDefaultCurrencySetting: utils.forwardToMainProcess(
       'get-default-currency-settings',
