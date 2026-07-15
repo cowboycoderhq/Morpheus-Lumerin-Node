@@ -8,6 +8,13 @@ import PasswordStep from './PasswordStep'
 import TermsStep from './TermsStep'
 import { ImportFlow } from './ImportFlow'
 import { SetCustomEthStep } from './SetCustomEthStep'
+import { AltLayout, LoadingBar } from '../common'
+
+const FinishingStep = () => (
+  <AltLayout title="Setting up your wallet…">
+    <LoadingBar />
+  </AltLayout>
+)
 
 const Onboarding = (props) => {
   const page = () => {
@@ -27,7 +34,9 @@ const Onboarding = (props) => {
       case 'set-custom-eth':
         return <SetCustomEthStep {...props} />
       default:
-        return null
+        // 'config-proxy-router' (and any unmapped step) lands here while the
+        // wallet finishes provisioning — show a loading screen, not a blank page.
+        return <FinishingStep />
     }
   }
 
