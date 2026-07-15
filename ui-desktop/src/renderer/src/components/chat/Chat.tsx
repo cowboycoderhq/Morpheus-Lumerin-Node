@@ -666,10 +666,23 @@ const Chat = (props: ChatProps) => {
     }
     headers['chat_id'] = chat?.id;
 
+    // Ship the full prior transcript so the model has conversation memory. dev
+    // sent only the new turn (the router was meant to prepend history but a type
+    // assertion silently dropped it), so every message was answered in
+    // isolation. The router's own prepend is disabled (PROXY_FORWARD_CHAT_CONTEXT
+    // = false) so these can't double up.
+    const context = messages
+      .filter(
+        (m) => m && m.text && (m.role === 'user' || m.role === 'assistant'),
+      )
+      .map((m) => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        content: m.text,
+      }));
     const incommingMessage = { role: 'user', content: message };
     const payload = {
       stream: true,
-      messages: [incommingMessage],
+      messages: [...context, incommingMessage],
     };
 
     const authHeaders = await props.client.getAuthHeaders();
