@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import styled from 'styled-components';
 
 import { ReceiveForm } from './ReceiveForm';
@@ -30,7 +31,9 @@ const Body = styled.div`
   z-index: 20;
   background-color: ${p => p.theme.colors.morLight};
   width: 400px;
-  height: 500px;
+  min-height: 500px;
+  max-height: 88vh;
+  overflow-y: auto;
   border-radius: 5px;
   padding: 2rem 3rem 2rem 3rem;
 `;
@@ -41,13 +44,13 @@ function TransactionModal(props) {
 
   const handlePropagation = e => e.stopPropagation();
 
-  const onSetDestinationAddress = e => setDestinationAddress(e.targetValue);
+  const onSetDestinationAddress = value => setDestinationAddress(value);
 
   if (!props.activeTab) {
     return <></>;
   }
 
-  return (
+  return createPortal(
     <Modal onClick={props.onRequestClose}>
       <Body onClick={handlePropagation}>
         {props.activeTab === 'receive' && <ReceiveForm {...props} />}
@@ -71,7 +74,8 @@ function TransactionModal(props) {
           />
         )}
       </Body>
-    </Modal>
+    </Modal>,
+    document.body,
   );
 }
 
