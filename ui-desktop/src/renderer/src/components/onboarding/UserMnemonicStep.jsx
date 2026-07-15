@@ -10,7 +10,7 @@ import AltLayoutNarrow from '../common/AltLayoutNarrow';
 const UserMnemonic = props => {
   const id = 'userMnemonic';
   return (
-    <AltLayout title="Recovery Mnemonic" data-testid="onboarding-container">
+    <AltLayout title="Recovery Mnemonic" onBack={props.onBack} data-testid="onboarding-container">
       <form data-testid="mnemonic-form" onSubmit={props.onMnemonicAccepted}>
         <AltLayoutNarrow>
           <Message>

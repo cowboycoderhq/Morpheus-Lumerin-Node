@@ -37,7 +37,7 @@ const Subtext = styled.span`
 export const SetCustomEthStep = props => {
 
   return (
-    <AltLayout title="ETH Node Url" data-testid="onboarding-container">
+    <AltLayout title="ETH Node Url" onBack={props.onBack} data-testid="onboarding-container">
       <AltLayoutNarrow>
         <DisclaimerWarning>
           Set Custom ETH node url that will be used for blockchain interactions instead of default. This can be set later in Settings

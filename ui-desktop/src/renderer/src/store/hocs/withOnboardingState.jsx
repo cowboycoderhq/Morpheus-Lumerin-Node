@@ -239,6 +239,35 @@ const withOnboardingState = WrappedComponent => {
       return 'copy-mnemonic';
     }
 
+    // Step-back: reverse only the single navigation flag that produced the
+    // current step (mirrors getCurrentStep's order). Entered secrets are left
+    // intact, so stepping back never re-generates a wallet or loses input.
+    onBack = () => {
+      switch (this.getCurrentStep()) {
+        case 'verify-mnemonic':
+          this.setState({ isMnemonicCopied: false });
+          return;
+        case 'copy-mnemonic':
+          this.setState({ isPasswordDefined: false });
+          return;
+        case 'define-password':
+          this.setState({ areTermsAccepted: false });
+          return;
+        case 'set-custom-eth':
+          this.setState({ useEthStep: false });
+          return;
+        case 'recover-from-mnemonic':
+          this.setState({ useUserMnemonic: false });
+          return;
+        case 'import-flow':
+          this.setState({ useImportFlow: false });
+          return;
+        default:
+          // ask-for-terms (first step) / config-proxy-router (terminal): no-op
+          return;
+      }
+    };
+
     render() {
       const getWordsAmount = phrase =>
         utils.sanitizeMnemonic(phrase || '').split(' ').length;
@@ -261,6 +290,7 @@ const withOnboardingState = WrappedComponent => {
           onInputChange={this.onInputChange}
           shouldSubmit={shouldSubmit}
           currentStep={this.getCurrentStep()}
+          onBack={this.onBack}
           getTooltip={getTooltip}
           onSuggestAddress={this.onSuggestAddress}
           onRunWithoutProxyRouter={this.onRunWithoutProxyRouter}
