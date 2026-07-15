@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   Modal as ModalBase,
@@ -37,7 +38,7 @@ function Modal({ children, onClose, bodyProps }) {
     onClose();
   };
 
-  return (
+  return createPortal(
     <ModalBase onClick={wrapClose} onMouseUp={handleMouseUp} ref={modalRef}>
       <Body
         {...bodyProps}
@@ -47,7 +48,8 @@ function Modal({ children, onClose, bodyProps }) {
         {CloseModal(e => wrapClose(e, true))}
         {children}
       </Body>
-    </ModalBase>
+    </ModalBase>,
+    document.body,
   );
 }
 
