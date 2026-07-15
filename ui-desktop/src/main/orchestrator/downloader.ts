@@ -45,19 +45,46 @@ export async function downloadFile(
         throw err
       })
 
+    // "It exists" is not "it is complete". The download itself writes to a temp
+    // file and only moves it into place when finished, so a truncated destination
+    // should be rare — but a zero-byte or partially-moved file makes this skip
+    // permanent: every retry short-circuits here and the service fails to start
+    // on a file that is not really there. Ask the server how big it should be and
+    // compare. (If the server will not say — some CDNs omit content-length on
+    // HEAD — fall back to the old behaviour rather than re-downloading a gigabyte
+    // on every launch.)
     if (fileExists) {
-      logger?.info(`File already exists at ${destinationPath}, skipping download`)
-      throttledOnProgress?.({
-        bytesDownloaded: bytesDownloaded,
-        totalBytes: totalBytes,
-        progress: 1,
-        status: 'downloading'
-      })
-      throttledOnProgress?.flush()
-      return
+      const localSize = await stat(destinationPath)
+        .then((st) => st.size)
+        .catch(() => 0)
+
+      let expected: number | null = null
+      try {
+        const head = await fetchWithTimeout(url, { method: 'HEAD' }, 15000)
+        expected = Number(head.headers.get('content-length')) || null
+      } catch {
+        expected = null // unreachable/no content-length — do not block on it
+      }
+
+      const incomplete = localSize === 0 || (expected !== null && localSize !== expected)
+      if (incomplete) {
+        logger?.info(
+          `File at ${destinationPath} is incomplete (${localSize} bytes, expected ${expected ?? '?'}) — re-downloading`
+        )
+        await fs.remove(destinationPath).catch(() => undefined)
+      } else {
+        logger?.info(`File already exists at ${destinationPath}, skipping download`)
+        throttledOnProgress?.({
+          bytesDownloaded,
+          totalBytes,
+          progress: 1,
+          status: 'downloading'
+        })
+        throttledOnProgress?.flush()
+        return
+      }
     }
 
-    // TODO: Verify if file updated (store metadata)
     const tempDestinationPath = getTempFilePath(destinationPath)
     await fs.ensureDir(path.dirname(tempDestinationPath))
     await writeFile(tempDestinationPath, '', { flag: 'w' })

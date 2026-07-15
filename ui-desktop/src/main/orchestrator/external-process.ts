@@ -69,7 +69,8 @@ export class ExternalProcess implements Process {
       await this.pinger?.ping(timeoutMs)
       this.setState('running', null)
     } catch (err) {
-      this.setState('stopped', 'Service is not available')
+      // Keep the probe's reason: for an external process it is all we have.
+      this.setState('stopped', `Service is not available: ${(err as Error).message}`)
       throw err
     }
   }
