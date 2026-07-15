@@ -41,6 +41,11 @@ const Agents = (props: ContainerProps & MappedProps) => {
       <ScrollContainer>
         <SubHeader>Access requests</SubHeader>
         <AgentList>
+          {pendingAgents.length === 0 && (
+            <div style={{ padding: '1.2rem 0', color: 'rgba(255,255,255,0.4)', fontSize: '1.3rem' }}>
+              No access requests right now.
+            </div>
+          )}
           {pendingAgents.map((agent) => (
             <AgentRowComp
               key={agent.username}
@@ -67,6 +72,11 @@ const Agents = (props: ContainerProps & MappedProps) => {
         </AgentList>
         <SubHeader>Allowance requests</SubHeader>
         <AgentList>
+          {allowanceRequests.length === 0 && (
+            <div style={{ padding: '1.2rem 0', color: 'rgba(255,255,255,0.4)', fontSize: '1.3rem' }}>
+              No allowance requests right now.
+            </div>
+          )}
           {allowanceRequests.map((agent) => (
             <AllowanceRowComp
               key={`${agent.username}-${agent.token}`}
@@ -97,6 +107,11 @@ const Agents = (props: ContainerProps & MappedProps) => {
         </AgentList>
         <SubHeader>All Agents</SubHeader>
         <AgentList>
+          {activeAgents.length === 0 && (
+            <div style={{ padding: '1.2rem 0', color: 'rgba(255,255,255,0.4)', fontSize: '1.3rem' }}>
+              No connected agents yet.
+            </div>
+          )}
           {activeAgents.map((agent) => (
             <AgentRowComp
               key={agent.username}

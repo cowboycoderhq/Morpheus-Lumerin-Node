@@ -71,7 +71,7 @@ const withProvidersState = WrappedComponent => {
     claimFunds = async (sessionId) => {
       try {
         const authHeaders = await this.props.client.getAuthHeaders();
-        const path = `${props.config.chain.localProxyRouterUrl}/proxy/sessions/${sessionId}/providerClaim`;
+        const path = `${this.props.config.chain.localProxyRouterUrl}/proxy/sessions/${sessionId}/providerClaim`;
         const response = await fetch(path, {
             method: "POST",
             headers: authHeaders
