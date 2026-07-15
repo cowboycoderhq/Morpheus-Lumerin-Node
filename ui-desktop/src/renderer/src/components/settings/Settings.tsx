@@ -25,6 +25,7 @@ type CommonProps = {
 const Common = (props: CommonProps) => {
   const [ethNodeUrl, setEthUrl] = useState<string>('');
   const [useFailover, setUseFailover] = useState<boolean>(false);
+  const [confirmingReset, setConfirmingReset] = useState<boolean>(false);
 
   useEffect(() => {
     (async () => {
@@ -43,7 +44,35 @@ const Common = (props: CommonProps) => {
       <Sp mt={3}>
         <Subtitle>Reset</Subtitle>
         <StyledParagraph>Set up your wallet from scratch.</StyledParagraph>
-        <StyledBtn onClick={() => props.logout()}>Reset</StyledBtn>
+        {!confirmingReset ? (
+          <StyledBtn
+            data-testid="reset-wallet-btn"
+            onClick={() => setConfirmingReset(true)}
+          >
+            Reset
+          </StyledBtn>
+        ) : (
+          <>
+            <StyledParagraph style={{ color: '#db2642' }}>
+              This erases the current wallet from this device. If you have not
+              saved its recovery phrase, its funds are lost forever.
+            </StyledParagraph>
+            <StyledBtn
+              data-testid="confirm-reset-wallet-btn"
+              style={{ backgroundColor: '#db2642', color: 'white' }}
+              onClick={() => props.logout()}
+            >
+              Erase wallet
+            </StyledBtn>
+            <StyledBtn
+              data-testid="cancel-reset-wallet-btn"
+              style={{ marginLeft: '8px' }}
+              onClick={() => setConfirmingReset(false)}
+            >
+              Cancel
+            </StyledBtn>
+          </>
+        )}
       </Sp>
       <Sp mt={3}>
         <Subtitle>Set Custom ETH Node</Subtitle>
