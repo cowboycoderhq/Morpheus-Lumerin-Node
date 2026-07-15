@@ -51,10 +51,10 @@ A consumer node should be able to **cryptographically verify**, before sending a
 **P-Node verifies its own backend LLM** (the gap previously "accepted" for Phase 1 is now closed without co-locating):
 
 - `BackendVerifier.AttestBackend` at startup — **DONE**
-  - Fetch backend CPU quote from `:29343/cpu`; verify via SecretAI portal
+  - Fetch backend CPU quote from `:21434/cpu`; verify via SecretAI portal
   - TLS binding: compare TLS cert SHA-256 with CPU quote `reportData[0:32]`
   - Workload verification: parse TDX quote, look up MRTD + RTMR0-2 in the published SecretVM TDX artifact registry CSV, replay RTMR3 using SHA-384 extend chain over `SHA-256(docker-compose)` + rootfs data
-  - GPU attestation: fetch from `:29343/gpu`, verify CPU-GPU binding via `reportData[32:64] == GPU nonce`
+  - GPU attestation: fetch from `:21434/gpu`, verify CPU-GPU binding via `reportData[32:64] == GPU nonce`
   - NVIDIA NRAS v4 API: submit GPU evidence for independent hardware validation (non-fatal if unreachable)
 - `BackendVerifier.FastVerifyBackend` on every prompt — **DONE**
   - Always re-fetches CPU quote (~50 ms), compares hash + TLS fingerprint against cached snapshot
@@ -559,8 +559,14 @@ The `test` environment uses custom deployment branch policies. The allowed branc
 
 **First successful end-to-end run:** https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/actions/runs/22969993910
 
-**Future: production deployment**
-Add a `Deploy-SecretVM-Prod` job bound to `environment: production`, triggered only on `main` branch, with its own set of secrets (`SECRETVM_API_KEY`, `SECRETVM_PROD_VM_UUID`, `SECRETVM_PROD_ENV`). Environment protection rules (reviewers, wait timer) can gate production deploys.
+**Production deployment**
+A `Deploy-SecretVM-Prod` job mirrors the test flow, bound to `environment: main`, triggered only on the `main` branch. Required secrets on the `main` GitHub Environment:
+
+| Secret | Value |
+|---|---|
+| `SECRETVM_API_KEY` | SCRT Labs API key (same account as test is fine) |
+| `SECRETVM_PROD_VM_UUID` | UUID of the production SecretVM |
+| `SECRETVM_PROD_ENV` | The 5 runtime secrets as a `.env` file, base64-encoded |
 
 **Security notes:**
 - The env file is decoded to `/tmp` and deleted immediately after `vm edit`
@@ -712,24 +718,26 @@ This is the Phase 2 capability that makes v7 the "full TEE" release. It closes t
 - `proxy-router/internal/aiengine/ai_engine.go` — returns a `PinnedHTTPClient` for TEE models; the client's `VerifyPeerCertificate` callback refuses any onward TLS cert whose SHA-256 doesn't match the attested fingerprint
 - `proxy-router/internal/proxyapi/controller_http.go` — `GET /v1/models/attestation` returns per-model attestation state (verified / pending / failed + workload-match / last-success timestamp / error detail)
 
-**Backend attestation endpoints (derived from each TEE model's `apiUrl` host + standard port 29343):**
-- `:29343/cpu` — raw TDX CPU quote hex
-- `:29343/gpu` — JSON containing `nonce`, `arch`, `evidence_list`
-- `:29343/docker-compose` — exact `docker-compose.yaml` loaded into the backend VM (used for RTMR3 replay)
+**Backend attestation endpoints (derived from each TEE model's `apiUrl` host + port 21434):**
+- `:21434/cpu` — raw TDX CPU quote hex
+- `:21434/gpu` — JSON containing `nonce`, `arch`, `evidence_list`
+- `:21434/docker-compose` — exact `docker-compose.yaml` loaded into the backend VM (used for RTMR3 replay)
+
+Phase 1 P-Node host attestation remains on `:29343`.
 
 **Full attestation sequence (`AttestBackend`):**
 ```
-1. GET :29343/cpu            → raw TDX quote
+1. GET :21434/cpu            → raw TDX quote
 2. POST quote to TEE_PORTAL_URL (quote-parse) → portal verification
 3. Extract reportData[0:32]   → compare with SHA-256 of live TLS cert
                                    → TLS binding proven
 4. if ArtifactRegistry loaded:
-     GET :29343/docker-compose
+     GET :21434/docker-compose
      Parse TDX quote: MRTD + RTMR0-3 + reportData
      Lookup (MRTD, RTMR0, RTMR1, RTMR2) in registry CSV → rootfs_data + secretvm_release
      Replay RTMR3 = SHA-384-extend-chain( SHA-256(docker-compose) + rootfs_data )
      if replayed RTMR3 != quote RTMR3 → fail (workload mismatch)
-5. GET :29343/gpu             → {nonce, arch, evidence_list}
+5. GET :21434/gpu             → {nonce, arch, evidence_list}
 6. Extract reportData[32:64]  → compare with GPU nonce
                                    → CPU-GPU binding proven
 7. if NRAS configured:
@@ -743,7 +751,7 @@ This is the Phase 2 capability that makes v7 the "full TEE" release. It closes t
 
 **Per-prompt fast verify (`FastVerifyBackend`):**
 - No TTL. Runs unconditionally on every inference prompt for a `tee`-tagged model (inside `proxy_receiver.SessionPrompt`, on the hot path).
-- Always re-fetches `:29343/cpu` (~50 ms TLS handshake).
+- Always re-fetches `:21434/cpu` (~50 ms TLS handshake).
 - `SHA-256(new_quote) == cached_quote_hash` AND `live_tls_fp == cached_tls_fp` → pass.
 - Quote-hash change → run full `AttestBackend` again (backend restart / redeploy).
 - TLS-fingerprint change → immediate hard fail, prompt refused (MITM signal).

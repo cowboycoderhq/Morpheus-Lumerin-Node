@@ -64,7 +64,7 @@ sequenceDiagram
 
     Note over P: AttestBackend begins
 
-    P->>B: GET :29343/cpu
+    P->>B: GET :21434/cpu
     B-->>P: CPU attestation quote (TDX)
 
     P->>S: POST /quote-parse (CPU quote)
@@ -73,7 +73,7 @@ sequenceDiagram
     Note over P: Extract TLS cert fingerprint<br/>Compare with reportData[0:32]
 
     alt Artifact Registry loaded
-        P->>B: GET :29343/docker-compose
+        P->>B: GET :21434/docker-compose
         B-->>P: docker-compose.yaml
 
         Note over P: Parse TDX quote:<br/>extract MRTD, RTMR0-3
@@ -86,7 +86,7 @@ sequenceDiagram
         Note over P: Compare calculated RTMR3<br/>vs quote RTMR3
     end
 
-    P->>B: GET :29343/gpu
+    P->>B: GET :21434/gpu
     B-->>P: GPU attestation JSON (nonce, arch, evidence_list)
 
     Note over P: Verify reportData[32:64] == GPU nonce<br/>(CPU-GPU binding)
@@ -101,7 +101,7 @@ sequenceDiagram
 
 ### Step-by-Step
 
-1. **Fetch CPU quote** -- The proxy-router requests the raw TDX attestation quote from the backend's attestation port (`:29343/cpu`).
+1. **Fetch CPU quote** -- The proxy-router requests the raw TDX attestation quote from the backend's attestation port (`:21434/cpu`).
 2. **Verify CPU quote** -- The quote is sent to the SecretAI Portal's `quote-parse` API, which performs cryptographic verification against Intel's root of trust.
 3. **TLS binding** -- The proxy-router extracts the TLS certificate fingerprint from the connection and compares it to the first 32 bytes of the quote's `reportData` field. A match proves the TLS endpoint is inside the attested TEE.
 4. **Workload verification** (if artifact registry is loaded):
@@ -110,7 +110,7 @@ sequenceDiagram
    - Look up MRTD + RTMR0-2 in the artifact registry to confirm this is a recognized SecretVM build.
    - Recalculate the expected RTMR3 from `SHA-256(docker-compose.yaml)` combined with `rootfs_data` using a SHA-384 extend chain.
    - Compare the calculated RTMR3 against the quote's RTMR3 to prove workload integrity.
-5. **Fetch GPU attestation** -- Retrieve GPU attestation data (JSON containing nonce, architecture, and evidence list) from `:29343/gpu`.
+5. **Fetch GPU attestation** -- Retrieve GPU attestation data (JSON containing nonce, architecture, and evidence list) from `:21434/gpu`.
 6. **CPU-GPU binding** -- Verify that the second 32 bytes of the CPU `reportData` match the GPU nonce, proving both attestations originate from the same machine and session.
 7. **NRAS verification** (if configured) -- Submit GPU evidence to NVIDIA's Remote Attestation Service for independent hardware validation. NRAS returns a signed JWT (Entity Attestation Token) confirming GPU authenticity.
 8. **Cache snapshot** -- Store the attestation result (quote hash, TLS fingerprint, workload status) for use by the fast verification path. The cache has no TTL -- it remains valid as long as the backend's CPU quote and TLS certificate haven't changed.
@@ -169,7 +169,7 @@ flowchart TD
     CACHE -- No --> REJECT[Error: model not attested]
     CACHE -- Yes --> STATUS{Status is passed?}
     STATUS -- No --> REJECT2[Error: attestation failed]
-    STATUS -- Yes --> FETCH[Re-fetch CPU quote<br/>from :29343/cpu]
+    STATUS -- Yes --> FETCH[Re-fetch CPU quote<br/>from :21434/cpu]
     FETCH --> HASH[Compute SHA-256<br/>of fetched quote]
     HASH --> CMP_HASH{Quote hash matches<br/>cached hash?}
     CMP_HASH -- No --> FULL[Run full AttestBackend<br/>Backend has changed]
@@ -185,7 +185,7 @@ There is no TTL or cache expiry. The fast verify runs the same check on every pr
 
 1. **Cache check** -- If no cached attestation exists (model was never attested), reject the request.
 2. **Status check** -- If the cached status is `failed`, reject the request.
-3. **Re-fetch CPU quote** -- Always request the current CPU quote from `:29343/cpu` (~50ms TLS handshake).
+3. **Re-fetch CPU quote** -- Always request the current CPU quote from `:21434/cpu` (~50ms TLS handshake).
 4. **Hash comparison** -- Compute `SHA-256` of the fetched quote and compare against the cached hash. A mismatch indicates the backend has changed (restart, redeployment) and triggers full re-attestation.
 5. **TLS fingerprint comparison** -- Verify the current connection's TLS certificate fingerprint matches the cached value. A mismatch is treated as a critical error (possible MITM attack) and the request is rejected immediately.
 6. **Pass** -- If both checks succeed, the inference request proceeds to the backend.
@@ -234,13 +234,13 @@ No `isTee` field is required (or accepted) in `models-config.json` — the `mode
 
 ### Backend Attestation Endpoint Derivation
 
-Attestation endpoints are derived from the model's `apiUrl` host with port `29343` (the standard SecretVM attestation port).
+Attestation endpoints are derived from the model's `apiUrl` host with port `21434` (SecretAI backend / GPU TEE attestation; Phase 1 P-Node host attestation remains on `29343`).
 
 Example: a model registered on-chain with the `tee` tag and `apiUrl` set to `https://backend.example.com:8080/v1` will be attested against:
 
-- `https://backend.example.com:29343/cpu` — TDX CPU quote
-- `https://backend.example.com:29343/gpu` — GPU attestation evidence
-- `https://backend.example.com:29343/docker-compose` — backend's compose file for RTMR3 replay
+- `https://backend.example.com:21434/cpu` — TDX CPU quote
+- `https://backend.example.com:21434/gpu` — GPU attestation evidence
+- `https://backend.example.com:21434/docker-compose` — backend's compose file for RTMR3 replay
 
 ### Environment Variables
 

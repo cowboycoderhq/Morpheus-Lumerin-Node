@@ -5,6 +5,19 @@ audience: ["consumer", "prosumer", "provider-resale", "provider-full", "develope
 product: ["proxy-router", "ui-desktop", "cli"]
 last_verified: "v7.0.0"
 ---
+<Note>
+  **In a hurry? Pick the fastest path.**
+
+  - **Just want to use it (~5 min):** download the desktop app from the
+    [latest release](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/releases) and run it —
+    wallet, chat, and proxy-router are bundled. See the [Consumer quickstart](/consumers/quickstart).
+  - **Try it free — no wallet, no tokens:** the desktop app bundles a local `llama.cpp` model for
+    demos, so you can chat immediately without staking MOR. Look for the local model option after
+    install.
+  - **Building on the marketplace?** jump to the [Hosted Inference API](/inference-api/overview).
+
+  New to Morpheus? Read on for how the pieces fit together.
+</Note>
 
 The Morpheus Lumerin Node is the open-source software that connects you to the **Morpheus Inference Marketplace** — a decentralized, peer-to-peer marketplace where consumers and independent providers trade AI inference, coordinated by smart contracts on BASE. You interact with it through a desktop chat experience, a CLI, or a direct HTTP API on your local node.
 
@@ -56,7 +69,7 @@ flowchart LR
     Install the desktop release, fund a wallet, open a session, chat.
   </Card>
   <Card title="Provider quickstart" icon="server" href="/providers/full/quickstart">
-    Stand up a proxy-router, register a model, post a bid.
+    Stand up a proxy-router, look up existing models on active.mor.org, bid (mint only if needed).
   </Card>
   <Card title="TEE provider fast lane" icon="shield-check" href="/providers/full/secretvm-quickstart">
     Deploy a hardened `-tee` image on SecretVM in minutes.
