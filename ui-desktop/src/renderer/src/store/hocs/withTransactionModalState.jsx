@@ -43,20 +43,21 @@ const withTransactionModalState = WrappedComponent => {
       }
     ];
 
+    // No gas fields. The proxy-router signs the transfer and pays gas
+    // (POST /blockchain/send/{eth,mor}); the renderer never touches web3 here.
+    // The old gasPrice/gasLimit/estimatedFee state was Lumerin-era leftovers —
+    // and since initialState never actually defined gasPrice/gasLimit while
+    // validate() still ran gas validators on them, EVERY send failed with
+    // "Invalid value" for a field the UI does not even show.
     initialState = {
       copyBtnLabel: 'Copy to clipboard',
-      gasEstimateError: false,
-      useCustomGas: false,
       coinAmount: 0,
       usdAmount: 0,
       toAddress: '',
-      estimatedFee: null,
       selectedCurrency: this.rangeSelectOptions[0],
       errors: {
         coinAmount: '',
-        toAddress: '',
-        gasLimit: '',
-        gasPrice: ''
+        toAddress: ''
       }
     };
 
@@ -75,55 +76,91 @@ const withTransactionModalState = WrappedComponent => {
 
     onInputChange = ({ id, value, selectedCurrency }) => {
       const { client, lmrCoinPrice, ethCoinPrice } = this.props;
+
+      // `lmrCoinPrice` is selectors.getRate() — the redux `rate`, which is fed
+      // by the rates plugin. That plugin still prices **lumerin** (the legacy
+      // LMR token: rate-coingecko.js `ids: 'ethereum,lumerin,bitcoin'`), NOT
+      // MOR. Using it to convert a MOR amount priced 0.1 MOR at the LMR rate,
+      // which is why the form read "≈ < $0.01" for an amount actually worth
+      // ~$0.22.
+      //
+      // The correct MOR rate is client.getRates(), which the Dashboard already
+      // fetches and hands down as `mor.rate` (Dashboard.jsx:449) — the same
+      // number the balance row below the input renders correctly. Use that, so
+      // the amount and the balance can no longer disagree. Fall back to the
+      // legacy value only if it is absent.
+      const morRate = Number(this.props.mor?.rate);
+      const morCoinPrice = Number.isFinite(morRate) && morRate > 0 ? morRate : lmrCoinPrice;
+
       const coinPrice =
         (selectedCurrency || this.state.selectedCurrency)?.value === 'LMR'
-          ? lmrCoinPrice
+          ? morCoinPrice
           : ethCoinPrice;
       this.setState(state => {
         return {
           ...state,
           ...utils.syncAmounts({ state, coinPrice, id, value, client }),
-          gasEstimateError: id === 'gasLimit' ? false : state.gasEstimateError,
           errors: { ...state.errors, [id]: null },
           [id]: utils.sanitizeInput(value)
         };
       });
 
-      // Estimate gas limit again if parameters changed
-      if (['coinAmount', 'toAddress'].includes(id)) {
-        this.getGasEstimate();
-      }
+      // (Removed: this called this.getGasEstimate(), which is defined nowhere in
+      // the codebase — a guaranteed TypeError on every keystroke in the amount
+      // and address fields. Gas is the router's job.)
     };
 
     onSubmit = type => {
+      // proxy-router structs.SendRequest: { to, amount } — amount in WEI.
+      // The previous payload sent `value` (plus gas/chain/walletId the router
+      // ignores), while the handler reads `amount`, so `amount` arrived
+      // undefined and the router rejected a required field.
       const payload = {
-        gasPrice: this.props.client.toWei(this.state.gasPrice, 'gwei'),
-        walletId: this.props.walletId,
-        value: utils.sanitize(this.state.coinAmount),
-        chain: this.props.chain,
-        from: this.props.from,
-        gas: this.state.gasLimit,
-        to: this.state.toAddress
+        to: this.state.toAddress,
+        amount: this.props.client.toWei(utils.sanitize(this.state.coinAmount))
       };
+
       return type === 'ETH'
         ? this.props.client.sendEth(payload)
-        : this.props.client.sendLmr(payload);
+        : this.props.client.sendMor(payload);
     };
 
     validate = () => {
-      const { coinAmount, toAddress, gasPrice, gasLimit } = this.state;
-      const { client, lmrBalanceWei, ethBalanceWei } = this.props;
-      const balance =
-        this.state.selectedCurrency.value === 'LMR'
-          ? lmrBalanceWei
-          : ethBalanceWei;
+      const { coinAmount, toAddress } = this.state;
+      const { client } = this.props;
+      const isMor = this.state.selectedCurrency.value === 'LMR';
+
+      // The balance to validate against comes from the SAME source the form
+      // renders (balanceData -> props.mor/props.eth, client.getRates+getBalances),
+      // NOT the redux wallet selectors. Those read `token.lmrBalance`, which is
+      // never populated any more (balances moved to react-query) and defaults to
+      // 0 — and validators.validateAmount guards its ceiling check with
+      // `max && ...`, so a 0 balance made the check FALSY and skipped it
+      // entirely. Result: any amount, however large, passed validation.
+      const balance = Number(isMor ? this.props.mor?.value : this.props.eth?.value);
 
       const errors = {
         ...validators.validateToAddress(client, toAddress),
-        ...validators.validateCoinAmount(client, coinAmount, balance),
-        ...validators.validateGasPrice(client, gasPrice),
-        ...validators.validateGasLimit(client, gasLimit)
+        ...validators.validateCoinAmount(client, coinAmount, balance)
       };
+
+      // Explicit ceiling check, because validateAmount's `max &&` guard cannot
+      // express "the balance is zero, so nothing is affordable".
+      const amount = parseFloat(coinAmount);
+      if (Number.isFinite(amount) && amount > 0) {
+        if (!Number.isFinite(balance)) {
+          errors.coinAmount = 'Balance unavailable — cannot verify you have enough funds';
+        } else if (amount > balance) {
+          errors.coinAmount = 'Insufficient funds';
+        }
+      }
+
+      // The zero address passes an eth_addr check but burns the funds
+      // irrecoverably. Nothing downstream stops it — the router's
+      // `validate:"eth_addr"` accepts it too.
+      if (/^0x0{40}$/i.test(String(toAddress).trim())) {
+        errors.toAddress = 'Refusing to send to the zero address (funds would be burned)';
+      }
       const hasErrors = Object.keys(errors).length > 0;
       if (hasErrors) this.setState({ errors });
       return hasErrors ? errors : false;
