@@ -1292,6 +1292,21 @@ func (s *BlockchainService) OpenSessionByModelId(ctx context.Context, modelID co
 
 	log := s.requestLog(ctx)
 	scoredBids := s.rateBids(bidIDs, bids, providerStats, providers, modelStats, minStake, log)
+
+	// Affordability filter. The client now lets a user stake to a model even when
+	// they can only cover SOME of its providers (see getStakeAffordability in
+	// ui-desktop Chat.tsx). Because we try scored bids in order and an on-chain
+	// open HARD-fails without falling through when the wallet can't cover the
+	// stake (see tryOpenSession), skip any provider whose required amount exceeds
+	// the MOR balance — so we match only a provider the user can actually afford,
+	// while still preferring the highest-scored among those. Best-effort: if the
+	// balance can't be read, fall back to the old behaviour and attempt every bid.
+	morBalance, balErr := s.morToken.GetBalance(ctx, userAddr)
+	if balErr != nil {
+		log.Warnf("could not read MOR balance for affordability filter, attempting all bids: %s", balErr)
+		morBalance = nil
+	}
+
 	for i, bid := range scoredBids {
 		providerAddr := bid.Bid.Provider
 		if providerAddr == omitProvider {
@@ -1303,6 +1318,15 @@ func (s *BlockchainService) OpenSessionByModelId(ctx context.Context, modelID co
 		if providerAddr == userAddr {
 			log.Infof("skipping own bid #%d %s", i, bid.Bid.Id)
 			continue
+		}
+
+		if morBalance != nil {
+			amount, amtErr := computeSessionTokenAmount(&bid.Bid, duration, supply, budget, directPayment)
+			if amtErr == nil && amount.Cmp(morBalance) > 0 {
+				log.Infof("skipping provider #%d %s: required %s exceeds MOR balance %s", i, providerAddr.String(), amount.String(), morBalance.String())
+				failures = append(failures, providerFailure{Provider: providerAddr.String(), Reason: "insufficient MOR balance for this provider's price"})
+				continue
+			}
 		}
 
 		log.Infof("trying to open session with provider #%d %s", i, bid.Bid.Provider.String())
