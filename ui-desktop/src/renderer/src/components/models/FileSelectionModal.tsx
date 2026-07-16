@@ -21,33 +21,33 @@ const bodyProps = {
 
 const RowContainer = styled.div`
   padding: 1rem;
-  border: 1px solid rgba(33, 220, 143, 0.2);
-  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.2)};
+  background: ${(p) => p.theme.colors.moneySurfaceBg};
   margin-bottom: 1rem;
   border-radius: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
   transition: all 0.2s;
-  
+
   &:hover {
-    border-color: rgba(33, 220, 143, 0.4);
-    background: rgba(0, 0, 0, 0.25);
+    border-color: ${(p) => p.theme.colors.brandTint(0.4)};
+    background: ${(p) => p.theme.colors.moneySurfaceBg};
     transform: translateY(-2px);
   }
-  
+
   .file-info {
     display: flex;
     align-items: center;
     gap: 8px;
-    color: #fff;
+    color: ${(p) => p.theme.colors.textPrimary};
     font-size: 0.9rem;
-    
+
     svg {
-      color: #21dc8f;
+      color: ${(p) => p.theme.colors.brand};
     }
   }
-  
+
   .file-path {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.8rem;
@@ -57,11 +57,11 @@ const RowContainer = styled.div`
     text-overflow: ellipsis;
     max-width: 100%;
   }
-  
+
   .file-size {
-    background: rgba(33, 220, 143, 0.15);
+    background: ${(p) => p.theme.colors.brandTint(0.15)};
     padding: 2px 8px;
-    border-radius: 4px;
+    border-radius: ${(p) => p.theme.radii.sm};
     font-size: 0.8rem;
     display: inline-flex;
     align-items: center;
@@ -70,39 +70,39 @@ const RowContainer = styled.div`
 `
 
 const HelperText = styled.div`
-    color: #8a8a8a;
+    color: ${(p) => p.theme.colors.textSecondary};
     font-size: 0.875rem;
     margin-top: 0.25rem;
 `
 
 const StyledForm = styled(Form)`
   .form-control {
-    background-color: rgba(0, 0, 0, 0.2);
-    border: 1px solid rgba(33, 220, 143, 0.2);
-    color: white;
+    background-color: ${(p) => p.theme.colors.moneySurfaceBg};
+    border: 1px solid ${(p) => p.theme.colors.brandTint(0.2)};
+    color: ${(p) => p.theme.colors.textPrimary};
     transition: all 0.2s;
-    
+
     &:focus {
-      background-color: rgba(0, 0, 0, 0.3);
-      border-color: rgba(33, 220, 143, 0.5);
-      box-shadow: 0 0 0 0.25rem rgba(33, 220, 143, 0.15);
-      color: white;
+      background-color: ${(p) => p.theme.colors.moneySurfaceBg};
+      border-color: ${(p) => p.theme.colors.brandTint(0.5)};
+      box-shadow: 0 0 0 0.25rem ${(p) => p.theme.colors.brandTint(0.15)};
+      color: ${(p) => p.theme.colors.textPrimary};
     }
-    
+
     &::placeholder {
-      color: rgba(255, 255, 255, 0.5);
+      color: ${(p) => p.theme.colors.textSecondary};
     }
   }
-  
+
   .form-label {
-    color: #21dc8f;
+    color: ${(p) => p.theme.colors.brand};
     font-weight: 500;
     margin-bottom: 0.5rem;
     display: flex;
     align-items: center;
     gap: 8px;
   }
-  
+
   .form-control-feedback {
     margin-top: 0.25rem;
   }
@@ -114,14 +114,15 @@ const StyledButton = styled(RightBtn)`
   justify-content: center;
   gap: 8px;
   padding: 0.5rem 1.25rem;
-  background: linear-gradient(135deg, #21dc8f 0%, #1baf71 100%);
+  background: ${(p) => p.theme.colors.brandTint(0.1)};
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.5)};
   border-radius: 8px;
   transition: all 0.2s;
   border: none;
-  
+
   &:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: ${(p) => p.theme.shadows.elevated};
   }
   
   &:active {
@@ -135,15 +136,15 @@ const EmptyFilesMessage = styled.div`
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  border: 2px dashed rgba(33, 220, 143, 0.3);
+  border: 2px dashed ${(p) => p.theme.colors.brandTint(0.3)};
   border-radius: 8px;
   margin: 1rem 0;
-  color: rgba(255, 255, 255, 0.6);
-  
+  color: ${(p) => p.theme.colors.textSecondary};
+
   svg {
     font-size: 2rem;
     margin-bottom: 1rem;
-    color: #21dc8f;
+    color: ${(p) => p.theme.colors.brand};
     opacity: 0.5;
   }
 `

@@ -13,7 +13,7 @@ const StyledBtn = styled(BaseBtn)`
   width: 40%;
   height: 40px;
   font-size: 1.5rem;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   padding: 0 0.6rem;
   background-color: ${(p) => p.theme.colors.primary};
   color: ${(p) => p.theme.colors.light};
@@ -30,7 +30,7 @@ const Input = styled(TextInput)`
   outline: 0;
   border: 0px;
   max-width: 10%;
-  background: #eaf7fc;
+  background: ${(p) => p.theme.colors.moneySurfaceBg};
   border-radius: 15px;
   padding: 1.2rem 1.2rem;
   margin-top: 0.25rem;

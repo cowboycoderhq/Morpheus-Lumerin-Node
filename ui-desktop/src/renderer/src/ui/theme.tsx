@@ -164,6 +164,10 @@ const aurora = {
     // one canonical warning colour above instead of each surface inventing its
     // own amber.
     warningTint: (a: number) => `rgba(240, 192, 96, ${a})`,
+    // Danger tint — same reason. Destructive controls want a faint wash behind a
+    // red glyph, not a solid red fill; without a tint function the only
+    // token-driven option is solid `danger`, which is ~6x louder than intended.
+    dangerTint: (a: number) => `rgba(224, 92, 115, ${a})`,
 
     // ---- LEGACY ALIASES (components read these directly) ------------------
     primary: 'rgba(13, 24, 39, 1)',
@@ -265,6 +269,7 @@ const classic = {
     // entirely without the shell needing to know which theme is mounted.
     scanline: 'transparent',
     warningTint: (a: number) => `rgba(255, 200, 87, ${a})`,
+    dangerTint: (a: number) => `rgba(212, 96, 69, ${a})`,
 
     // ---- LEGACY ALIASES — ORIGINAL Morpheus palette, verbatim -------------
     primary: 'rgba(23, 54, 41, 1)',

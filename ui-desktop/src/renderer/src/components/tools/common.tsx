@@ -22,10 +22,10 @@ export const StyledBtn = styled(Btn)`
   width: 40%;
   height: 40px;
   font-size: 1.5rem;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   padding: 0 0.6rem;
   background-color: ${(p) => p.theme.colors.morMain};
-  color: black;
+  color: ${(p) => p.theme.colors.textPrimary};
 
   @media (min-width: 1040px) {
     width: 35%;
@@ -51,7 +51,7 @@ export const Input = styled(TextInput)`
   outline: 0;
   border: 1px solid ${(p) => p.theme.colors.morMain};
   background: transparent;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   padding: 1.2rem 1.2rem;
   margin-top: 0.25rem;
 `;
