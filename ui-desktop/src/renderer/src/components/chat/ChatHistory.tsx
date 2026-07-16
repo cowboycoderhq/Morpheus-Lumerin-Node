@@ -15,6 +15,7 @@ import InputGroup from 'react-bootstrap/InputGroup';
 import Badge from 'react-bootstrap/Badge';
 import * as components from './ChatHistory.styles';
 import { useEffect, useState } from 'react';
+import { useTheme } from 'styled-components';
 import { ChatData } from './interfaces';
 
 interface ChatHistoryProps {
@@ -43,6 +44,7 @@ const HistoryEntry = ({
   isActive: boolean;
   onChangeTitle: (data: { id: string; title: string }) => Promise<void>;
 }) => {
+  const theme = useTheme();
   const [isEdit, setIsEdit] = useState<boolean>(false);
   const [title, setTitle] = useState<string>(entry?.title || '');
 
@@ -93,9 +95,13 @@ const HistoryEntry = ({
                   cancelEdit(e as unknown as React.MouseEvent);
                 }
               }}
+              // react-bootstrap's Form.Control takes a style object, not a
+              // styled template, so the token is read through useTheme() here.
+              // It was a frozen 95%-white literal — the rename input kept
+              // aurora's text colour under classic.
               style={{
                 background: 'transparent',
-                color: 'rgba(255, 255, 255, 0.95)',
+                color: theme.colors.textPrimary,
                 border: 'none',
                 boxShadow: 'none',
                 outline: 'none',
