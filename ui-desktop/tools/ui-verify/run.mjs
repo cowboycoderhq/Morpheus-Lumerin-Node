@@ -156,6 +156,82 @@ const browser = await chromium.launch();
   await page.close();
 }
 
+// --- terms: BOTH consents still gate Accept, and the terms text is still on
+//     screen when you agree to it (crypto-version drops both) ---
+{
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 } });
+  await drive(page, 'terms-two-consents', `http://localhost:${PORT}/?case=terms`, async (p) => {
+    await p.waitForSelector('[data-testid="onboarding-container"]', { timeout: 20000 });
+
+    // The agreement is IN FRONT of the user, not behind a link. crypto-version
+    // replaces this scroll box with a one-line summary; that is not a re-skin.
+    const termsText = await p.locator('[data-testid="onboarding-container"]').innerText();
+    assert(termsText.length > 400, `terms text not rendered on screen (len ${termsText.length})`);
+
+    // ...and it is legible where it is shown. The markdown renders through
+    // marked-react's own nodes and inherits its colour from the box, so a
+    // colour set anywhere else leaves the terms dark-on-dark — present in the
+    // DOM, unreadable on screen, and invisible to every assertion above.
+    const contrast = await p.evaluate(() => {
+      const box = document.querySelector('[data-testid="terms-box"]');
+      const node = box.querySelector('p, h1, h2, li') || box;
+      const parse = (c) => c.match(/[\d.]+/g).slice(0, 3).map(Number);
+      // Text sits on the box, which is translucent over the card — compose the
+      // box over the card so the luminance is what the eye actually receives.
+      const over = (fg, bg, a) => fg.map((c, i) => c * a + bg[i] * (1 - a));
+      const lum = (rgb) => {
+        const [r, g, b] = rgb.map((v) => {
+          const s = v / 255;
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const boxBg = getComputedStyle(box).backgroundColor;
+      const alpha = Number((boxBg.match(/[\d.]+/g) || [])[3] ?? 1);
+      const card = parse(getComputedStyle(document.body).backgroundColor);
+      const bg = over(parse(boxBg), card, alpha);
+      const fg = parse(getComputedStyle(node).color);
+      const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+      return (hi + 0.05) / (lo + 0.05);
+    });
+    assert(contrast >= 4.5, `terms text unreadable — contrast ${contrast.toFixed(2)}:1, need 4.5:1`);
+
+    // Two independent consents, not one collapsed toggle.
+    const boxes = await p.locator('input[type="checkbox"]').count();
+    assert(boxes === 2, `expected 2 consent checkboxes, found ${boxes}`);
+
+    const accept = p.getByTestId('accept-terms-btn');
+    assert(await accept.isDisabled(), 'Accept enabled with no consent given');
+
+    // Each consent alone must NOT open the gate — this is what a collapsed
+    // single-checkbox rewrite would silently pass.
+    await p.getByTestId('accept-terms-chb').check();
+    assert(await accept.isDisabled(), 'Accept enabled with only the terms consent');
+    await p.getByTestId('accept-terms-chb').uncheck();
+    await p.getByTestId('accept-license-chb').check();
+    assert(await accept.isDisabled(), 'Accept enabled with only the license consent');
+
+    // Both → open.
+    await p.getByTestId('accept-terms-chb').check();
+    assert(await accept.isEnabled(), 'Accept still disabled with both consents given');
+
+    // The license link opens the license; it must not toggle the consent it
+    // sits next to (a wrapping <label> would do exactly that).
+    const before = await p.getByTestId('accept-license-chb').isChecked();
+    await p.getByText('software license').click();
+    assert(
+      (await p.getByTestId('accept-license-chb').isChecked()) === before,
+      'clicking the license link toggled the consent checkbox',
+    );
+    assert((await p.evaluate(() => window.__licenseLinkClicks)) === 1, 'license link did not fire');
+
+    await p.screenshot({ path: `${SHOTS}/terms-two-consents.png` });
+    await accept.click();
+    assert((await p.evaluate(() => window.__accepted)) === 1, 'Accept did not fire exactly once');
+  });
+  await page.close();
+}
+
 // --- presetup: the pre-wizard preferences screen — each card previews its OWN
 //     accent, picking one re-themes the live page, and Continue hands off once ---
 {

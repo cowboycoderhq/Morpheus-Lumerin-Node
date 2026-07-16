@@ -9,9 +9,19 @@ const LoginBtn = styled(BaseBtn)`
   font-size: 1.5rem;
   font-weight: bold;
   height: 40px;
-  border-radius: 2px;
-  background-color: ${(p) => p.theme.colors.morMain};
-  color: black;
+  border-radius: ${(p) => p.theme.radii.md};
+  /* Was a solid bright-cyan slab — the only one left. Same grammar as every
+     other HUD control: a tinted panel with a hairline. */
+  color: ${(p) => p.theme.colors.textPrimary};
+  background-color: ${(p) => p.theme.colors.brandTint(0.1)};
+  border: 1px solid ${(p) => p.theme.colors.glassBorderBright};
+
+  &:hover,
+  &:focus {
+    color: ${(p) => p.theme.colors.brandBright};
+    background-color: ${(p) => p.theme.colors.brandTint(0.2)};
+    box-shadow: 0 0 16px ${(p) => p.theme.colors.brandTint(0.22)};
+  }
 
   @media (min-width: 1040px) {
     margin-left: 0;
@@ -27,23 +37,51 @@ const SecondaryBtn = styled(BaseBtn)`
   }
 `
 
+// Setting up a new wallet is DESTRUCTIVE (it erases this device's wallet —
+// only the Recovery Phrase brings it back), so it never fires from a single
+// click: the first click swaps in this warning panel, and only an explicit
+// second click erases. Same pattern as the simple-version account reset.
+const ConfirmPanel = styled.div`
+  padding: 1.4rem 1.6rem;
+  border-radius: ${(p) => p.theme.radii.md};
+  border: 1px solid ${(p) => p.theme.colors.danger};
+  background: ${(p) => p.theme.colors.dangerTint(0.08)};
+  color: ${(p) => p.theme.colors.textPrimary};
+  font-size: 1.3rem;
+  line-height: 1.5;
+  text-align: left;
+`
+
+const ConfirmActions = styled.div`
+  display: flex;
+  gap: 1.2rem;
+  margin-top: 1.2rem;
+  justify-content: flex-end;
+`
+
 const DangerBtn = styled(BaseBtn)`
-  font-size: 1.4rem;
-  font-weight: bold;
-  height: 40px;
-  border-radius: 2px;
-  background-color: ${(p) => p.theme.colors.tertiary};
-  color: white;
+  font-size: 1.2rem;
+  font-weight: 600;
+  padding: 0.7rem 1.2rem;
+  border-radius: ${(p) => p.theme.radii.md};
+  border: 1px solid ${(p) => p.theme.colors.danger};
+  color: ${(p) => p.theme.colors.danger};
+
   :hover {
-    opacity: 0.85;
+    background: ${(p) => p.theme.colors.dangerTint(0.15)};
   }
 `
 
-const ResetWarning = styled.div`
-  color: ${(p) => p.theme.colors.tertiary};
+const KeepBtn = styled(BaseBtn)`
   font-size: 1.2rem;
-  line-height: 1.5;
-  text-align: center;
+  padding: 0.7rem 1.2rem;
+  border-radius: ${(p) => p.theme.radii.md};
+  border: 1px solid ${(p) => p.theme.colors.glassBorderBright};
+  color: ${(p) => p.theme.colors.textPrimary};
+
+  :hover {
+    background: ${(p) => p.theme.colors.brandTint(0.12)};
+  }
 `
 
 function Login({ onInputChange, onSubmit, password, errors, status, error, logout }) {
@@ -65,8 +103,29 @@ function Login({ onInputChange, onSubmit, password, errors, status, error, logou
               error={errors.password || error}
             />
           </Sp>
-          {!confirmingReset ? (
-            <Sp mt={2}>
+          <Sp mt={2}>
+            {confirmingReset ? (
+              <ConfirmPanel data-testid="reset-confirm-panel">
+                Setting up a new wallet erases the one on this device — the
+                only way to restore it afterwards is its Recovery Phrase.
+                <ConfirmActions>
+                  <KeepBtn
+                    type="button"
+                    data-testid="reset-cancel-btn"
+                    onClick={() => setConfirmingReset(false)}
+                  >
+                    Keep my wallet
+                  </KeepBtn>
+                  <DangerBtn
+                    type="button"
+                    data-testid="reset-confirm-btn"
+                    onClick={() => logout({})}
+                  >
+                    Erase and set up new
+                  </DangerBtn>
+                </ConfirmActions>
+              </ConfirmPanel>
+            ) : (
               <SecondaryBtn
                 type="button"
                 data-testid="create-new-account-btn"
@@ -75,36 +134,8 @@ function Login({ onInputChange, onSubmit, password, errors, status, error, logou
               >
                 Or setup new wallet
               </SecondaryBtn>
-            </Sp>
-          ) : (
-            <Sp mt={2}>
-              <ResetWarning>
-                Setting up a new wallet erases the current wallet from this
-                device. If you have not saved its recovery phrase, its funds are
-                lost forever.
-              </ResetWarning>
-              <Sp mt={2}>
-                <DangerBtn
-                  type="button"
-                  data-testid="reset-confirm-btn"
-                  onClick={() => logout({})}
-                  block
-                >
-                  Erase and set up new
-                </DangerBtn>
-              </Sp>
-              <Sp mt={1}>
-                <SecondaryBtn
-                  type="button"
-                  data-testid="reset-cancel-btn"
-                  onClick={() => setConfirmingReset(false)}
-                  block
-                >
-                  Keep my wallet
-                </SecondaryBtn>
-              </Sp>
-            </Sp>
-          )}
+            )}
+          </Sp>
           <Sp mt={4}>
             <LoginBtn block submit disabled={status === 'pending'}>
               Login

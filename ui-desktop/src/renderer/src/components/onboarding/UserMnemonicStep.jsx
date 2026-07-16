@@ -2,15 +2,25 @@ import PropTypes from 'prop-types';
 import React from 'react';
 
 import * as utils from '../../store/utils';
-import { TextInput, AltLayout, Btn, Sp } from '../common';
+import { TextInput, Btn, Sp } from '../common';
 import SecondaryBtn from './SecondaryBtn';
 import Message from './Message';
 import AltLayoutNarrow from '../common/AltLayoutNarrow';
+import WizardChrome from './WizardChrome';
 
+// Recovering an existing wallet is a side branch off the numbered new-wallet
+// flow, so this routes through WizardChrome WITHOUT step/totalSteps — it would
+// be lying if it claimed to be "Step 3 of 4" — and keeps `onBack`, which
+// crypto-version deletes here. That deletion is this file's entire delta
+// against crypto: there is no look to take, only a back button to lose.
 const UserMnemonic = props => {
   const id = 'userMnemonic';
   return (
-    <AltLayout title="Recovery Mnemonic" onBack={props.onBack} data-testid="onboarding-container">
+    <WizardChrome
+      title="Recovery Mnemonic"
+      onBack={props.onBack}
+      data-testid="onboarding-container"
+    >
       <form data-testid="mnemonic-form" onSubmit={props.onMnemonicAccepted}>
         <AltLayoutNarrow>
           <Message>
@@ -58,7 +68,7 @@ const UserMnemonic = props => {
           </Sp>
         </AltLayoutNarrow>
       </form>
-    </AltLayout>
+    </WizardChrome>
   );
 };
 

@@ -3,36 +3,66 @@ import PropTypes from 'prop-types';
 import styled from 'styled-components';
 import React from 'react';
 
-import { AltLayout, AltLayoutNarrow, Btn, Sp } from '../common';
-import Message from './Message';
+import { AltLayoutNarrow, Btn, Checkbox, Sp } from '../common';
+import WizardChrome from './WizardChrome';
 
-const DisclaimerWarning = styled.div`
+// Re-skin only. crypto-version rewrites this screen twice over: it collapses
+// the two consents into ONE checkbox that sets both flags, and it drops the
+// TermsAndConditions scroll box for a one-line summary behind a "read the full
+// license" link. Neither is a look — they change what the user agrees to and
+// whether the agreement is in front of them when they agree to it. Both
+// consents and the terms text stay; only the chrome comes across.
+
+const Summary = styled.p`
+  margin: 0;
+  font-size: ${p => p.theme.type.base};
+  line-height: 1.55;
+  color: ${p => p.theme.colors.textPrimary};
   text-align: left;
-  color: ${p => p.theme.colors.dark};
-  font-size: 16px;
-  margin-top: 16px;
-  text-align: justify;
 `;
 
-const DisclaimerMessage = styled.div`
+// The colour MUST live here, on the container. TermsAndConditions renders its
+// markdown through marked-react's own elements and accepts no props at all —
+// the `ParagraphComponent` the old call site passed was dead, so nothing styled
+// those nodes and they inherited. Setting the colour on a paragraph component
+// instead leaves the actual terms dark-on-dark and unreadable, which is how the
+// screen looked until the isolate rendered it.
+const TermsBox = styled.div`
   width: 100%;
-  height: 130px;
-  border-radius: 2px;
-  background-color: rgba(0, 0, 0, 0.5);
-  color: ${p => p.theme.colors.dark};
+  height: 13rem;
   overflow: auto;
-  font-size: 12px;
-  padding: 10px 16px 0 16px;
-  margin: 16px 0;
+  margin: 1.6rem 0;
+  padding: 1.2rem 1.6rem;
+  font-size: ${p => p.theme.type.sm};
+  line-height: 1.5;
+  color: ${p => p.theme.colors.textPrimary};
+  border-radius: ${p => p.theme.radii.sm};
+  background: ${p => p.theme.colors.glassSurface};
+  border: 1px solid ${p => p.theme.colors.glassBorder};
 `;
 
-const P = styled.p`
-  color: ${p => p.theme.colors.dark};
+// A div, not a label: the license row carries a link, and a wrapping label
+// would make clicking "software license" toggle the consent instead of opening
+// it. The label wraps the text only — clicking the words still toggles.
+const CheckboxRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  min-height: 40px;
+  padding: 0.4rem 0;
+  font-size: ${p => p.theme.type.sm};
+  color: ${p => p.theme.colors.textPrimary};
 `;
 
-const Subtext = styled.span`
-  color: ${p => p.theme.colors.dark};
-  margin-left: 5px;
+const RowLabel = styled.label`
+  cursor: pointer;
+`;
+
+const LicenseLink = styled.a`
+  margin-left: 0.5rem;
+  color: ${p => p.theme.colors.secondaryLight};
+  text-decoration: underline;
+  cursor: pointer;
 `;
 
 const TermsStep = props => {
@@ -41,43 +71,47 @@ const TermsStep = props => {
   };
 
   return (
-    <AltLayout title="Accept to Continue" data-testid="onboarding-container">
+    <WizardChrome
+      title="Accept to Continue"
+      step={1}
+      totalSteps={4}
+      data-testid="onboarding-container"
+    >
       <AltLayoutNarrow>
-        <DisclaimerWarning>
-          Please read and accept these terms and conditions.
-        </DisclaimerWarning>
+        <Summary>Please read and accept these terms and conditions.</Summary>
 
-        <DisclaimerMessage>
-          <TermsAndConditions ParagraphComponent={props => <P {...props} />} />
-        </DisclaimerMessage>
+        <TermsBox data-testid="terms-box">
+          <TermsAndConditions />
+        </TermsBox>
 
-        <Message>
-          <div style={{ display: 'flex' }}>
-            <input
-              data-testid="accept-terms-chb"
-              onChange={onCheckboxToggle}
-              checked={props.termsCheckbox}
-              type="checkbox"
-              id="termsCheckbox"
-            />
-            <Subtext>I have read and accept these terms</Subtext>
-          </div>
-          <div style={{ display: 'flex' }}>
-            <input
-              data-testid="accept-license-chb"
-              onChange={onCheckboxToggle}
-              checked={props.licenseCheckbox}
-              type="checkbox"
-              id="licenseCheckbox"
-            />
-            <Subtext>I have read and accept the</Subtext>
-            <a onClick={props.onTermsLinkClick} style={{ marginLeft: '5px' }}>
-              software license
-            </a>
-          </div>
-        </Message>
+        <CheckboxRow>
+          <Checkbox
+            data-testid="accept-terms-chb"
+            onChange={onCheckboxToggle}
+            checked={props.termsCheckbox}
+            id="termsCheckbox"
+          />
+          <RowLabel htmlFor="termsCheckbox">
+            I have read and accept these terms
+          </RowLabel>
+        </CheckboxRow>
 
-        <Sp mt={6}>
+        <CheckboxRow>
+          <Checkbox
+            data-testid="accept-license-chb"
+            onChange={onCheckboxToggle}
+            checked={props.licenseCheckbox}
+            id="licenseCheckbox"
+          />
+          <RowLabel htmlFor="licenseCheckbox">
+            I have read and accept the
+          </RowLabel>
+          <LicenseLink onClick={props.onTermsLinkClick}>
+            software license
+          </LicenseLink>
+        </CheckboxRow>
+
+        <Sp mt={5}>
           <Btn
             data-testid="accept-terms-btn"
             autoFocus
@@ -89,7 +123,7 @@ const TermsStep = props => {
           </Btn>
         </Sp>
       </AltLayoutNarrow>
-    </AltLayout>
+    </WizardChrome>
   );
 };
 

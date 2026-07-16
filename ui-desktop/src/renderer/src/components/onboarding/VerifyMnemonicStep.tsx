@@ -1,22 +1,35 @@
 import * as utils from '../../store/utils';
 import PropTypes from 'prop-types';
 
-import { TextInput, AltLayout, Btn, Sp } from '../common';
+import { TextInput, Btn, Sp } from '../common';
 import SecondaryBtn from './SecondaryBtn';
-import Message from './Message';
+import WizardChrome, { Callout } from './WizardChrome';
 import AltLayoutNarrow from '../common/AltLayoutNarrow';
 
+// Re-skinned into WizardChrome; the verification itself is untouched.
+//
+// The Aurora design replaces typing the phrase with tapping words from a grid.
+// That is a different check, not a different look: it verifies recognition
+// rather than transcription, and it drops the `shouldSubmit` / `getTooltip` /
+// `onMnemonicCopiedToggled` props the onboarding state machine hands this step —
+// so the step-machine contract breaks with it. This is the last thing standing
+// between a user and a wallet they cannot recover, so it keeps the typed
+// verification and every prop the machine expects.
 const VerifyMnemonicStep = props => {
   const id = 'mnemonicAgain';
   return (
-    <AltLayout title="Recovery Passphrase" onBack={props.onBack} data-testid="onboarding-container">
+    <WizardChrome
+      title="Verify Your Recovery Phrase"
+      step={4}
+      totalSteps={4}
+      onBack={props.onBack}
+      data-testid="onboarding-container"
+    >
       <form data-testid="mnemonic-form" onSubmit={props.onMnemonicAccepted}>
-        <AltLayoutNarrow>
-          <Message>
-            To verify you have copied the recovery passphrase correctly, enter
-            the 12 words provided before in the field below.
-          </Message>
-        </AltLayoutNarrow>
+        <Callout>
+          To verify you have copied the recovery passphrase correctly, enter the
+          12 words provided before in the field below.
+        </Callout>
         <Sp mt={3}>
           <TextInput
             id={id}
@@ -58,7 +71,7 @@ const VerifyMnemonicStep = props => {
           </Sp>
         </AltLayoutNarrow>
       </form>
-    </AltLayout>
+    </WizardChrome>
   );
 };
 

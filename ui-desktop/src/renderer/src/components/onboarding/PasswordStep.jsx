@@ -6,13 +6,19 @@ import * as utils from '../../store/utils';
 import {
   PasswordStrengthMeter,
   TextInput,
-  AltLayout,
   AltLayoutNarrow,
   Btn,
   Sp,
   Tooltip
 } from '../common';
+import WizardChrome from './WizardChrome';
 import Message from './Message';
+
+// Re-skin only. crypto-version drops the live zxcvbn suggestion tooltip for a
+// static hint — that is losing a feature that helps people pick a password
+// they can actually keep, not a change of look, so the tooltip and its state
+// stay. Its replacement copy ("unlocks the app on this Mac") is also wrong for
+// the Windows and Linux builds, so that does not come across either.
 
 const PasswordMessage = styled(Message)`
   text-align: left;
@@ -29,11 +35,22 @@ const PasswordInputWrap = styled.div`
   position: relative;
 `;
 
+// Was a hardcoded #20dc8e — classic's green, pinned. It read as correct only
+// because classic happened to be the look at the time; under aurora this button
+// stayed green while everything around it went cyan. Both this and crypto's own
+// version (which tokenizes the border but pins a cyan hover) break the swap in
+// opposite directions; the tokens fix both.
 const SecondaryBtn = styled(Btn)`
-    border: 1px solid #20dc8e;
-    color: #20dc8e;
-    background: transparent;
-`
+  border-radius: ${p => p.theme.radii.md};
+  border: 1px solid ${p => p.theme.colors.brand};
+  color: ${p => p.theme.colors.brand};
+  background: transparent;
+
+  &:not([disabled]):hover,
+  &:not([disabled]):focus {
+    background: ${p => p.theme.colors.brandTint(0.08)};
+  }
+`;
 
 const PasswordStep = props => {
   const [typed, setTyped] = useState(false);
@@ -45,7 +62,13 @@ const PasswordStep = props => {
   let tooltipTimeout;
 
   return (
-    <AltLayout title="Let`s get started" onBack={props.onBack} data-testid="onboarding-container">
+    <WizardChrome
+      title="Let`s get started"
+      step={2}
+      totalSteps={4}
+      onBack={props.onBack}
+      data-testid="onboarding-container"
+    >
       <AltLayoutNarrow>
         <form data-testid="pass-form">
           <PasswordMessage>
@@ -108,13 +131,14 @@ const PasswordStep = props => {
           </Sp>
         </form>
       </AltLayoutNarrow>
-    </AltLayout>
+    </WizardChrome>
   );
 };
 
 PasswordStep.propTypes = {
   onPasswordSubmit: PropTypes.func.isRequired,
   onInputChange: PropTypes.func.isRequired,
+  onBack: PropTypes.func,
   passwordAgain: PropTypes.string,
   password: PropTypes.string,
   errors: utils.errorPropTypes('passwordAgain', 'password')

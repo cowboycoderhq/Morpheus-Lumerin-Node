@@ -7,16 +7,17 @@ import { BaseBtn } from './common';
 import CloseIcon from './icons/CloseIcon';
 
 const Container = styled.div`
+  border-radius: ${(p) => p.theme.radii.lg};
   position: fixed;
   top: 0;
   z-index: 3;
   right: 0;
   left: 0;
   padding: 0.4rem;
-  background: rgba(248, 123, 97, 1);
+  background: ${(p) => p.theme.colors.danger};
   text-align: center;
   font-size: 1.2rem;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+  text-shadow: 0 1px 0 ${(p) => p.theme.colors.darkShade};
 `;
 
 const DismissBtn = styled(BaseBtn)`
