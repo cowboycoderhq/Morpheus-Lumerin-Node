@@ -133,6 +133,66 @@ const browser = await chromium.launch();
   await page.close();
 }
 
+// --- shell: the rail renders, Help keeps pr2's onHelpLinkClick contract, and
+//     the rail's own surface re-renders on a theme swap (not just a probe) ---
+{
+  const page = await browser.newPage({ viewport: { width: 900, height: 800 } });
+  await drive(page, 'shell-sidebar', `http://localhost:${PORT}/?case=shell`, async (p) => {
+    await p.waitForSelector('[data-testid="help-nav-btn"]', { timeout: 20000 });
+    await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));
+    await p.reload({ waitUntil: 'networkidle' });
+    await p.waitForSelector('[data-testid="help-nav-btn"]');
+
+    // The rail actually rendered its nav, not an empty frame.
+    const body = await p.locator('body').innerText();
+    for (const item of ['Chat', 'Models', 'Agents', 'Settings', 'Help']) {
+      assert(new RegExp(item, 'i').test(body), `sidebar missing nav item: ${item}`);
+    }
+
+    // PR3 keeps pr2's client contract — crypto renamed this to onLinkClick and
+    // wrapped it in a menu. If the rename ever leaks in, this goes to 0.
+    await p.getByTestId('help-nav-btn').click();
+    const helps = await p.evaluate(() => window.__help);
+    assert(helps === 1, `Help did not call onHelpLinkClick (fired ${helps}x, want 1)`);
+
+    // The rail's background is a token, so it must change with the variant.
+    const railBg = () =>
+      p.evaluate(
+        () => getComputedStyle(document.querySelector('[data-testid="sidebar-rail"]')).backgroundImage,
+      );
+    const auroraRail = await railBg();
+    assert(/94,\s*208,\s*255/.test(auroraRail), `rail sheen not aurora cyan (got ${auroraRail})`);
+
+    // The active nav item is the rail's one accent-bearing state — assert it by
+    // computed style, not by eye: a mid-transition screenshot reads as unswapped.
+    const activeAccent = () =>
+      p.evaluate(() => {
+        const a = Array.from(document.querySelectorAll('a')).find((x) => /chat/i.test(x.textContent));
+        const cs = getComputedStyle(a);
+        return { color: cs.color, border: cs.borderLeftColor };
+      });
+    const auroraActive = await activeAccent();
+    assert(/111,\s*214,\s*255/.test(auroraActive.color), `active nav not aurora cyan (got ${auroraActive.color})`);
+    assert(/111,\s*214,\s*255/.test(auroraActive.border), `active nav border not aurora cyan (got ${auroraActive.border})`);
+    await p.screenshot({ path: `${SHOTS}/shell-sidebar-aurora.png` });
+
+    await p.getByTestId('set-classic').click();
+    // The nav transitions colour/border-color, so a screenshot fired straight
+    // after the swap catches the tokens MID-fade and shows the OLD accent —
+    // evidence that reads as "classic is still cyan" when it isn't. Settle first.
+    await p.waitForTimeout(400);
+    const classicRail = await railBg();
+    assert(/32,\s*220,\s*142/.test(classicRail), `rail sheen did not swap to classic green (got ${classicRail})`);
+    assert(!/94,\s*208,\s*255/.test(classicRail), `rail still pinned to cyan under classic (got ${classicRail})`);
+    const classicActive = await activeAccent();
+    assert(/32,\s*220,\s*142/.test(classicActive.color), `active nav did not swap to classic green (got ${classicActive.color})`);
+    assert(/32,\s*220,\s*142/.test(classicActive.border), `active nav border did not swap to classic green (got ${classicActive.border})`);
+    await p.screenshot({ path: `${SHOTS}/shell-sidebar-classic.png` });
+    await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));
+  });
+  await page.close();
+}
+
 await browser.close();
 await server.close();
 

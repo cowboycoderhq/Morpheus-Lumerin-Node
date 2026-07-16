@@ -155,6 +155,15 @@ const aurora = {
     // accent here, never in the N components that reference it.
     brandTint: (a: number) => `rgba(94, 208, 255, ${a})`,
     scrim: 'rgba(2, 6, 12, 0.72)', // modal/overlay backdrop
+    // The shell's HUD scanline. A colour token rather than an effects dial so
+    // classic turns it off by going transparent — one token carries both the
+    // tint and whether it exists at all, and the parity guard below forces
+    // classic to answer for it.
+    scanline: 'rgba(170, 225, 255, 0.02)',
+    // Warning tint — mirrors brandTint so callout washes/borders derive from the
+    // one canonical warning colour above instead of each surface inventing its
+    // own amber.
+    warningTint: (a: number) => `rgba(240, 192, 96, ${a})`,
 
     // ---- LEGACY ALIASES (components read these directly) ------------------
     primary: 'rgba(13, 24, 39, 1)',
@@ -252,6 +261,10 @@ const classic = {
     // Tint & scrim — green under classic (mirrors aurora's brandTint/scrim keys).
     brandTint: (a: number) => `rgba(32, 220, 142, ${a})`,
     scrim: 'rgba(4, 12, 8, 0.72)',
+    // No HUD atmosphere in the calm look — transparent removes the scanline
+    // entirely without the shell needing to know which theme is mounted.
+    scanline: 'transparent',
+    warningTint: (a: number) => `rgba(255, 200, 87, ${a})`,
 
     // ---- LEGACY ALIASES — ORIGINAL Morpheus palette, verbatim -------------
     primary: 'rgba(23, 54, 41, 1)',

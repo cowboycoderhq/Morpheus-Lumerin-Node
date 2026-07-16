@@ -13,7 +13,8 @@ const Container = styled.div`
   flex-direction: column;
   justify-content: space-between;
   max-height: 10%;
-  color: ${(p) => p.theme.colors.morMain}
+  font-family: ${(p) => p.theme.fontUI};
+  color: ${(p) => p.theme.colors.textSecondary};
   padding-left: 0.5rem;
   @media (min-width: 800px) {
     padding-left: 2.2rem;
@@ -25,16 +26,32 @@ const Button = styled(NavLink)`
   min-height: 6rem;
   align-items: center;
   text-decoration: none;
-  color: ${(p) => p.theme.colors.morMain};
+  color: ${(p) => p.theme.colors.textSecondary};
   padding: 1.6rem;
+  border-left: 2px solid transparent;
+  transition:
+    color ${(p) => p.theme.motion.duration.fast} ${(p) =>
+      p.theme.motion.easing.standard},
+    border-color ${(p) => p.theme.motion.duration.fast} ${(p) =>
+      p.theme.motion.easing.standard};
 
-  &:focus {
-    outline: none;
+  &:hover {
+    color: ${(p) => p.theme.colors.textPrimary};
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.secondaryLight};
+    outline-offset: -2px;
   }
 
   &.active {
-    color: ${(p) => p.theme.colors.morMain}
+    color: ${(p) => p.theme.colors.brand};
+    border-left-color: ${(p) => p.theme.colors.brand};
     pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 `;
 
@@ -43,17 +60,28 @@ const HelpLink = styled.span`
   min-height: 7.1rem;
   align-items: center;
   text-decoration: none;
-  color: ${(p) => p.theme.colors.morMain};
+  color: ${(p) => p.theme.colors.textSecondary};
   padding: 1.6rem;
   cursor: pointer;
+  transition: color ${(p) => p.theme.motion.duration.fast} ${(p) =>
+    p.theme.motion.easing.standard};
 
-  &:focus {
-    outline: none;
+  &:hover {
+    color: ${(p) => p.theme.colors.textPrimary};
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.secondaryLight};
+    outline-offset: -2px;
   }
 
   &.active {
-    color: ${(p) => p.theme.colors.morMain};
+    color: ${(p) => p.theme.colors.brand};
     pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 `;
 
@@ -61,42 +89,61 @@ const IconWrapper = styled.div`
   margin-right: 0.75rem;
   margin-left: 0.3rem;
   width: 3rem;
-  opacity: 0.5;
+  opacity: 0.7;
 
   ${Button}.active & {
     opacity: 1;
   }
 `;
 
+// Same as PrimaryNav: hidden until the rail is wide enough for the whole word,
+// rather than clipped to "Se" / "He".
 const Label = styled.span`
   opacity: 0;
+  visibility: hidden;
   flex-grow: 1;
-  font-weight: 500;
   text-align: left;
+  /* HUD voice: uppercase, letter-spaced, monospace. */
+  font-size: ${(p) => p.theme.type.xs};
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition:
+    opacity ${(p) => p.theme.motion.duration.base} ${(p) =>
+      p.theme.motion.easing.standard},
+    visibility ${(p) => p.theme.motion.duration.base};
 
   ${({ parent }) => parent}:hover ${Button}.active & {
     opacity: 1;
+    visibility: visible;
   }
 
   ${({ parent }) => parent}:hover & {
     opacity: 1;
+    visibility: visible;
   }
 
   @media (min-width: 800px) {
-    opacity: 0.9;
+    opacity: 1;
+    visibility: visible;
 
     ${Button}.active & {
       opacity: 1;
       font-weight: 700;
     }
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
 `;
 
 const NavHeader = styled.h3`
-  color: ${(p) => p.theme.colors.primary};
+  color: ${(p) => p.theme.colors.textSecondary};
   padding-left: 2rem;
   text-transform: uppercase;
-  font-size: 1.2rem;
+  font-size: ${(p) => p.theme.type.xs};
   @media (max-width: 800px) {
     display: none;
     ${({ parent }) => parent}:hover & {

@@ -33,11 +33,18 @@ const Container = styled.div`
   display: flex;
   height: 100vh;
   padding-left: 64px;
-  animation: ${fadeIn} 0.3s linear;
+  background: ${p => p.theme.colors.void};
+  color: ${p => p.theme.colors.textPrimary};
+  animation: ${fadeIn} ${p => p.theme.motion.duration.slow} ${p =>
+    p.theme.motion.easing.enter};
 
   @media (min-width: 800px) {
     left: 200px;
     padding-left: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
   }
 `;
 
@@ -47,9 +54,35 @@ const Main = styled.div`
   overflow-y: hidden;
   min-height: 100vh;
   position: relative;
+  background: ${p => p.theme.colors.void};
   /* Contain child z-indexes so a screen's overlay (e.g. a loading cover) can't
      stack above the sidebar rail in the narrow (<800px) overlay layout. */
   isolation: isolate;
+
+  /* Scanlines — the HUD's atmosphere, applied once at the shell so every screen
+     gets it instead of each one re-implementing it. Faint and
+     pointer-events:none, so it never competes with content or eats a click.
+     The colour token carries its own off-switch: classic sets it transparent.
+     Suppressed under prefers-reduced-motion, where overlays like this are
+     exactly what people are asking not to see. */
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    background: repeating-linear-gradient(
+      0deg,
+      ${p => p.theme.colors.scanline} 0 1px,
+      transparent 1px 3px
+    );
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &::after {
+      display: none;
+    }
+  }
 `;
 
 // Warms the shared session cache as soon as the main app shell mounts, so the
