@@ -15,31 +15,57 @@ const Container = styled.header`
 const AddressContainer = styled.div`
   display: flex;
   align-items: center;
-  background-color: #fff;
-  border-radius: 12px;
-  border: 2px solid rgba(14, 67, 83, 0.28);
+  gap: 0.75rem;
+  background: ${p => p.theme.colors.glassSurface};
+  border-radius: ${p => p.theme.radii.md};
+  border: 1px solid ${p => p.theme.colors.glassBorder};
   padding: 0.5rem 1.25rem;
-  color: ${p => p.theme.colors.dark};
-  opacity: 0.8;
+  color: ${p => p.theme.colors.textPrimary};
 
-  border-radius: 0.375rem;
-  background: rgba(255,255,255, 0.04);
-  border-width: 1px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  color: white;
+  svg {
+    color: ${p => p.theme.colors.textSecondary};
+    transition: color ${p => p.theme.motion.duration.fast} ${p =>
+      p.theme.motion.easing.standard};
+  }
+
+  &:hover svg {
+    color: ${p => p.theme.colors.brand};
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    svg {
+      transition: none;
+    }
+  }
 `;
 
+// Wallet address — data, not UI copy: always mono (design rule).
 const Address = styled.div`
-  font-size: 1.3rem;
-  margin-right: 1rem;
+  font-family: ${p => p.theme.fontMono};
+  font-size: ${p => p.theme.type.sm};
   cursor: default;
-  border-right: 1px;
   font-weight: 600;
   text-overflow: ellipsis;
   overflow: hidden;
   max-width: 240px;
   @media (min-width: 960px) {
     max-width: 100%;
+  }
+`;
+
+// >=40px hit target for the copy action (accessibility rule).
+const CopyButton = styled(BaseBtn)`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  margin: -0.8rem;
+  border-radius: ${p => p.theme.radii.md};
+  color: inherit;
+
+  &:hover {
+    background: ${p => p.theme.colors.glassSurfaceHover};
   }
 `;
 
@@ -57,10 +83,12 @@ export const AddressHeader = ({ copyToClipboard, address }) => {
     <Container className="sidebar-address">
       <AddressContainer>
         <Address data-testid="address">{abbreviateAddress(address, 5)}</Address>
-        <IconCopy
-          style={{ cursor: 'pointer' }}
+        <CopyButton
+          aria-label="Copy address to clipboard"
           onClick={onCopyToClipboardClick}
-        />
+        >
+          <IconCopy size={18} />
+        </CopyButton>
       </AddressContainer>
     </Container>
   );

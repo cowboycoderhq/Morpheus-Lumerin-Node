@@ -1,12 +1,15 @@
 import React from 'react';
 import styled, { keyframes } from 'styled-components';
 
+// A real ongoing-process indicator (transaction pending, data loading) — the
+// motion here reflects an actual in-flight operation, not ambient decoration
+// (B5). Honors prefers-reduced-motion with a static ring fallback.
 const Container = styled.div`
   display: inline-block;
-  background-color: #ffffff;
+  background-color: ${p => p.theme.colors.light};
   border-radius: ${({ size }) => size};
   padding: 2px;
-  box-shadow: 0 1px 1px 0 ${p => p.theme.colors.darkShade};
+  box-shadow: ${p => p.theme.shadows.elevated};
 `;
 
 const rotate = keyframes`
@@ -21,6 +24,10 @@ const Svg = styled.svg`
   display: block;
   height: ${({ size }) => size};
   width: ${({ size }) => size};
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
 `;
 
 const dash = keyframes`
@@ -43,7 +50,12 @@ const Circle = styled.circle`
   stroke-dashoffset: 0;
   animation: ${dash} 1.5s ease-in-out infinite;
   stroke-linecap: round;
-  stroke: ${p => p.theme.colors.primary};
+  stroke: ${p => p.theme.colors.brand};
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    stroke-dasharray: 65, 200;
+  }
 `;
 
 export default function Spinner({ size = '12px', ...rest }) {
