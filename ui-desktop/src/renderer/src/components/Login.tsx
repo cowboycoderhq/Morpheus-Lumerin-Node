@@ -103,11 +103,17 @@ function Login({ onInputChange, onSubmit, password, errors, status, error, logou
               error={errors.password || error}
             />
           </Sp>
+          {/* The warning below says what is LOST, not merely what restores it.
+              dev's wording ("its funds are lost forever") is the consequence
+              the user is consenting to; a re-skin may retighten the sentence
+              but must not drop it. Doubly so here — the app shows the Recovery
+              Phrase once during onboarding and never again, so the user who
+              needs this warning most is the one who cannot go and check. */}
           <Sp mt={2}>
             {confirmingReset ? (
               <ConfirmPanel data-testid="reset-confirm-panel">
-                Setting up a new wallet erases the one on this device — the
-                only way to restore it afterwards is its Recovery Phrase.
+                Setting up a new wallet erases the one on this device. If you
+                have not saved its Recovery Phrase, its funds are lost forever.
                 <ConfirmActions>
                   <KeepBtn
                     type="button"

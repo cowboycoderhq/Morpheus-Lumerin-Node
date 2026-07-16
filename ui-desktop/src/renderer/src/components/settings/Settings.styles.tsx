@@ -9,7 +9,7 @@
 // ============================================================================
 
 import { FC, ReactNode } from 'react';
-import styled from 'styled-components';
+import styled, { css } from 'styled-components';
 import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { Btn, Flex, Checkbox } from '../common';
 
@@ -131,7 +131,7 @@ export const DangerBtn = styled(Btn)`
   }
 `;
 
-export const GhostBtn = styled(Btn)`
+const ghostStyles = css`
   background: transparent;
   border: 1px solid ${(p) => p.theme.colors.glassBorder};
   box-shadow: none;
@@ -142,6 +142,21 @@ export const GhostBtn = styled(Btn)`
     box-shadow: none;
     filter: none;
   }
+`;
+
+export const GhostBtn = styled(Btn)`
+  ${ghostStyles}
+`;
+
+// One component that wears both looks, rather than picking between Btn and
+// GhostBtn at the call site. Those are two distinct styled-components, so
+// `active ? Btn : GhostBtn` changes the ELEMENT TYPE at that position on every
+// toggle — React unmounts the old node and mounts a new one, and the keyboard
+// focus that was on it is dropped. A theme picker that loses focus when you
+// pick a theme is unusable from the keyboard, which is a poor trade for two
+// lines of styling.
+export const ThemeChoiceBtn = styled(Btn)<{ $ghost?: boolean }>`
+  ${(p) => p.$ghost && ghostStyles}
 `;
 
 // ---- accessible toggle row (Failover) — a real, native <input type=checkbox>

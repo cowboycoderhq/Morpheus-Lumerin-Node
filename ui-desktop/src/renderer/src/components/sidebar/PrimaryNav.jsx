@@ -126,10 +126,16 @@ const iconSize = '2rem';
 export default function PrimaryNav({ parent, activeIndex, setActiveIndex }) {
   return (
     <Container>
+      {/* Every link carries its own aria-label because the visible <Label> is
+          NOT a reliable accessible name: the collapsed rail hides it with
+          `visibility: hidden`, which drops it out of the accessibility tree
+          (unlike the `opacity: 0` this replaced). Without these, a screen
+          reader announces five unnamed links. */}
       <Button
         onClick={() => setActiveIndex(0)}
         className={(navData) => (navData.isActive ? 'active-style' : 'none')}
         data-testid="wallet-nav-btn"
+        aria-label="Wallet"
         to="/wallet"
       >
         <IconWrapper>
@@ -140,7 +146,7 @@ export default function PrimaryNav({ parent, activeIndex, setActiveIndex }) {
         </Label>
       </Button>
 
-      <Button onClick={() => setActiveIndex(1)} to="/chat">
+      <Button onClick={() => setActiveIndex(1)} aria-label="Chat" to="/chat">
         <IconWrapper>
           <IconMessage width={iconSize} />
         </IconWrapper>
@@ -149,7 +155,7 @@ export default function PrimaryNav({ parent, activeIndex, setActiveIndex }) {
         </Label>
       </Button>
 
-      <Button onClick={() => setActiveIndex(2)} to="/models">
+      <Button onClick={() => setActiveIndex(2)} aria-label="Models" to="/models">
         <IconWrapper>
           <IconPackages width={iconSize} />
         </IconWrapper>
@@ -158,7 +164,7 @@ export default function PrimaryNav({ parent, activeIndex, setActiveIndex }) {
         </Label>
       </Button>
 
-      <Button onClick={() => setActiveIndex(3)} to="/agents">
+      <Button onClick={() => setActiveIndex(3)} aria-label="Agents" to="/agents">
         <IconWrapper>
           <IconUsers width={iconSize} />
         </IconWrapper>
@@ -167,7 +173,7 @@ export default function PrimaryNav({ parent, activeIndex, setActiveIndex }) {
         </Label>
       </Button>
 
-      <Button onClick={() => setActiveIndex(4)} to="/providers">
+      <Button onClick={() => setActiveIndex(4)} aria-label="Provider Hub" to="/providers">
         <IconWrapper>
           <IconBrandStackshare width={iconSize} />
         </IconWrapper>

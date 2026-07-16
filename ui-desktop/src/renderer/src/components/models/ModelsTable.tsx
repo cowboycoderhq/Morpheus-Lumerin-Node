@@ -318,7 +318,18 @@ function ModelCard({ onSelect, model, openSelectDownloadFolder, toasts, client, 
             </IconButton>
           </DownloadHeader>
 
-          <ProgressTrack>
+          {/* Dropping react-bootstrap's <ProgressBar> also dropped the ARIA it
+              emitted for free (role + aria-valuenow/min/max), which silently
+              took download progress out of the accessibility tree. Restated on
+              the track: a hand-rolled bar has to declare what the library
+              declared for it. */}
+          <ProgressTrack
+            role="progressbar"
+            aria-label="Model download progress"
+            aria-valuenow={Math.round(downloadProgress)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
             <ProgressFill $percent={downloadProgress} />
           </ProgressTrack>
 
