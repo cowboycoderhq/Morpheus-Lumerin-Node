@@ -1,4 +1,5 @@
 import React, { useState, useContext } from 'react';
+import { useTheme } from 'styled-components';
 import withBalanceBlockState from '../../store/hocs/withBalanceBlockState';
 import { EtherIcon } from '../icons/EtherIcon';
 import { LumerinLogoFull } from '../icons/LumerinLogoFull';
@@ -19,32 +20,35 @@ import {
 
 const WalletBalance = ({
   eth, mor
-}) => (
-  <BalanceContainer>
-    <CoinsRow>
-      <Primary data-testid="mor-balance">
-        <Balance
-          currency={mor.symbol}
-          value={+mor.value}
-          icon={
-            <LumerinLogoFull style={{ color: 'white', height: "2rem"}}/> 
-          }
-          equivalentUSD={mor.usd}
-          maxSignificantFractionDigits={0}
-        />
-      </Primary>
-      <Primary data-testid="eth-balance">
-        <Balance
-          currency={eth.symbol}
-          value={+eth.value}
-          icon={<EtherIcon size="3.3rem" />}
-          equivalentUSD={eth.usd}
-          maxSignificantFractionDigits={5}
-        />
-      </Primary>
-    </CoinsRow>
-  </BalanceContainer>
-);
+}) => {
+  const theme = useTheme();
+  return (
+    <BalanceContainer>
+      <CoinsRow>
+        <Primary data-testid="mor-balance">
+          <Balance
+            currency={mor.symbol}
+            value={+mor.value}
+            icon={
+              <LumerinLogoFull style={{ color: theme.colors.moneySurfaceText, height: "2rem"}}/>
+            }
+            equivalentUSD={mor.usd}
+            maxSignificantFractionDigits={0}
+          />
+        </Primary>
+        <Primary data-testid="eth-balance">
+          <Balance
+            currency={eth.symbol}
+            value={+eth.value}
+            icon={<EtherIcon size="3.3rem" />}
+            equivalentUSD={eth.usd}
+            maxSignificantFractionDigits={5}
+          />
+        </Primary>
+      </CoinsRow>
+    </BalanceContainer>
+  );
+};
 
 const BalanceBlock = ({
   onTabSwitch,

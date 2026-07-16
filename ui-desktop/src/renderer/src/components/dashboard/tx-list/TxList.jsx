@@ -29,13 +29,13 @@ const Title = styled.div`
   white-space: nowrap;
   margin: 0;
   font-weight: 600;
-  color: ${(p) => p.theme.colors.morMain};
+  color: ${(p) => p.theme.colors.brand};
   cursor: default;
 `;
 
 const Count = styled.span`
   font-size: 1.2rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: ${(p) => p.theme.colors.textMuted};
   font-variant-numeric: tabular-nums;
 `;
 
@@ -49,16 +49,22 @@ const RefreshPill = styled.div`
   align-items: center;
   gap: 7px;
   font-size: 1.1rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: ${(p) => p.theme.colors.textMuted};
 
   &::before {
     content: '';
     width: 12px;
     height: 12px;
-    border: 2px solid rgba(255, 255, 255, 0.2);
-    border-top-color: ${(p) => p.theme.colors.morMain};
-    border-radius: 50%;
+    border: 2px solid ${(p) => p.theme.colors.glassBorder};
+    border-top-color: ${(p) => p.theme.colors.brand};
+    border-radius: ${(p) => p.theme.radii.pill};
     animation: ${spin} 0.7s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &::before {
+      animation: none;
+    }
   }
 `;
 
@@ -70,7 +76,7 @@ const ColumnHeader = styled.div`
   font-size: 1.05rem;
   letter-spacing: 0.6px;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.38);
+  color: ${(p) => p.theme.colors.textMuted};
 
   span:nth-child(1) {
     width: 10%;
@@ -93,9 +99,9 @@ const ColumnHeader = styled.div`
 const ListContainer = styled.div`
   flex: 1;
   min-height: 160px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: ${(p) => p.theme.radii.lg};
+  background: ${(p) => p.theme.colors.glassSurface};
+  border: 1px solid ${(p) => p.theme.colors.glassBorder};
   overflow: hidden;
 `;
 
@@ -107,13 +113,25 @@ const Center = styled.div`
 `;
 
 const TxRowContainer = styled.div`
-  transition: background 0.12s ease;
+  border-radius: ${(p) => p.theme.radii.md};
+  transition: background ${(p) => p.theme.motion.duration.fast} ${(p) =>
+    p.theme.motion.easing.standard};
   &:hover {
-    background: rgba(32, 220, 142, 0.06);
+    background: ${(p) => p.theme.colors.brandTint(0.06)};
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 `;
 
-export const TxList = ({ transactions, loading, isRefreshing, syncStatus, onReceiveClick }) => {
+export const TxList = ({
+  transactions,
+  loading,
+  isRefreshing,
+  syncStatus,
+  onReceiveClick,
+}) => {
   const hasRows = +transactions.length > 0;
 
   const rowRenderer = ({ key, style, index }) => (

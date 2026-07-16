@@ -11,15 +11,18 @@ const ValueContainer = styled.div`
   justify-content: center;
 `;
 
+// Money surface (B1): the transaction amount — mono/tabular.
 const Container = styled.div`
+  font-family: ${p => p.theme.fontMono};
+  font-variant-numeric: tabular-nums;
   line-height: 2.5rem;
   opacity: ${({ isPending }) => (isPending ? '0.5' : '1')};
   color: ${p =>
     p.isPending
-      ? p.theme.colors.copy
+      ? p.theme.colors.textMuted
       : p.isFailed
       ? p.theme.colors.danger
-      : p.theme.colors.dark};
+      : p.theme.colors.moneySurfaceText};
   display: block;
   text-align: center;
   font-size: 1.6rem;

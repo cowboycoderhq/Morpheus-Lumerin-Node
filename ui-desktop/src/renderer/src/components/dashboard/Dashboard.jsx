@@ -5,8 +5,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   IconCopy,
   IconExternalLink,
-  IconArrowUpRight,
   IconArrowDownLeft,
+  IconArrowUpRight,
   IconChartBar,
   IconLock,
 } from '@tabler/icons-react';
@@ -34,6 +34,8 @@ const fadeUp = keyframes`
   to   { opacity: 1; transform: translateY(0); }
 `;
 
+// Reflects a real in-flight fetch (isFetching), not decorative ambient loop —
+// still honors reduced-motion below (B5).
 const pulse = keyframes`
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.35; }
@@ -67,30 +69,33 @@ const PageTitle = styled.h1`
   font-size: 2.4rem;
   line-height: 1;
   font-weight: 600;
-  color: ${(p) => p.theme.colors.morMain};
+  color: ${(p) => p.theme.colors.brand};
 `;
 
 const ChainBadge = styled.div`
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: rgba(255, 255, 255, 0.85);
+  color: ${(p) => p.theme.colors.textPrimary};
   font-size: 1.2rem;
   padding: 0.5rem 1rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: ${(p) => p.theme.radii.pill};
+  background: ${(p) => p.theme.colors.glassSurface};
+  border: 1px solid ${(p) => p.theme.colors.glassBorder};
 `;
 
+// Money surface (B1): shows the wallet address — solid/opaque, mono, no
+// glass/glow (distinct from the sidebar's AddressHeader glass treatment).
 const AddressPill = styled.div`
   display: inline-flex;
   align-items: center;
   gap: 10px;
   padding: 0.6rem 0.7rem 0.6rem 1.2rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.92);
+  border-radius: ${(p) => p.theme.radii.pill};
+  background: ${(p) => p.theme.colors.moneySurfaceBg};
+  border: 1px solid ${(p) => p.theme.colors.moneySurfaceBorder};
+  color: ${(p) => p.theme.colors.moneySurfaceText};
+  font-family: ${(p) => p.theme.fontMono};
   font-size: 1.3rem;
   font-variant-numeric: tabular-nums;
 `;
@@ -98,9 +103,9 @@ const AddressPill = styled.div`
 const AddressDot = styled.div`
   width: 8px;
   height: 8px;
-  border-radius: 50%;
-  background: ${(p) => p.theme.colors.morMain};
-  box-shadow: 0 0 0 3px rgba(32, 220, 142, 0.18);
+  border-radius: ${(p) => p.theme.radii.pill};
+  background: ${(p) => p.theme.colors.brand};
+  box-shadow: 0 0 0 3px ${(p) => p.theme.colors.brandTint(0.18)};
 `;
 
 const IconBtn = styled.button`
@@ -109,16 +114,31 @@ const IconBtn = styled.button`
   justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: 50%;
+  min-width: 40px;
+  min-height: 40px;
+  margin: -5px;
+  border-radius: ${(p) => p.theme.radii.pill};
   border: none;
   background: transparent;
-  color: rgba(255, 255, 255, 0.6);
+  color: ${(p) => p.theme.colors.textSecondary};
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background ${(p) => p.theme.motion.duration.fast} ${(p) =>
+    p.theme.motion.easing.standard},
+    color ${(p) => p.theme.motion.duration.fast} ${(p) =>
+      p.theme.motion.easing.standard};
 
   &:hover {
-    background: rgba(32, 220, 142, 0.14);
-    color: ${(p) => p.theme.colors.morMain};
+    background: ${(p) => p.theme.colors.brandTint(0.14)};
+    color: ${(p) => p.theme.colors.brand};
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.secondaryLight};
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 `;
 
@@ -129,25 +149,21 @@ const HeroGrid = styled.div`
   gap: 1.6rem;
 `;
 
+// Money surface (B1): live coin balances — solid/opaque background, no
+// gradient/glow. The primary token is distinguished with a brand border only.
 const TokenCard = styled.div`
   position: relative;
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: ${(p) => p.theme.radii.lg};
   padding: 1.4rem 1.8rem;
-  background: ${(p) =>
-    p.$accent
-      ? 'linear-gradient(135deg, rgba(32,220,142,0.16) 0%, rgba(32,220,142,0.04) 55%, rgba(255,255,255,0.02) 100%)'
-      : 'rgba(255,255,255,0.04)'};
+  background: ${(p) => p.theme.colors.moneySurfaceBg};
   border: 1px solid
-    ${(p) =>
-      p.$accent ? 'rgba(32,220,142,0.30)' : 'rgba(255,255,255,0.07)'};
-  animation: ${fadeUp} 0.35s ease both;
-  transition: border-color 0.2s ease, transform 0.2s ease;
+    ${(p) => (p.$accent ? p.theme.colors.brand : p.theme.colors.moneySurfaceBorder)};
+  animation: ${fadeUp} ${(p) => p.theme.motion.duration.slow} ${(p) =>
+    p.theme.motion.easing.enter} both;
 
-  &:hover {
-    transform: translateY(-2px);
-    border-color: ${(p) =>
-      p.$accent ? 'rgba(32,220,142,0.5)' : 'rgba(255,255,255,0.14)'};
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
   }
 `;
 
@@ -158,17 +174,20 @@ const TokenHead = styled.div`
   margin-bottom: 1rem;
 `;
 
+// The MOR chip ($accent): just the wings, white and a size up — no disc, no texture.
 const TokenBadge = styled.div`
   display: flex;
   align-items: center;
   justify-content: center;
   width: 40px;
   height: 40px;
-  border-radius: 50%;
+  border-radius: ${(p) => p.theme.radii.pill};
   flex-shrink: 0;
-  color: ${(p) => (p.$accent ? '#0b1f16' : '#fff')};
+  /* The wings stay white in both looks — it's a brand mark, not a themed
+     surface — but read it from the token so no literal hides in here. */
+  color: ${(p) => (p.$accent ? p.theme.colors.light : p.theme.colors.textPrimary)};
   background: ${(p) =>
-    p.$accent ? p.theme.colors.morMain : 'rgba(255,255,255,0.08)'};
+    p.$accent ? 'transparent' : p.theme.colors.voidElevated};
 `;
 
 const TokenName = styled.div`
@@ -179,13 +198,13 @@ const TokenName = styled.div`
 const TokenSymbol = styled.span`
   font-size: 1.5rem;
   font-weight: 600;
-  color: #fff;
+  color: ${(p) => p.theme.colors.textPrimary};
   letter-spacing: 0.3px;
 `;
 
 const TokenSub = styled.span`
   font-size: 1.1rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: ${(p) => p.theme.colors.textMuted};
 `;
 
 const LiveDot = styled.span`
@@ -194,39 +213,49 @@ const LiveDot = styled.span`
   align-items: center;
   gap: 6px;
   font-size: 1rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: ${(p) => p.theme.colors.textMuted};
 
   &::before {
     content: '';
     width: 7px;
     height: 7px;
-    border-radius: 50%;
-    background: ${(p) => p.theme.colors.morMain};
+    border-radius: ${(p) => p.theme.radii.pill};
+    background: ${(p) => p.theme.colors.brand};
     animation: ${pulse} 1.1s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &::before {
+      animation: none;
+    }
   }
 `;
 
+// The headline balance figure — always mono/tabular (money surface).
 const TokenBalance = styled.div`
+  font-family: ${(p) => p.theme.fontMono};
   font-size: 2.7rem;
   line-height: 1.05;
   font-weight: 600;
-  color: #fff;
+  color: ${(p) => p.theme.colors.moneySurfaceText};
   letter-spacing: -0.5px;
   font-variant-numeric: tabular-nums;
   word-break: break-all;
 `;
 
 const TokenUnit = styled.span`
+  font-family: ${(p) => p.theme.fontMono};
   font-size: 1.6rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.5);
+  color: ${(p) => p.theme.colors.textSecondary};
   margin-left: 6px;
 `;
 
 const TokenUsd = styled.div`
+  font-family: ${(p) => p.theme.fontMono};
   margin-top: 0.6rem;
   font-size: 1.35rem;
-  color: rgba(255, 255, 255, 0.55);
+  color: ${(p) => p.theme.colors.textSecondary};
   font-variant-numeric: tabular-nums;
 `;
 
@@ -238,14 +267,15 @@ const StatsRow = styled.div`
   margin: 1.2rem 0;
 `;
 
+// Money surface (B1): staked balance is a live fund figure.
 const StatCard = styled.div`
   display: flex;
   align-items: center;
   gap: 1.4rem;
   padding: 1.6rem 1.8rem;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: ${(p) => p.theme.radii.lg};
+  background: ${(p) => p.theme.colors.moneySurfaceBg};
+  border: 1px solid ${(p) => p.theme.colors.moneySurfaceBorder};
 `;
 
 const StatIcon = styled.div`
@@ -254,10 +284,10 @@ const StatIcon = styled.div`
   justify-content: center;
   width: 44px;
   height: 44px;
-  border-radius: 12px;
+  border-radius: ${(p) => p.theme.radii.md};
   flex-shrink: 0;
-  color: ${(p) => p.theme.colors.morMain};
-  background: rgba(32, 220, 142, 0.12);
+  color: ${(p) => p.theme.colors.brand};
+  background: ${(p) => p.theme.colors.voidElevated};
 `;
 
 const StatText = styled.div`
@@ -268,36 +298,58 @@ const StatText = styled.div`
 
 const StatLabel = styled.span`
   font-size: 1.15rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: ${(p) => p.theme.colors.textSecondary};
   text-transform: uppercase;
   letter-spacing: 0.6px;
 `;
 
 const StatValue = styled.span`
+  font-family: ${(p) => p.theme.fontMono};
   font-size: 1.9rem;
   font-weight: 600;
-  color: #fff;
+  color: ${(p) => p.theme.colors.moneySurfaceText};
   font-variant-numeric: tabular-nums;
 `;
 
+// Navigation actions (Receive / Staking Dashboard) — not a money surface, so
+// the app's usual glass chrome applies.
 const ActionTile = styled.button`
   display: flex;
   align-items: center;
   gap: 1.4rem;
   padding: 1.6rem 1.8rem;
-  border-radius: 14px;
+  border-radius: ${(p) => p.theme.radii.lg};
   text-align: left;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  color: #fff;
-  transition: background 0.15s ease, border-color 0.15s ease,
-    transform 0.15s ease;
+  background: ${(p) => p.theme.colors.glassSurface};
+  border: 1px solid ${(p) => p.theme.colors.glassBorder};
+  color: ${(p) => p.theme.colors.textPrimary};
+  min-height: 40px;
+  transition: background ${(p) => p.theme.motion.duration.base} ${(p) =>
+    p.theme.motion.easing.standard},
+    border-color ${(p) => p.theme.motion.duration.base} ${(p) =>
+      p.theme.motion.easing.standard},
+    transform ${(p) => p.theme.motion.duration.base} ${(p) =>
+      p.theme.motion.easing.standard};
 
-  &:hover {
-    background: rgba(32, 220, 142, 0.08);
-    border-color: rgba(32, 220, 142, 0.35);
+  &:hover,
+  &:focus-visible {
+    background: ${(p) => p.theme.colors.glassSurfaceHover};
+    border-color: ${(p) => p.theme.colors.brand};
     transform: translateY(-2px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.secondaryLight};
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+    &:hover,
+    &:focus-visible {
+      transform: none;
+    }
   }
 `;
 
@@ -313,7 +365,7 @@ const ActionTitle = styled.span`
 
 const ActionSub = styled.span`
   font-size: 1.1rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: ${(p) => p.theme.colors.textMuted};
 `;
 
 const formatAmount = (value, maxFrac = 4) => {
@@ -339,23 +391,30 @@ const Dashboard = ({
   explorerUrl,
   ...props
 }) => {
+  // Another screen can ask the wallet to open straight into a view — Chat sends
+  // a user with no MOR here with `openModal: 'receive'`, so they land on the
+  // address/QR they actually need instead of the wallet's front page.
   const location = useLocation();
-  const [activeModal, setActiveModal] = useState(location.state?.openModal ?? null);
+  const [activeModal, setActiveModal] = useState(
+    location.state?.openModal ?? null,
+  );
   const context = useContext(ToastsContext);
 
   const queryClient = useQueryClient();
 
   const onCloseModal = () => setActiveModal(null);
+
   const onTabSwitch = (modal) => {
     setActiveModal(modal);
-    // A completed transfer needs the balance + activity to reflect it. The
-    // router can index the tx a little after broadcast, so refresh now and
-    // again shortly after.
+
+    // A completed transfer changes BOTH the balance and the activity list, and
+    // nothing invalidated either cache — so a send you had just made did not
+    // appear in Recent Activity and the balance stayed stale. Refresh on
+    // success, then again as the router indexes the tx (it is not queryable the
+    // instant it is broadcast).
     if (modal === 'success') {
       const refresh = () => {
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.balances(address),
-        });
+        queryClient.invalidateQueries({ queryKey: queryKeys.balances(address) });
         queryClient.invalidateQueries({
           queryKey: queryKeys.transactions(address),
         });
@@ -463,7 +522,7 @@ const Dashboard = ({
           <TokenCard $accent>
             <TokenHead>
               <TokenBadge $accent>
-                <MorpheusLogo style={{ width: '22px', height: '22px' }} />
+                <MorpheusLogo style={{ width: '34px', height: '34px' }} />
               </TokenBadge>
               <TokenName>
                 <TokenSymbol>{morSymbol}</TokenSymbol>
@@ -510,7 +569,7 @@ const Dashboard = ({
             </StatText>
           </StatCard>
 
-          <ActionTile data-testid="send-tile" onClick={() => onTabSwitch('send')}>
+          <ActionTile onClick={() => onTabSwitch('send')} data-testid="send-tile">
             <StatIcon>
               <IconArrowUpRight size={22} />
             </StatIcon>
@@ -545,12 +604,12 @@ const Dashboard = ({
 
         <TxList
           loadNextTransactions={() => {}}
-          onReceiveClick={() => onTabSwitch('receive')}
           hasTransactions={!!transactions.length}
           syncStatus={syncStatus}
           loading={transactionsQuery.isLoading}
           isRefreshing={transactionsQuery.isFetching}
           transactions={transactions}
+          onReceiveClick={() => onTabSwitch('receive')}
         />
       </Page>
 
