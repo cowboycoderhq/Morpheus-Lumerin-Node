@@ -8,6 +8,7 @@ import { SuccessForm } from './SuccessForm';
 import withTransactionModalState from '../../../store/hocs/withTransactionModalState';
 
 const Modal = styled.div`
+  border-radius: ${(p) => p.theme.radii.lg};
   display: flex;
   flex-direction: column;
   position: fixed;
@@ -17,24 +18,31 @@ const Modal = styled.div`
   width: 100%;
   height: 100%;
   overflow: auto;
-  background-color: rgb(0, 0, 0);
-  background-color: rgba(0, 0, 0, 0.4);
+  /* Backdrop reads the scrim token so it follows the theme rather than pinning
+     one look's void — classic swaps it back to a green-black. */
+  background-color: ${(p) => p.theme.colors.scrim};
   align-items: center;
   justify-content: center;
 `;
 
+// Money surface (B1): Send/Receive/Success all show balances/addresses —
+// solid/opaque, no glass/glow.
 const Body = styled.div`
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   position: fixed;
   z-index: 20;
-  background-color: ${p => p.theme.colors.morLight};
+  background-color: ${p => p.theme.colors.moneySurfaceBg};
+  border: 1px solid ${p => p.theme.colors.moneySurfaceBorder};
+  box-shadow: ${p => p.theme.shadows.elevated};
   width: 400px;
+  /* Was a hard height: 500px, so the confirmation panel pushed the send button
+     out of the window. Grow with the content, cap at the viewport, scroll. */
   min-height: 500px;
   max-height: 88vh;
   overflow-y: auto;
-  border-radius: 5px;
+  border-radius: ${p => p.theme.radii.lg};
   padding: 2rem 3rem 2rem 3rem;
 `;
 
@@ -44,12 +52,16 @@ function TransactionModal(props) {
 
   const handlePropagation = e => e.stopPropagation();
 
+  // Was `e.targetValue` — not a property of anything. SendForm passes the raw
+  // string (e.target.value), so this wrote `undefined` and flipped the address
+  // input from controlled to uncontrolled.
   const onSetDestinationAddress = value => setDestinationAddress(value);
 
   if (!props.activeTab) {
     return <></>;
   }
 
+  // Same stacking trap as the shared Modal — see components/contracts/modals/Modal.jsx.
   return createPortal(
     <Modal onClick={props.onRequestClose}>
       <Body onClick={handlePropagation}>

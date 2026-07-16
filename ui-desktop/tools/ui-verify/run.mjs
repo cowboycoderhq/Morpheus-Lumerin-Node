@@ -47,13 +47,36 @@ const browser = await chromium.launch();
     await p.waitForSelector('[data-testid="send-confirm"]', { timeout: 5000 });
     const panel = await p.locator('[data-testid="send-confirm"]').innerText();
     assert(/1\.5\s*MOR/.test(panel), 'confirm panel missing amount');
+    // The panel must show the address that will actually be SENT (toAddress =
+    // the HOC state onSubmit uses), not the input's local echo. The case feeds
+    // the two props different values so a rename cannot pass silently.
     assert(panel.includes('0x2f4E8a1B9c3D5e6F7a8B9c0d1E2f3A4b5C6d7E8f'), 'confirm panel missing full toAddress');
+    assert(
+      !panel.includes('0x1111111111111111111111111111111111111111'),
+      'confirm panel shows the input echo (destinationAddress) instead of the address being sent',
+    );
     assert(/cannot be undone/i.test(panel), 'confirm panel missing irreversible warning');
     const btn = await p.getByTestId('send-confirm-btn').innerText();
     assert(/confirm & send/i.test(btn), 'button did not switch to Confirm & send');
     const submits = await p.evaluate(() => window.__onSubmit);
     assert(submits === 0, `onSubmit fired ${submits}x before confirm (must be 0)`);
     await p.screenshot({ path: `${SHOTS}/sendform-confirm.png` });
+
+    // A transfer is irreversible, so a click landing while one is IN FLIGHT must
+    // not start a second. Two things stop it — the button unmounts behind a
+    // Spinner (isPending), and `if (isPending) return;` guards the handler. This
+    // asserts the OUTCOME rather than either mechanism, so it stays true if the
+    // reskin restructures the button, and fails if the last guard is lost.
+    // (onSubmit is deliberately slow in the case, or there is no in-flight
+    // window to click into and this proves nothing.)
+    await p.getByTestId('send-confirm-btn').click();
+    await p
+      .getByTestId('send-confirm-btn')
+      .click({ timeout: 250 })
+      .catch(() => {}); // expected: the button is gone mid-send
+    await p.waitForTimeout(700);
+    const total = await p.evaluate(() => window.__onSubmit);
+    assert(total === 1, `send fired ${total}x — a click during flight started a second transfer`);
   });
   await page.close();
 }
