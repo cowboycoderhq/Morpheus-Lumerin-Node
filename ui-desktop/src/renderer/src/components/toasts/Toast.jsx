@@ -19,22 +19,22 @@ const Container = styled.div`
       : type === 'error'
       ? theme.colors.danger
       : theme.colors.primary};
-  background-color: #454545;
-  border-radius: 4px;
+  background-color: ${(p) => p.theme.colors.voidElevated};
+  border-radius: ${(p) => p.theme.radii.sm};
   padding: 8px 16px 12px;
   position: relative;
-  box-shadow: 0 4px 12px -1px rgba(0, 0, 0, 0.35),
-    0 1px 3px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: ${(p) => p.theme.shadows.elevated};
 `;
 
 const DismissBtn = styled.button`
+  border-radius: ${(p) => p.theme.radii.sm};
   position: absolute;
   top: 0;
   right: 0;
   background: transparent;
   outline: none;
   cursor: pointer;
-  color: white;
+  color: ${(p) => p.theme.colors.textPrimary};
   border: none;
   padding: 16px;
   line-height: 1;
@@ -55,17 +55,18 @@ const Scroller = styled.div`
 `;
 
 const Message = styled.div`
-  color: white;
+  color: ${(p) => p.theme.colors.textPrimary};
   font-size: 13px;
   line-height: 1.25;
   padding: 12px 32px 12px 0;
 `;
 
 const ShowMoreBtn = styled.button`
+  border-radius: ${(p) => p.theme.radii.pill};
   background: none;
   outline: none;
   cursor: pointer;
-  color: white;
+  color: ${(p) => p.theme.colors.textPrimary};
   border: none;
   line-height: 1;
   font-size: 13px;

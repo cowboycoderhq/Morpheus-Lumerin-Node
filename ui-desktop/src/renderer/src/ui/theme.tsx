@@ -168,6 +168,10 @@ const aurora = {
     // red glyph, not a solid red fill; without a tint function the only
     // token-driven option is solid `danger`, which is ~6x louder than intended.
     dangerTint: (a: number) => `rgba(224, 92, 115, ${a})`,
+    // Success tint — completes the family. Status dots want a translucent glow
+    // ring around a solid dot; without this the only options were a raw literal
+    // or a solid ring.
+    successTint: (a: number) => `rgba(89, 227, 167, ${a})`,
 
     // ---- LEGACY ALIASES (components read these directly) ------------------
     primary: 'rgba(13, 24, 39, 1)',
@@ -270,6 +274,7 @@ const classic = {
     scanline: 'transparent',
     warningTint: (a: number) => `rgba(255, 200, 87, ${a})`,
     dangerTint: (a: number) => `rgba(212, 96, 69, ${a})`,
+    successTint: (a: number) => `rgba(57, 158, 90, ${a})`,
 
     // ---- LEGACY ALIASES — ORIGINAL Morpheus palette, verbatim -------------
     primary: 'rgba(23, 54, 41, 1)',
