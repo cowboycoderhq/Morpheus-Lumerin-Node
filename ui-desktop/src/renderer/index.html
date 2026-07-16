@@ -28,36 +28,19 @@
         font-size: 10px;
       }
 
-      ::-webkit-scrollbar {
-          background-color: #03160d;
-          width: 16px /* 20px / 16px */;
-      }
+      /* Colour lives in src/ui/GlobalStyle.ts, not here. This file is static
+         HTML: it cannot read the theme, so any colour written here is frozen to
+         one variant forever — and `background: #03160e!important` was frozen to
+         classic AND unoverridable, which is why selecting Aurora still left a
+         green page and green scrollbars behind onboarding and Login.
+         Everything kept below is genuinely theme-independent. */
 
-      ::-webkit-scrollbar-thumb {
-          background-color: #20dc8e80;
-          border: 0.25em /* 4px / 16px */ solid #03160d;
-          border-radius: 16px /* 20px / 16px  #2c2c2c */;
-      }
-
-      ::-webkit-scrollbar-corner {
-        background-color: #03160d;
-      }
-      
       body {
         margin: 0;
         padding: 0;
-        background: #03160e!important;
-        /* background-image: url("src/main.jpg");
-        background-position: right;
-        background-repeat: no-repeat;
-        -webkit-background-size: cover;
-        -moz-background-size: cover;
-        -o-background-size: cover;
-        background-size: cover; */
         font-family: 'Montserrat', sans-serif;
         font-style: normal;
         font-weight: 400!important;
-        color: white!important;
         font-size: 1.6rem!important;
         -webkit-font-smoothing: antialiased;
       }

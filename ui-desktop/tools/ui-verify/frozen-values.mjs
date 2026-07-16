@@ -31,7 +31,12 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC = join(here, '..', '..', 'src', 'renderer', 'src');
-const ENTRY = join(SRC, 'App.tsx');
+// One level up from the component tree, because index.html lives there and is
+// the app's real entry — Electron loads it directly. Scoping the scan to src/
+// is what let its hardcoded page background and scrollbars go unseen.
+const RENDERER = join(here, '..', '..', 'src', 'renderer');
+const ENTRY = join(SRC, 'main.tsx'); // the real entry: index.html loads it, it imports App
+const HTML_ENTRY = join(RENDERER, 'index.html');
 
 // ---------------------------------------------------------------- reachability
 // Resolve each import specifier to a file and walk from the entry. Basename
@@ -73,6 +78,9 @@ const visit = (file) => {
   }
 };
 visit(ENTRY);
+// Nothing imports index.html, but Electron loads it — reachable by definition.
+// Without this seed the graph files it as dead code and merely reports it.
+reachable.add(HTML_ENTRY);
 
 // ---------------------------------------------------------------- the invariant
 const COLOR_PROPS =
@@ -104,21 +112,66 @@ const COLOR_VALUE = new RegExp(
 );
 const EXEMPT = /\b(transparent|inherit|currentColor|none|unset|initial|revert)\b/;
 
+// .html and .css count. The gate originally walked .jsx/.tsx only and so never
+// opened index.html — which pinned the page background and every scrollbar to
+// classic with `!important`, unreachable by any theme. A literal is invisible
+// to a sweep that does not read the file it lives in, and "the files I thought
+// of" is the same defect as "the literals I could recall".
 const walk = (dir, out = []) => {
   for (const e of readdirSync(dir)) {
     const p = join(dir, e);
     if (statSync(p).isDirectory()) walk(p, out);
-    else if (/\.(jsx|tsx)$/.test(p)) out.push(p);
+    else if (/\.(jsx|tsx|html|css)$/.test(p)) out.push(p);
+  }
+  return out;
+};
+
+// Strip comments while PRESERVING line numbers, block-aware. A per-line
+// stripper only sees comments that open and close on one line, so a multi-line
+// /* */ or <!-- --> leaves its prose looking like code — and a comment
+// explaining a frozen literal then reads as a frozen literal. The detector
+// must not flag the note about the bug as the bug.
+const stripComments = (text) => {
+  const out = [];
+  let inBlock = false;
+  let inHtml = false;
+  for (const raw of text.split('\n')) {
+    let line = raw;
+    let acc = '';
+    while (line.length) {
+      if (inBlock) {
+        const end = line.indexOf('*/');
+        if (end === -1) { line = ''; break; }
+        line = line.slice(end + 2);
+        inBlock = false;
+      } else if (inHtml) {
+        const end = line.indexOf('-->');
+        if (end === -1) { line = ''; break; }
+        line = line.slice(end + 3);
+        inHtml = false;
+      } else {
+        const b = line.indexOf('/*');
+        const h = line.indexOf('<!--');
+        const l = line.indexOf('//');
+        const first = [b, h, l].filter((x) => x !== -1).sort((a, z) => a - z)[0];
+        if (first === undefined) { acc += line; line = ''; break; }
+        acc += line.slice(0, first);
+        if (first === l && (b === -1 || l < b) && (h === -1 || l < h)) { line = ''; break; }
+        if (first === b) { inBlock = true; line = line.slice(b + 2); }
+        else { inHtml = true; line = line.slice(h + 4); }
+      }
+    }
+    out.push(acc);
   }
   return out;
 };
 
 const live = [];
 const dead = [];
-for (const file of walk(SRC)) {
-  const lines = readFileSync(file, 'utf8').split('\n');
-  lines.forEach((line, i) => {
-    const code = line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '');
+for (const file of walk(RENDERER)) {
+  const rawLines = readFileSync(file, 'utf8').split('\n');
+  const lines = stripComments(readFileSync(file, 'utf8'));
+  lines.forEach((code, i) => {
     if (!code.includes(':')) return;
     const prop = code.slice(0, code.indexOf(':'));
     const value = code.slice(code.indexOf(':') + 1);
@@ -127,9 +180,9 @@ for (const file of walk(SRC)) {
     if (EXEMPT.test(value) && !COLOR_VALUE.test(value.replace(EXEMPT, ''))) return;
     if (/theme/.test(value)) return; // derives from the live theme — the invariant holds
     (reachable.has(file) ? live : dead).push({
-      file: relative(SRC, file),
+      file: relative(RENDERER, file),
       line: i + 1,
-      text: line.trim(),
+      text: rawLines[i].trim(),
       reachable: reachable.has(file),
     });
   });
@@ -139,7 +192,7 @@ if (process.argv.includes('--json')) {
   console.log(JSON.stringify({ live, dead }, null, 2));
 } else {
   console.log('FROZEN VALUES — colour-valued declarations that never read props.theme\n');
-  console.log(`REACHABLE from App.tsx (${live.length}) — these ship and must swap:`);
+  console.log(`REACHABLE from the entry (${live.length}) — these ship and must swap:`);
   for (const f of live) console.log(`  ${f.file}:${f.line}  ${f.text}`);
   if (!live.length) console.log('  (none)');
   console.log(`\nUNREACHABLE (${dead.length}) — dead code, reported not failed:`);
@@ -147,7 +200,7 @@ if (process.argv.includes('--json')) {
   for (const f of dead) byFile[f.file] = (byFile[f.file] || 0) + 1;
   for (const [f, n] of Object.entries(byFile).sort()) console.log(`  ${String(n).padStart(2)}  ${f}`);
   if (!dead.length) console.log('  (none)');
-  console.log(`\nGraph: ${reachable.size} modules reachable from App.tsx.`);
+  console.log(`\nGraph: ${reachable.size} modules reachable from the entry.`);
 }
 
 const failOn = process.argv.includes('--all') ? live.length + dead.length : live.length;

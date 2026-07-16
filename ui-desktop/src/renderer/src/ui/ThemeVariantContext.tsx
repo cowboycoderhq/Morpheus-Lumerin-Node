@@ -12,6 +12,7 @@ import {
   themes,
   ThemeVariant,
 } from './theme';
+import { GlobalStyle } from './GlobalStyle';
 
 // Cast: styled-components v4 ships React 16/17-era class-component typings that
 // React 18's stricter JSX resolution rejects. Narrow it to an FC so TSC accepts
@@ -19,6 +20,10 @@ import {
 const ThemeProvider = StyledThemeProvider as unknown as React.FC<
   React.PropsWithChildren<{ theme: object }>
 >;
+
+// Same cast, same reason: createGlobalStyle returns those legacy typings too,
+// so React 18 rejects it as a JSX component. Runtime behaviour is unchanged.
+const GlobalStyleFC = GlobalStyle as unknown as React.FC;
 
 const STORAGE_KEY = 'trinity.themeVariant';
 
@@ -74,7 +79,13 @@ export const ThemeVariantProvider: React.FC<React.PropsWithChildren> = ({
 
   return (
     <ThemeVariantContext.Provider value={value}>
-      <ThemeProvider theme={activeTheme}>{children}</ThemeProvider>
+      <ThemeProvider theme={activeTheme}>
+        {/* Lives here, not at a call site: the page background and scrollbars
+            are part of the active theme, so they must swap with it and cannot
+            be left to whoever remembers to mount them. */}
+        <GlobalStyleFC />
+        {children}
+      </ThemeProvider>
     </ThemeVariantContext.Provider>
   );
 };
