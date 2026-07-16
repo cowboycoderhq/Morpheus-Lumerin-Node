@@ -150,6 +150,12 @@ const aurora = {
     moneySurfaceBorder: 'rgba(230, 241, 250, 0.18)',
     moneySurfaceText: auroraTextPrimary,
 
+    // Tint & scrim — one function covers every brand-tint literal (hovers,
+    // borders, pills) so it swaps to green under classic. Removability: edit the
+    // accent here, never in the N components that reference it.
+    brandTint: (a: number) => `rgba(94, 208, 255, ${a})`,
+    scrim: 'rgba(2, 6, 12, 0.72)', // modal/overlay backdrop
+
     // ---- LEGACY ALIASES (components read these directly) ------------------
     primary: 'rgba(13, 24, 39, 1)',
     primaryLight: '#6fd6ff',
@@ -243,6 +249,10 @@ const classic = {
     moneySurfaceBorder: 'rgba(255, 255, 255, 0.18)',
     moneySurfaceText: classicText,
 
+    // Tint & scrim — green under classic (mirrors aurora's brandTint/scrim keys).
+    brandTint: (a: number) => `rgba(32, 220, 142, ${a})`,
+    scrim: 'rgba(4, 12, 8, 0.72)',
+
     // ---- LEGACY ALIASES — ORIGINAL Morpheus palette, verbatim -------------
     primary: 'rgba(23, 54, 41, 1)',
     primaryLight: 'rgba(32, 220, 142, 1)',
@@ -281,6 +291,13 @@ const classic = {
     glowStrength: 0,
   },
 } as const;
+
+// Compile-time parity: classic MUST define every color key aurora does, or the
+// classic swap yields `undefined` in CSS for a missing token. This fails
+// typecheck the moment a key is added to one variant but not the other.
+type ClassicColorParity = Record<keyof typeof aurora.colors, unknown>;
+const _classicColorParity: ClassicColorParity = classic.colors;
+void _classicColorParity;
 
 // ---- Public API ------------------------------------------------------------
 export const themes = { aurora, classic };
