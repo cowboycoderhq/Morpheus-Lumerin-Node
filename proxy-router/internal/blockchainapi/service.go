@@ -1204,6 +1204,11 @@ func (s *BlockchainService) GetTransactions(ctx context.Context, page uint64, li
 	return allTrxs, nil
 }
 
+// OpenSessionByBidId opens a session against a specific bid (no provider failover).
+func (s *BlockchainService) OpenSessionByBidId(ctx context.Context, bidID common.Hash, duration *big.Int, agentUsername string) (common.Hash, error) {
+	return s.openSessionByBid(ctx, bidID, duration, agentUsername)
+}
+
 func (s *BlockchainService) openSessionByBid(ctx context.Context, bidID common.Hash, duration *big.Int, agentUsername string) (common.Hash, error) {
 	supply, err := s.GetTokenSupply(ctx)
 	if err != nil {
