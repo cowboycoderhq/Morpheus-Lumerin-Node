@@ -216,6 +216,53 @@ const browser = await chromium.launch();
   await page.close();
 }
 
+// --- settings: the Appearance control is the ONLY way to reach the theme swap,
+//     and it lives in the one file crypto's reskin fully rewrites. If a future
+//     graft clobbers Settings.tsx, the dual-theme feature silently becomes
+//     unreachable while everything still compiles. This is that tripwire. ---
+{
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 } });
+  await drive(page, 'settings-appearance', `http://localhost:${PORT}/?case=settings`, async (p) => {
+    await p.waitForSelector('[data-testid="theme-aurora"]', { timeout: 20000 });
+    await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));
+    await p.reload({ waitUntil: 'networkidle' });
+    await p.waitForSelector('[data-testid="theme-aurora"]');
+
+    const body = await p.locator('body').innerText();
+    assert(/appearance/i.test(body), 'Appearance section missing from Settings');
+    assert(!!(await p.$('[data-testid="theme-classic"]')), 'classic option missing');
+
+    // Default aurora, and the control reflects it.
+    assert(
+      (await p.getAttribute('[data-testid="theme-aurora"]', 'aria-pressed')) === 'true',
+      'aurora not marked active by default',
+    );
+
+    // The swap must actually re-render tokens, not just flip a flag: assert a
+    // real computed colour on the page changes.
+    const headerColor = () =>
+      p.evaluate(() => getComputedStyle(document.querySelector('h2')).color);
+    const before = await headerColor();
+    await p.getByTestId('theme-classic').click();
+    await p.waitForTimeout(400); // let the colour transition settle
+    assert(
+      (await p.getAttribute('[data-testid="theme-classic"]', 'aria-pressed')) === 'true',
+      'classic not marked active after click',
+    );
+    const after = await headerColor();
+    assert(before !== after, `theme swap did not re-render Settings (colour stayed ${before})`);
+    const stored = await p.evaluate(() => window.localStorage.getItem('trinity.themeVariant'));
+    assert(stored === 'classic', `choice not persisted (got ${stored})`);
+
+    // Nothing on this page may wipe a wallet just by rendering or swapping.
+    const logouts = await p.evaluate(() => window.__logout);
+    assert(logouts === 0, `logout fired ${logouts}x without confirming (must be 0)`);
+    await p.screenshot({ path: `${SHOTS}/settings-appearance.png` });
+    await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));
+  });
+  await page.close();
+}
+
 await browser.close();
 await server.close();
 
