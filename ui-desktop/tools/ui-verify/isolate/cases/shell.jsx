@@ -13,10 +13,15 @@ import Sidebar from '../../../../src/renderer/src/components/sidebar/Sidebar';
 // The real Sidebar reads exactly one thing from redux (getWalletAddress ->
 // state.chain.wallet.address), so a hand-rolled store beats pulling in the app's
 // whole store just to render the rail.
+//
+// Hoisted for the same reason as the settings case: react-redux needs getState
+// to return a STABLE reference. This one happens to survive an unstable state
+// because its mapStateToProps yields primitives, but that is luck, not design.
+const state = {
+  chain: { wallet: { address: '0x2f4E8a1B9c3D5e6F7a8B9c0d1E2f3A4b5C6d7E8f' } },
+};
 const store = {
-  getState: () => ({
-    chain: { wallet: { address: '0x2f4E8a1B9c3D5e6F7a8B9c0d1E2f3A4b5C6d7E8f' } },
-  }),
+  getState: () => state,
   subscribe: () => () => {},
   dispatch: () => {},
 };
