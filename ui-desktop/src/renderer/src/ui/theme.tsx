@@ -326,13 +326,25 @@ void _classicColorParity;
 export const themes = { aurora, classic };
 export type ThemeVariant = keyof typeof themes; // 'aurora' | 'classic'
 export const THEME_VARIANTS: ThemeVariant[] = ['aurora', 'classic'];
-export const DEFAULT_VARIANT: ThemeVariant = 'aurora'; // the flagship
 
-// The `Theme` type is the aurora shape; classic mirrors every key. Existing
-// `import theme from './ui/theme'` sites keep working (default = the flagship).
+// Classic — dev's existing look — is the default, and that is the whole
+// mergeability argument: an existing install that updates must look exactly as
+// it did. Aurora is offered, never imposed. The picker only runs for a NEW
+// wallet (Root sends an existing one to Login), so defaulting to aurora would
+// silently restyle every current user's app without asking them once.
+export const DEFAULT_VARIANT: ThemeVariant = 'classic';
+
+// The `Theme` type is the aurora shape; classic mirrors every key (enforced by
+// the parity guard above).
 export type Theme = typeof aurora;
 
 export const getTheme = (variant: ThemeVariant): Theme =>
   (themes[variant] ?? themes[DEFAULT_VARIANT]) as Theme;
 
-export default aurora;
+// Follows DEFAULT_VARIANT rather than naming a variant outright. A static
+// `import theme from './ui/theme'` is frozen whatever it returns — it cannot
+// track a runtime swap — but pinning it to the OPPOSITE of the default is the
+// worst version of that: it hands out aurora tokens to an app rendering
+// classic. Prefer props.theme / useTheme() at every live site; this export
+// exists only for the legacy (unreachable) files that still read it.
+export default getTheme(DEFAULT_VARIANT);

@@ -122,7 +122,8 @@ const browser = await chromium.launch();
   await page.close();
 }
 
-// --- theme-swap: default=aurora, swap re-renders tokens live, persists+rehydrates ---
+// --- theme-swap: default=CLASSIC (an existing install must not be restyled),
+//     swap re-renders tokens live, persists + rehydrates ---
 {
   const page = await browser.newPage({ viewport: { width: 600, height: 520 } });
   await drive(page, 'theme-swap', `http://localhost:${PORT}/?case=theme-swap`, async (p) => {
@@ -130,26 +131,46 @@ const browser = await chromium.launch();
       p.evaluate((s) => getComputedStyle(document.querySelector(s)).backgroundColor, sel);
     await p.waitForSelector('[data-testid="brand-swatch"]', { timeout: 20000 });
     // Start from a clean slate so the default is what's under test, not a leftover.
+    // No stored choice IS the upgrade case: an existing install has never picked.
     await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));
     await p.reload({ waitUntil: 'networkidle' });
     await p.waitForSelector('[data-testid="brand-swatch"]');
 
-    const auroraBg = await bg('[data-testid="brand-swatch"]');
-    assert(/\b111,\s*214,\s*255\b/.test(auroraBg), `default not aurora cyan (got ${auroraBg})`);
-    assert((await p.getByTestId('active-variant').innerText()) === 'aurora', 'default variant not aurora');
+    // The load-bearing assertion of the whole PR: with nothing stored, the app
+    // is dev's classic green. Aurora is offered, never imposed — a user who
+    // updates and never touches Settings sees exactly what they saw before.
+    const defaultBg = await bg('[data-testid="brand-swatch"]');
+    assert(
+      /\b32,\s*220,\s*142\b/.test(defaultBg),
+      `default is not classic green — an existing install would be restyled without asking (got ${defaultBg})`,
+    );
+    assert(
+      (await p.getByTestId('active-variant').innerText()) === 'classic',
+      'default variant not classic',
+    );
 
-    // Swap → the swatch must actually re-render to classic green.
-    await p.getByTestId('set-classic').click();
-    const classicBg = await bg('[data-testid="brand-swatch"]');
-    assert(/\b32,\s*220,\s*142\b/.test(classicBg), `swap did not re-render to classic green (got ${classicBg})`);
+    // Swap → the swatch must actually re-render to aurora cyan.
+    await p.getByTestId('set-aurora').click();
+    await p
+      .waitForFunction(
+        () =>
+          /\b111,\s*214,\s*255\b/.test(
+            getComputedStyle(document.querySelector('[data-testid="brand-swatch"]')).backgroundColor,
+          ),
+        null,
+        { timeout: 5000 },
+      )
+      .catch(() => {});
+    const auroraBg = await bg('[data-testid="brand-swatch"]');
+    assert(/\b111,\s*214,\s*255\b/.test(auroraBg), `swap did not re-render to aurora cyan (got ${auroraBg})`);
     const stored = await p.evaluate(() => window.localStorage.getItem('trinity.themeVariant'));
-    assert(stored === 'classic', `choice not persisted (got ${stored})`);
+    assert(stored === 'aurora', `choice not persisted (got ${stored})`);
 
     // Persist across a reload (rehydrate from localStorage, no flash of default).
     await p.reload({ waitUntil: 'networkidle' });
     await p.waitForSelector('[data-testid="brand-swatch"]');
     const afterReload = await bg('[data-testid="brand-swatch"]');
-    assert(/\b32,\s*220,\s*142\b/.test(afterReload), `did not rehydrate classic after reload (got ${afterReload})`);
+    assert(/\b111,\s*214,\s*255\b/.test(afterReload), `did not rehydrate aurora after reload (got ${afterReload})`);
     await p.screenshot({ path: `${SHOTS}/theme-swap.png` });
     await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));
   });
@@ -256,21 +277,23 @@ const browser = await chromium.launch();
     // Classic card cyan while Aurora is selected.
     const auroraSwatch = await bg('[data-testid="presetup-theme-aurora"] span:last-of-type');
     const classicSwatch = await bg('[data-testid="presetup-theme-classic"] span:last-of-type');
-    assert(/\b111,\s*214,\s*255\b/.test(auroraSwatch), `aurora swatch not cyan (got ${auroraSwatch})`);
+    // Classic is active here, so the AURORA card is the one proving the point:
+    // it must show cyan while the live theme is green.
     assert(
-      /\b32,\s*220,\s*142\b/.test(classicSwatch),
-      `classic swatch not green while aurora active — swatch is painting the ACTIVE theme, not its own (got ${classicSwatch})`,
+      /\b111,\s*214,\s*255\b/.test(auroraSwatch),
+      `aurora swatch not cyan while classic active — swatch is painting the ACTIVE theme, not its own (got ${auroraSwatch})`,
+    );
+    assert(/\b32,\s*220,\s*142\b/.test(classicSwatch), `classic swatch not green (got ${classicSwatch})`);
+
+    // Default selection is classic, carried by more than colour.
+    assert(
+      (await p.getByTestId('presetup-theme-classic').getAttribute('aria-pressed')) === 'true',
+      'classic not selected by default',
     );
 
-    // Default selection is aurora, carried by more than colour.
-    assert(
-      (await p.getByTestId('presetup-theme-aurora').getAttribute('aria-pressed')) === 'true',
-      'aurora not selected by default',
-    );
-
-    // Picking Classic re-themes the page you are standing on — assert on the
+    // Picking Aurora re-themes the page you are standing on — assert on the
     // Continue button (real product chrome), not a probe.
-    await p.getByTestId('presetup-theme-classic').click();
+    await p.getByTestId('presetup-theme-aurora').click();
     // A swap re-renders styled-components' classes, so the new computed style
     // lands a frame later. Poll for it — reading in the click's tick catches a
     // stale value and fails a feature that works. Still a real assertion: if
@@ -278,7 +301,7 @@ const browser = await chromium.launch();
     await p
       .waitForFunction(
         () =>
-          /\b32,\s*220,\s*142\b/.test(
+          /\b94,\s*208,\s*255\b|\b111,\s*214,\s*255\b/.test(
             getComputedStyle(document.querySelector('[data-testid="presetup-continue-btn"]'))
               .backgroundColor,
           ),
@@ -288,15 +311,15 @@ const browser = await chromium.launch();
       .catch(() => {});
     const btnBg = await bg('[data-testid="presetup-continue-btn"]');
     assert(
-      /\b32,\s*220,\s*142\b/.test(btnBg),
-      `picking Classic did not re-theme the live page (continue btn: ${btnBg})`,
+      /\b94,\s*208,\s*255\b|\b111,\s*214,\s*255\b/.test(btnBg),
+      `picking Aurora did not re-theme the live page (continue btn: ${btnBg})`,
     );
     assert(
-      (await p.getByTestId('presetup-theme-classic').getAttribute('aria-pressed')) === 'true',
-      'classic not marked selected after click',
+      (await p.getByTestId('presetup-theme-aurora').getAttribute('aria-pressed')) === 'true',
+      'aurora not marked selected after click',
     );
     const stored = await p.evaluate(() => window.localStorage.getItem('trinity.themeVariant'));
-    assert(stored === 'classic', `choice not persisted (got ${stored})`);
+    assert(stored === 'aurora', `choice not persisted (got ${stored})`);
     await p.screenshot({ path: `${SHOTS}/presetup-prefs.png` });
 
     // Continue hands off to the wizard exactly once.
@@ -335,8 +358,14 @@ const browser = await chromium.launch();
       p.evaluate(
         () => getComputedStyle(document.querySelector('[data-testid="sidebar-rail"]')).backgroundImage,
       );
-    const auroraRail = await railBg();
-    assert(/94,\s*208,\s*255/.test(auroraRail), `rail sheen not aurora cyan (got ${auroraRail})`);
+    // Nothing stored = the upgrade case. The rail an existing user sees must
+    // still be dev's green, not the reskin's cyan.
+    const classicRail = await railBg();
+    assert(
+      /32,\s*220,\s*142/.test(classicRail),
+      `default rail not classic green — an existing install would be restyled unasked (got ${classicRail})`,
+    );
+    assert(!/94,\s*208,\s*255/.test(classicRail), `rail pinned to cyan under classic (got ${classicRail})`);
 
     // The active nav item is the rail's one accent-bearing state — assert it by
     // computed style, not by eye: a mid-transition screenshot reads as unswapped.
@@ -346,23 +375,23 @@ const browser = await chromium.launch();
         const cs = getComputedStyle(a);
         return { color: cs.color, border: cs.borderLeftColor };
       });
-    const auroraActive = await activeAccent();
-    assert(/111,\s*214,\s*255/.test(auroraActive.color), `active nav not aurora cyan (got ${auroraActive.color})`);
-    assert(/111,\s*214,\s*255/.test(auroraActive.border), `active nav border not aurora cyan (got ${auroraActive.border})`);
-    await p.screenshot({ path: `${SHOTS}/shell-sidebar-aurora.png` });
+    const classicActive = await activeAccent();
+    assert(/32,\s*220,\s*142/.test(classicActive.color), `active nav not classic green (got ${classicActive.color})`);
+    assert(/32,\s*220,\s*142/.test(classicActive.border), `active nav border not classic green (got ${classicActive.border})`);
+    await p.screenshot({ path: `${SHOTS}/shell-sidebar-classic.png` });
 
-    await p.getByTestId('set-classic').click();
+    await p.getByTestId('set-aurora').click();
     // The nav transitions colour/border-color, so a screenshot fired straight
     // after the swap catches the tokens MID-fade and shows the OLD accent —
-    // evidence that reads as "classic is still cyan" when it isn't. Settle first.
+    // evidence that reads as "aurora is still green" when it isn't. Settle first.
     await p.waitForTimeout(400);
-    const classicRail = await railBg();
-    assert(/32,\s*220,\s*142/.test(classicRail), `rail sheen did not swap to classic green (got ${classicRail})`);
-    assert(!/94,\s*208,\s*255/.test(classicRail), `rail still pinned to cyan under classic (got ${classicRail})`);
-    const classicActive = await activeAccent();
-    assert(/32,\s*220,\s*142/.test(classicActive.color), `active nav did not swap to classic green (got ${classicActive.color})`);
-    assert(/32,\s*220,\s*142/.test(classicActive.border), `active nav border did not swap to classic green (got ${classicActive.border})`);
-    await p.screenshot({ path: `${SHOTS}/shell-sidebar-classic.png` });
+    const auroraRail = await railBg();
+    assert(/94,\s*208,\s*255/.test(auroraRail), `rail sheen did not swap to aurora cyan (got ${auroraRail})`);
+    assert(!/32,\s*220,\s*142/.test(auroraRail), `rail still pinned to green under aurora (got ${auroraRail})`);
+    const auroraActive = await activeAccent();
+    assert(/111,\s*214,\s*255/.test(auroraActive.color), `active nav did not swap to aurora cyan (got ${auroraActive.color})`);
+    assert(/111,\s*214,\s*255/.test(auroraActive.border), `active nav border did not swap to aurora cyan (got ${auroraActive.border})`);
+    await p.screenshot({ path: `${SHOTS}/shell-sidebar-aurora.png` });
     await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));
   });
   await page.close();
@@ -384,10 +413,10 @@ const browser = await chromium.launch();
     assert(/appearance/i.test(body), 'Appearance section missing from Settings');
     assert(!!(await p.$('[data-testid="theme-classic"]')), 'classic option missing');
 
-    // Default aurora, and the control reflects it.
+    // Default classic, and the control reflects it.
     assert(
-      (await p.getAttribute('[data-testid="theme-aurora"]', 'aria-pressed')) === 'true',
-      'aurora not marked active by default',
+      (await p.getAttribute('[data-testid="theme-classic"]', 'aria-pressed')) === 'true',
+      'classic not marked active by default',
     );
 
     // The swap must actually re-render tokens, not just flip a flag: assert a
@@ -395,16 +424,16 @@ const browser = await chromium.launch();
     const headerColor = () =>
       p.evaluate(() => getComputedStyle(document.querySelector('h2')).color);
     const before = await headerColor();
-    await p.getByTestId('theme-classic').click();
+    await p.getByTestId('theme-aurora').click();
     await p.waitForTimeout(400); // let the colour transition settle
     assert(
-      (await p.getAttribute('[data-testid="theme-classic"]', 'aria-pressed')) === 'true',
-      'classic not marked active after click',
+      (await p.getAttribute('[data-testid="theme-aurora"]', 'aria-pressed')) === 'true',
+      'aurora not marked active after click',
     );
     const after = await headerColor();
     assert(before !== after, `theme swap did not re-render Settings (colour stayed ${before})`);
     const stored = await p.evaluate(() => window.localStorage.getItem('trinity.themeVariant'));
-    assert(stored === 'classic', `choice not persisted (got ${stored})`);
+    assert(stored === 'aurora', `choice not persisted (got ${stored})`);
 
     // Nothing on this page may wipe a wallet just by rendering or swapping.
     const logouts = await p.evaluate(() => window.__logout);
