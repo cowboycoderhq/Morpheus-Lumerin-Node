@@ -156,6 +156,82 @@ const browser = await chromium.launch();
   await page.close();
 }
 
+// --- presetup: the pre-wizard preferences screen — each card previews its OWN
+//     accent, picking one re-themes the live page, and Continue hands off once ---
+{
+  const page = await browser.newPage({ viewport: { width: 900, height: 800 } });
+  await drive(page, 'presetup-prefs', `http://localhost:${PORT}/?case=presetup`, async (p) => {
+    const bg = (sel) =>
+      p.evaluate((s) => getComputedStyle(document.querySelector(s)).backgroundColor, sel);
+    await p.waitForSelector('[data-testid="presetup-container"]', { timeout: 20000 });
+    // Clean slate: the default is what's under test, not a leftover choice.
+    await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));
+    await p.reload({ waitUntil: 'networkidle' });
+    await p.waitForSelector('[data-testid="presetup-container"]');
+
+    // It reads as a preference, not a wallet step: no "Step X of N" claim.
+    const body = await p.locator('body').innerText();
+    assert(/choose your look/i.test(body), 'missing title');
+    assert(!/step\s*\d+\s*of\s*\d+/i.test(body), 'presetup claims to be a numbered wizard step');
+    assert(/aurora/i.test(body) && /classic/i.test(body), 'missing a theme choice');
+
+    // Each card's swatch shows ITS OWN accent — the bug being pinned is both
+    // swatches painting with the ACTIVE theme's brand, which would make the
+    // Classic card cyan while Aurora is selected.
+    const auroraSwatch = await bg('[data-testid="presetup-theme-aurora"] span:last-of-type');
+    const classicSwatch = await bg('[data-testid="presetup-theme-classic"] span:last-of-type');
+    assert(/\b111,\s*214,\s*255\b/.test(auroraSwatch), `aurora swatch not cyan (got ${auroraSwatch})`);
+    assert(
+      /\b32,\s*220,\s*142\b/.test(classicSwatch),
+      `classic swatch not green while aurora active — swatch is painting the ACTIVE theme, not its own (got ${classicSwatch})`,
+    );
+
+    // Default selection is aurora, carried by more than colour.
+    assert(
+      (await p.getByTestId('presetup-theme-aurora').getAttribute('aria-pressed')) === 'true',
+      'aurora not selected by default',
+    );
+
+    // Picking Classic re-themes the page you are standing on — assert on the
+    // Continue button (real product chrome), not a probe.
+    await p.getByTestId('presetup-theme-classic').click();
+    // A swap re-renders styled-components' classes, so the new computed style
+    // lands a frame later. Poll for it — reading in the click's tick catches a
+    // stale value and fails a feature that works. Still a real assertion: if
+    // the page never re-themes, this times out and the check below reports it.
+    await p
+      .waitForFunction(
+        () =>
+          /\b32,\s*220,\s*142\b/.test(
+            getComputedStyle(document.querySelector('[data-testid="presetup-continue-btn"]'))
+              .backgroundColor,
+          ),
+        null,
+        { timeout: 5000 },
+      )
+      .catch(() => {});
+    const btnBg = await bg('[data-testid="presetup-continue-btn"]');
+    assert(
+      /\b32,\s*220,\s*142\b/.test(btnBg),
+      `picking Classic did not re-theme the live page (continue btn: ${btnBg})`,
+    );
+    assert(
+      (await p.getByTestId('presetup-theme-classic').getAttribute('aria-pressed')) === 'true',
+      'classic not marked selected after click',
+    );
+    const stored = await p.evaluate(() => window.localStorage.getItem('trinity.themeVariant'));
+    assert(stored === 'classic', `choice not persisted (got ${stored})`);
+    await p.screenshot({ path: `${SHOTS}/presetup-prefs.png` });
+
+    // Continue hands off to the wizard exactly once.
+    assert((await p.evaluate(() => window.__onDone)) === 0, 'onDone fired before Continue');
+    await p.getByTestId('presetup-continue-btn').click();
+    assert((await p.evaluate(() => window.__onDone)) === 1, 'Continue did not hand off exactly once');
+    await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));
+  });
+  await page.close();
+}
+
 // --- shell: the rail renders, Help keeps pr2's onHelpLinkClick contract, and
 //     the rail's own surface re-renders on a theme swap (not just a probe) ---
 {

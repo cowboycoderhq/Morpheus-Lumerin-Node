@@ -12,7 +12,10 @@ import { subscribeToMainProcessMessages } from './subscriptions';
 import Web3ConnectionNotifier from './components/Web3ConnectionNotifier';
 import { ToastsProvider } from './components/toasts';
 import { GlobalTooltips } from './components/common';
-import Onboarding from './components/onboarding/Onboarding';
+// Preferences screen that runs once in front of the wizard, then renders the
+// untouched Onboarding. Swap this back to './components/onboarding/Onboarding'
+// to remove the feature entirely.
+import PreSetupGate from './components/onboarding/PreSetupGate';
 import Loading from './components/Loading';
 import Router from './components/Router';
 import Login from './components/Login';
@@ -33,7 +36,7 @@ function App(): JSX.Element {
               <ToastsProvider>
                 <Root
                   StartupComponent={Startup}
-                  OnboardingComponent={Onboarding}
+                  OnboardingComponent={PreSetupGate}
                   LoadingComponent={Loading}
                   RouterComponent={Router}
                   LoginComponent={Login}
