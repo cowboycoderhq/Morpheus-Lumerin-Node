@@ -1,64 +1,37 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import withModelsState from "../../store/hocs/withModelsState";
-import { modelMatchesQuery } from '../chat/utils';
 
-import { LayoutHeader } from '../common/LayoutHeader'
+import { IconPinned, IconSearch } from '@tabler/icons-react';
 import { View } from '../common/View'
-import { BtnAccent } from '../dashboard/BalanceBlock.styles';
 import ModelsTable from './ModelsTable';
 import Tab from 'react-bootstrap/Tab';
 import Tabs from 'react-bootstrap/Tabs';
-import styled from 'styled-components'
 import FileSelectionModal from './FileSelectionModal';
 import PinnedFilesTable from './PinnedFilesTable';
 import { queryKeys } from '../../store/queries';
+import {
+  HudPage,
+  Scanlines,
+  HudHeader,
+  HudTitle,
+  HudSubtitle,
+  HudBtn,
+  HudPanel,
+  HudTabsWrap,
+  StatusLine,
+  Orb,
+  SearchRow,
+  SearchInput,
+  ResultCount,
+} from './hud.styles';
+import { modelMatchesQuery } from '../chat/utils';
 
 
-const Container = styled.div`
-    overflow-y: auto;
-    
-    .nav-link {
-        color: ${p => p.theme.colors.morMain}
-    }
-
-    .nav-link.active {
-        color: ${p => p.theme.colors.morMain}
-        border-color: ${p => p.theme.colors.morMain}
-        background-color: rgba(0,0,0,0.4);
-    }
-`
-
-const IpfsStatus = styled.div`
-    color: ${p => p.theme.colors.morMain};
-    font-size: 1.2rem;
-`
-
-const SearchRow = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 8px 0 4px;
-`
-
-const SearchInput = styled.input`
-    flex: 1;
-    height: 38px;
-    background: rgba(0, 0, 0, 0.4);
-    color: ${p => p.theme.colors.morMain};
-    border: 1px solid ${p => p.theme.colors.morMain};
-    border-radius: 5px;
-    padding: 0 14px;
-    font-size: 1.4rem;
-    outline: none;
-    ::placeholder { color: ${p => p.theme.colors.helpertextGray}; }
-`
-
-const ResultCount = styled.span`
-    color: ${p => p.theme.colors.helpertextGray};
-    font-size: 1.2rem;
-    white-space: nowrap;
-`
+// The old page had TWO scrollers: this Container carried `overflow-y: auto`
+// while the View around it scrolls as well, so the page could not scroll
+// reliably — the wheel went to whichever box the pointer happened to be over.
+// The HUD layout has ONE scroller (View), and no inner overflow at all.
 
 const Models = ({
     setSelectedModel,
@@ -75,6 +48,7 @@ const Models = ({
 }: any) => {
 
     const [openChangeModal, setOpenChangeModal] = useState(false);
+    const [search, setSearch] = useState('');
     const queryClient = useQueryClient();
 
     // Cached, stale-while-revalidate data so revisiting the Models tab renders
@@ -95,13 +69,14 @@ const Models = ({
     const ipfsVersion = (ipfsVersionQuery.data as any)?.version ?? null;
     const isIpfsConnected = !!ipfsVersion;
     const models: any[] = (modelsQuery.data as any[]) ?? [];
-    const pinnedFiles = pinnedFilesQuery.data ?? [];
 
-    const [search, setSearch] = useState('');
+    // Same token matcher the chat model picker uses, so a model is findable by
+    // the same query in both places — "deepseek v4 pro" works, hyphens and all.
     const visibleModels = useMemo(
         () => models.filter((m: any) => modelMatchesQuery(m, search)),
         [models, search],
     );
+    const pinnedFiles = pinnedFilesQuery.data ?? [];
 
     const reload = () => {
         queryClient.invalidateQueries({ queryKey: queryKeys.ipfsVersion });
@@ -136,43 +111,62 @@ const Models = ({
     }
 
     return (
-        <View data-testid="models-container">
-            {isIpfsConnected ? (
-                <IpfsStatus>
-                    <span>IPFS Connected. Version: {ipfsVersion}</span>
-                </IpfsStatus>
-            ) : (
-                <IpfsStatus>
-                    <span>IPFS is not connected</span>
-                </IpfsStatus>
-            )}
-            <LayoutHeader title="Models">
-                <BtnAccent style={{ padding: '1.5rem' }} onClick={() => setOpenChangeModal(true)}>Pin Model</BtnAccent>
-            </LayoutHeader>
+    <View data-testid="models-container">
+        <HudPage>
+            <Scanlines />
+
+            <HudHeader>
+                <div>
+                    <HudTitle>Models</HudTitle>
+                </div>
+                <HudBtn onClick={() => setOpenChangeModal(true)}>
+                    <IconPinned size={16} stroke={1.75} /> Pin model
+                </HudBtn>
+            </HudHeader>
+
+            <HudSubtitle>
+                Models registered on the network, and the model files you are
+                hosting on IPFS. Pinning fetches a model&apos;s files to your own
+                node and keeps them there — the first step to serving it.
+            </HudSubtitle>
+
+            {/* The IPFS orb is the page's liveness signal: pinning fails
+                outright when the node is down, so it is stated before anything
+                that depends on it, not buried in a failed action. */}
+            <StatusLine>
+                <Orb $on={isIpfsConnected} />
+                {isIpfsConnected
+                    ? `IPFS online · v${ipfsVersion}`
+                    : 'IPFS offline · pinning unavailable'}
+            </StatusLine>
+
             <SearchRow>
+                <IconSearch size={18} stroke={1.75} />
                 <SearchInput
                     data-testid="models-search"
-                    placeholder="Search models by name or tag…"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search models or tags…"
+                    aria-label="Search models"
                 />
-                <ResultCount>{visibleModels.length} / {models.length}</ResultCount>
+                <ResultCount>
+                    {visibleModels.length} / {models.length}
+                </ResultCount>
             </SearchRow>
-            <Container>
-                <Tabs
-                    defaultActiveKey="registry"
-                    id="tab-models"
-                    className="mb-3"
-                >
-                    <Tab eventKey="registry" title="Registry">
-                        <ModelsTable setSelectedModel={setSelectedModel} models={visibleModels} openSelectDownloadFolder={openSelectDownloadFolder} toasts={toasts} client={client} config={config} />
-                    </Tab>
-                    <Tab eventKey="pinned" title="Pinned Models">
-                        <PinnedFilesTable pinnedFiles={pinnedFiles} unpinFile={handleUnpinFile} toasts={toasts} />
-                    </Tab>
-                </Tabs>
 
-            </Container>
+            <HudPanel>
+                <HudTabsWrap>
+                    <Tabs defaultActiveKey="registry" id="tab-models" className="mb-3">
+                        <Tab eventKey="registry" title="Registry">
+                            <ModelsTable setSelectedModel={setSelectedModel} models={visibleModels} openSelectDownloadFolder={openSelectDownloadFolder} toasts={toasts} client={client} config={config} />
+                        </Tab>
+                        <Tab eventKey="pinned" title="Pinned">
+                            <PinnedFilesTable pinnedFiles={pinnedFiles} unpinFile={handleUnpinFile} toasts={toasts} />
+                        </Tab>
+                    </Tabs>
+                </HudTabsWrap>
+            </HudPanel>
+
             <FileSelectionModal
                 isActive={openChangeModal}
                 addFileToIpfs={addFileToIpfs}
@@ -180,7 +174,8 @@ const Models = ({
                 toasts={toasts}
                 handleClose={() => setOpenChangeModal(false)}
             />
-        </View>)
+        </HudPage>
+    </View>)
 
 }
 

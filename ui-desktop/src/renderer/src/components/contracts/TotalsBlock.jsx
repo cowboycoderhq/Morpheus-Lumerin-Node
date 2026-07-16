@@ -7,7 +7,7 @@ const Container = styled.div`
   margin: 1.6rem 0 1.6rem;
   width: 100%;
   height: 100px;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   display: flex;
   flex-direction: row;
 
@@ -24,7 +24,7 @@ const Total = styled.div`
   justify-content: space-between;
   padding: 1.4rem 2.6rem;
   margin-left: 1.4rem;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   @media (min-width: 1040px) {
   }
 `;
@@ -35,7 +35,7 @@ const TotalRow = styled.div`
   height: 30%;
   flex-direction: row;
   justify-content: space-between;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   @media (min-width: 1040px) {
     padding: 0.95em 0;
   }
@@ -83,8 +83,7 @@ const TotalValue = styled.div`
   line-height: 1.5;
   font-weight: 600;
   letter-spacing: ${p => (p.large ? '-1px' : 'inherit')};
-  color: ${p => p.theme.colors.darker}
-  margin: .6rem 0;
+  color: ${(p) => p.theme.colors.textPrimary};margin: .6rem 0;
   flex-grow: 1;
   position: relative;
   top: ${relSize(-400)};
