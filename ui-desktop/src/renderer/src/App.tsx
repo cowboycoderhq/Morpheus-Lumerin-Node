@@ -1,16 +1,6 @@
-import { ThemeProvider as StyledThemeProvider } from 'styled-components';
-
-// Cast: styled-components v4 ships React 16/17-era class component typings that
-// React 18's stricter `JSX.LibraryManagedAttributes` resolution rejects. Until
-// styled-components is upgraded to v6 (or the project drops v4), narrow it to a
-// FC so TSC can use it. Runtime behavior is unchanged.
-const ThemeProvider = StyledThemeProvider as unknown as React.FC<
-  React.PropsWithChildren<{ theme: object }>
->;
-
 import { QueryClientProvider } from '@tanstack/react-query';
 
-import theme from './ui/theme';
+import { ThemeVariantProvider } from './ui/ThemeVariantContext';
 import Root from './components/common/Root';
 import { Provider as ClientProvider } from './store/hocs/clientContext';
 import { Provider, createStore } from './store/store';
@@ -39,7 +29,7 @@ function App(): JSX.Element {
       <ClientProvider value={client}>
         <Provider store={client.store}>
           <QueryClientProvider client={queryClient}>
-            <ThemeProvider theme={theme}>
+            <ThemeVariantProvider>
               <ToastsProvider>
                 <Root
                   StartupComponent={Startup}
@@ -51,7 +41,7 @@ function App(): JSX.Element {
                 <GlobalTooltips />
                 <Web3ConnectionNotifier />
               </ToastsProvider>
-            </ThemeProvider>
+            </ThemeVariantProvider>
           </QueryClientProvider>
         </Provider>
       </ClientProvider>

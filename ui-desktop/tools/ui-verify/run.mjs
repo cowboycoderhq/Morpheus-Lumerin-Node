@@ -99,6 +99,40 @@ const browser = await chromium.launch();
   await page.close();
 }
 
+// --- theme-swap: default=aurora, swap re-renders tokens live, persists+rehydrates ---
+{
+  const page = await browser.newPage({ viewport: { width: 600, height: 520 } });
+  await drive(page, 'theme-swap', `http://localhost:${PORT}/?case=theme-swap`, async (p) => {
+    const bg = (sel) =>
+      p.evaluate((s) => getComputedStyle(document.querySelector(s)).backgroundColor, sel);
+    await p.waitForSelector('[data-testid="brand-swatch"]', { timeout: 20000 });
+    // Start from a clean slate so the default is what's under test, not a leftover.
+    await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));
+    await p.reload({ waitUntil: 'networkidle' });
+    await p.waitForSelector('[data-testid="brand-swatch"]');
+
+    const auroraBg = await bg('[data-testid="brand-swatch"]');
+    assert(/\b111,\s*214,\s*255\b/.test(auroraBg), `default not aurora cyan (got ${auroraBg})`);
+    assert((await p.getByTestId('active-variant').innerText()) === 'aurora', 'default variant not aurora');
+
+    // Swap → the swatch must actually re-render to classic green.
+    await p.getByTestId('set-classic').click();
+    const classicBg = await bg('[data-testid="brand-swatch"]');
+    assert(/\b32,\s*220,\s*142\b/.test(classicBg), `swap did not re-render to classic green (got ${classicBg})`);
+    const stored = await p.evaluate(() => window.localStorage.getItem('trinity.themeVariant'));
+    assert(stored === 'classic', `choice not persisted (got ${stored})`);
+
+    // Persist across a reload (rehydrate from localStorage, no flash of default).
+    await p.reload({ waitUntil: 'networkidle' });
+    await p.waitForSelector('[data-testid="brand-swatch"]');
+    const afterReload = await bg('[data-testid="brand-swatch"]');
+    assert(/\b32,\s*220,\s*142\b/.test(afterReload), `did not rehydrate classic after reload (got ${afterReload})`);
+    await p.screenshot({ path: `${SHOTS}/theme-swap.png` });
+    await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));
+  });
+  await page.close();
+}
+
 await browser.close();
 await server.close();
 
