@@ -1,4 +1,4 @@
-import styled from 'styled-components';
+import styled, { useTheme } from 'styled-components';
 import React from 'react';
 
 const Container = styled.svg`
@@ -10,6 +10,7 @@ const Container = styled.svg`
 `;
 
 export default function Banner() {
+  const theme = useTheme();
   return (
     <>
       <Container width="704" height="137" fill="none" viewBox="0 0 704 137">
@@ -22,8 +23,8 @@ export default function Banner() {
             y2="198"
             gradientUnits="userSpaceOnUse"
           >
-            <stop stopColor="#014353" />
-            <stop offset="1" stopColor="#13E4EF" />
+            <stop stopColor={theme.colors.voidElevated} />
+            <stop offset="1" stopColor={theme.colors.secondaryLight} />
           </linearGradient>
         </defs>
         <path

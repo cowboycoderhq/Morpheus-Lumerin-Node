@@ -13,9 +13,12 @@ const Container = styled(Flex.Column)`
 
 const Body = styled.div`
   position: relative;
-  background: rgba(255,255,255, 0.04);
+  background: ${(p) => p.theme.colors.brandTint(0.04)};
   border-width: 1px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.22)};
+  /* The card behind Login and every onboarding step — it had no radius at all,
+     which is why those screens still showed hard corners. */
+  border-radius: ${(p) => p.theme.radii.lg};
   padding: 3rem;
   max-width: 53rem;
   width: 100%;
