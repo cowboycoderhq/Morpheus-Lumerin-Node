@@ -1,7 +1,7 @@
 # Inference Contract Enhancements: Executive Summary & Impact Outlook
 
 **Companion to:** [`inference-contract-enhancements-rfp.md`](inference-contract-enhancements-rfp.md) (full spec) and [`model-registry-story.md`](model-registry-story.md) (plain-language registry explainer)
-**Date:** 2026-07-07
+**Date:** 2026-07-16 (registry dispute path updated: no arbiter panel)
 **Data basis:** All on-chain session closes for the 7 days 2026-06-30 → 2026-07-07 (8,156 closes, BASE mainnet Inference Diamond), plus live funding-wallet and emission-budget reads taken 2026-07-07.
 
 ---
@@ -10,7 +10,7 @@
 
 **What the RFP changes:**
 
-- **Model catalog** — the human approval pipeline is replaced by a permissionless, bond-backed on-chain registry: one name = one id forever, a 30-day challenge-exposed probation, then the bond returns and the listing becomes permanent protocol infrastructure.
+- **Model catalog** — the human approval pipeline is replaced by a permissionless, bond-backed on-chain registry: one name = one id forever, a short challenge grace, a 30-day probation policed by bonded Challengers, disputes resolved by **contract rules + staked Community vote** (no appointed arbiter board), then the bond returns and the listing becomes permanent protocol infrastructure.
 - **Provider rewards** — the misunderstood 365-day reward limiter is removed and replaced by a *hard-enforced* daily emission budget (clipped at claim time, not assumed).
 - **Session closes** — every close returns the consumer's money in the same transaction; no second withdrawal, no stranded stake, no revert when the funding wallet is short.
 - **Platform commission** — a 5% fee on provider payouts, with airtight conservation accounting and a 7-day timelock on rate changes.
@@ -38,10 +38,10 @@
 | Model identity | `keccak256(owner, name)` — same name registerable by many owners | One name = one immutable id, derived from the name itself |
 | Naming | Any string, no validation | Strict on-chain ASCII grammar anchored to Hugging Face repo ids (open weights) or vendor API ids (proprietary); homoglyphs structurally impossible |
 | Who can register | Anyone, ~free | Anyone, via commit-reveal + **100 MOR bond** (returned after a 30-day probation) + 10 MOR fee |
-| Curation | None (garbage accumulates) | **Nobody approves anything.** During probation, lies are policed by bonded challenges (loser's bond slashed). Surviving probation **graduates** the listing: the bond returns, the registrant's powers lapse, and the listing becomes permanent, ownerless protocol infrastructure — dormant models never die, they reawaken on any new bid; only proven fraud removes a listing |
+| Curation | None (garbage accumulates) | **Nobody approves anything; nobody arbitrates from a panel.** 48h grace to fix honest mistakes, then bonded Challengers. Uncontested challenges auto-resolve; contested ones go to a staked **Community** Schelling vote (majority paid pro-rata from the loser bond). Surviving probation **graduates** the listing — bond returns, registrant powers lapse, ownerless protocol infrastructure. Dormant models reawaken on any new bid; only proven fraud removes a listing |
 | Serving channel | Exposed ad-hoc in names ("venice-served-X") | **Channel neutrality:** names identify the model artifact only; resellers/aggregators bid on the same canonical listing as everyone else |
 
-**Why it matters:** the catalog stops being a spam surface and a gatekeeping bottleneck at the same time. Registration survives total loss of every admin key. The "make it hurt" bar is collateral, not committee — and because registering confers no ongoing privilege, the collateral comes home once the market has had its 30-day window to object. The full lifecycle is narrated in [`model-registry-story.md`](model-registry-story.md).
+**Why it matters:** the catalog stops being a spam surface and a gatekeeping bottleneck at the same time. Registration and dispute resolution survive total loss of every admin key — there is no arbiter multisig to doxx, coerce, or lose. The "make it hurt" bar is collateral and Community stake, not a committee — and because registering confers no ongoing privilege, the collateral comes home once the market has had its 30-day window to object. The full lifecycle is narrated in [`model-registry-story.md`](model-registry-story.md).
 
 ### Marketplace — bidding (§3.2)
 
@@ -72,9 +72,9 @@ Enriched one-call reads (session + bid + model + provider), bounded iteration ev
 
 ---
 
-## 3. The last 7 days, replayed under the new rules
+## 3. Real-world validation (mainnet replay)
 
-Real data, 2026-06-30 → 2026-07-07: **8,156 closes; 16,466 MOR of gross provider entitlements; 42% early closes; 49% of sessions served zero tokens.** Provider labels are anonymized; the shape of the market, not the identities, is the finding.
+We pressure-tested the RFP against a week of live BASE activity — **2026-06-30 → 2026-07-07: 8,156 closes; 16,466 MOR of gross provider entitlements; 42% early closes; 49% of sessions served zero tokens.** Provider labels are anonymized; the shape of the market is the finding. This replay validates session, reward, fee, funding, and **catalog identity** pain. It does **not** simulate Challenger/Community dispute traffic (that surface is new); those mechanics are specified in the RFP and narrated in [`model-registry-story.md`](model-registry-story.md).
 
 | Provider profile | Closes | Gross MOR | 5% fee | Net MOR | Self-dealt | Tokens served |
 |---|---|---|---|---|---|---|
@@ -87,10 +87,10 @@ Real data, 2026-06-30 → 2026-07-07: **8,156 closes; 16,466 MOR of gross provid
 
 - **Consumers (the biggest everyday win).** 3,436 early closes (42% of the week) put stake behind the 1-day lock; under the RFP every one of them is whole in the close transaction, and the second `withdrawUserStakes` transaction plus the external recovery job disappear. Half of all sessions served zero tokens — consumers are demonstrably buying *availability windows*, which is exactly the semantics the RFP formalizes (quote before staking, prepayment-style direct pay, pay-for-readiness rewards).
 - **Providers.** Earnings are heavily concentrated (two profiles account for ~93% of entitlements), and every closeout receipt is provider-signed with no verification. The limiter removal changes nothing for this week's honest volume (nobody was near their cap without topping up); what changes is that quality stats become the only route to rating-driven routing, because fabricated sessions stop writing them (REWARD-R6).
-- **The model catalog.** Of 76 live names, 72 survive the new grammar as-is or via lowercase fold; 4 (names with spaces) get renamed to their upstream ids at migration. Case-duplicate and per-owner duplicate listings — visible in today's catalog — become structurally impossible. Nothing else a consumer sees changes.
+- **The model catalog (why the registry redesign).** Of 76 live names, 72 survive the new grammar as-is or via lowercase fold; 4 (names with spaces) get renamed to their upstream ids at migration. Case-duplicate and per-owner duplicate listings — visible in today's catalog — become structurally impossible under one-name-one-id. The bonded probation + Challenger/Community path is how new sprawl and look-alikes stay expensive after cutover; the replay shows the *mess*, not a mock dispute court.
 - **Self-dealing (bounded, not stopped).** The one self-dealing operator's emission take — 6,796 MOR, 41.3% of the week's entitlements against 2.17M MOR of cycled stake — is unchanged under the new rules, because extraction is capital-proportional by design. What changes: its 48 zero-token, self-signed "perfect" sessions stop writing reputation stats, and its volume is tagged and visible instead of blended into network totals.
 - **The budget throttle never binds at today's scale.** Peak day was 3,060 MOR of gross entitlements against a 27,890 MOR daily budget (~11%). It exists for the swarm scenario: if farming multiplied tenfold, the ceiling holds at the budget, claims queue and roll, and over-issuance is structurally impossible — instead of today, where nothing at claim time checks the budget at all.
-- **The owner/ops burden shrinks.** The funding wallet holds 248.5k MOR: ~15 weeks at current burn, but only **~9 days if farming saturated the full daily budget**. Today that runway requires a bespoke script; `getFundingHealth()` makes it one RPC call anyone can alert on. The recovery job, the catalog approval queue, and the stuck-stake support tickets all go away; what remains for the owner is parameter tuning within on-chain bounds — challenge arbitration is delegated to a narrow, owner-appointed arbitration multisig that can resolve a backlog in one batched signing session, so the owner key stays out of routine operations.
+- **The owner/ops burden shrinks.** The funding wallet holds 248.5k MOR: ~15 weeks at current burn, but only **~9 days if farming saturated the full daily budget**. Today that runway requires a bespoke script; `getFundingHealth()` makes it one RPC call anyone can alert on. The recovery job, any catalog approval queue, and stuck-stake support tickets go away; the owner keeps parameter tuning within on-chain bounds. Dispute resolution does **not** need an ops panel — uncontested challenges finalize permissionlessly; contested ones are Community-voted and paid from loser bonds.
 - **The fee raises real, but conflicted, revenue.** 823 MOR/week to the maintainer multisig at current volume — of which 340 MOR (41%) is commission on self-dealt volume. That is exactly why the RFP discloses the conflict and prices the burn option.
 
 ---
@@ -133,11 +133,11 @@ Yes — and the design treats that as a feature to bound rather than a hole to d
 - **Consumers** notice closes that just work: money back in one transaction, no stuck MOR, a quote before staking.
 - **Providers** notice the limiter is gone — no more topping up stake to keep earning — minus a 5% commission that was announced with a 7-day timelock.
 - **Farmers:** a handful arrive, buy MOR, lock it, and draw yield; daily claims are still far below budget, so nobody feels the throttle.
-- **The catalog** reseeds under canonical HF-anchored names. A few squatters try the registry, discover a bond locked through a challenge-exposed probation window, and mostly don't bother — while serious providers list their full catalogs, knowing the bonds come home in 30 days.
+- **The catalog** reseeds under canonical HF-anchored names. A few squatters try the registry, discover a bond locked through a challenge-exposed probation window (and Challengers who get paid for catching fakes), and mostly don't bother — while serious providers list their full catalogs, knowing the bonds come home in 30 days.
 
 **3 months.**
 
-- **The registry settles into its economics:** real models registered by the people who serve them, the first cohorts graduated with bonds returned, a couple of resolved challenges establishing precedent, and out-of-favor listings sitting dormant (invisible to consumers, one bid away from revival).
+- **The registry settles into its economics:** real models registered by the people who serve them, the first cohorts graduated with bonds returned, uncontested slashes and a few Community-voted disputes establishing precedent, and out-of-favor listings sitting dormant (invisible to consumers, one bid away from revival).
 - **Ops runs off the chain, not scripts:** dashboards read `getFundingHealth` and `getProtocolFeeSummary` directly; treasury top-ups are scheduled against a public runway number.
 - **Farming has grown enough to matter,** but the budget clip has held every day it was tested; the farming APR is visibly lower than at launch.
 - **Routing is meaningfully better** because stats are no longer poisoned — honest providers win real consumers on measured quality, which is the first time serving well has had a compounding payoff.

@@ -1,7 +1,7 @@
 # Session selection & bid enrichment (design note)
 
 **Status:** side discussion for team agreement — not part of the model-registry RFP cut  
-**Related but separate:** [`model-registry-story.md`](model-registry-story.md) / [`model-registry-story-v2.md`](model-registry-story-v2.md) (catalog identity). This note is about **how consumers choose a bid** and **what bids declare**.  
+**Related but separate:** [`model-registry-story.md`](model-registry-story.md) (catalog identity). This note is about **how consumers choose a bid** and **what bids declare**.  
 **Audience:** product, proxy-router, contracts — anyone thinking about failover, UX, and marketplace liquidity.
 
 ![Today](session-selection-today.png)
@@ -116,7 +116,7 @@ Canonical registry **reduces** how many ids a family needs over time; family res
 2. On-chain bid fields vs hash-of-spec + off-chain blob (prefer enough on-chain for any node to filter).
 3. Soft-relax when no bid meets filters (clear failure vs widen filters — never into `:tee` by accident).
 4. UI: pick by name; show winning bid’s servingSpec + provider stats for trust.
-5. Scope vs registry RFP: land as proxy-router + Marketplace bid shape work; don’t block registry v2 on this.
+5. Scope vs registry RFP: land as proxy-router + Marketplace bid shape work; don’t block the registry RFP on this.
 
 ---
 

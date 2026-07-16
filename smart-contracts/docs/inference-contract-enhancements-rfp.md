@@ -3,7 +3,7 @@
 **Product:** Morpheus Lumerin Node, Inference Diamond (BASE)  
 **Repository:** [`smart-contracts/`](../)  
 **Status:** Final internal draft for contractor scoping  
-**Last updated:** 2026-07-07  
+**Last updated:** 2026-07-16  
 **Audience:** Smart contract engineering contractor, Morpheus protocol team
 
 ---
@@ -78,21 +78,21 @@ The marketplace must keep settling and releasing funds even if every privileged 
 - `postModelBid`, `deleteModelBid`
 - `registerCanonicalModel` (commit-reveal path; §3.1.3) — listing new models requires no privileged key either
 
-Worst case if all privileged keys are lost: registration, bidding, sessions, settlement, refunds, graduation, and bond refunds all keep working (graduation is a pure timestamp check, so honest registrants always recover their bonds); only registry parameter changes and challenge/correction *resolution* stall (arbiter gone) until a facet upgrade installs a new arbiter. Frozen funds are not acceptable; a degraded challenge process is.
+Worst case if all privileged keys are lost: registration, bidding, sessions, settlement, refunds, graduation, bond refunds, uncontested challenge finalization, concede, and Community votes all keep working (graduation is a pure timestamp check; dispute resolution does not depend on an owner-appointed panel). Only registry **parameter changes** and emergency `DISABLED` stall. Frozen funds are not acceptable.
 
 > **Test:** for every privileged (`onlyOwner` / `onlyOperator`) function, confirm that losing that key cannot strand user or provider funds.
 
-### F3: Minimal governance (owner multisig for parameters and arbitration only)
+### F3: Minimal governance (owner multisig for parameters only)
 
-Governance is deliberately small. The registry is permissionless (§3.1), so **there is no operator or curation role anywhere in the design** — no catalog approval key, no proposal queue. What remains:
+Governance is deliberately small. The registry is permissionless (§3.1), so **there is no operator, curation, or dispute-panel role** — no catalog approval key, no proposal queue, no appointed arbiter. What remains:
 
 | Tier | Who | Scope |
 |------|-----|-------|
-| **Owner** | Protocol multisig | Facet upgrades; parameter tuning **within on-chain bounds** (registration bond/fee, probation window, correction window/bond, suffix vocabulary, provider fee rate/destination, pool config); appointing the challenge arbiter (behind `IArbiter`, replaceable; expected to be a narrow arbitration multisig, §3.1.3 REG-R5d); emergency `DISABLED` on a listing (blocks new sessions only, never settlement) |
-| **Arbiter** | Owner-appointed narrow multisig (v1) | Rule on open challenges and correction disputes, batch-capable; can move only the bonds at stake (§3.1.3 REG-R5d) |
-| *(everyone)* | Any wallet | Register models (bonded through probation), challenge listings (bonded), propose corrections (bonded), bid, open/close sessions, claim, withdraw |
+| **Owner** | Protocol multisig | Facet upgrades; parameter tuning **within on-chain bounds** (registration bond/fee, challenge grace, probation window, defense window, Community stake/quorum, correction window/bond, finder's bounty, suffix vocabulary, provider fee rate/destination, pool config); emergency `DISABLED` on a listing (blocks new sessions only, never settlement) |
+| **Community** | Any wallet that stakes the Community join stake | Vote only on *escalated* (contested) challenges and correction disputes; paid from loser bonds when on the majority (§3.1.3 REG-R5d) |
+| *(everyone)* | Any wallet | Register models (bonded through probation), challenge listings (bonded), defend, concede, propose corrections (bonded), finalize uncontested resolves, bid, open/close sessions, claim, withdraw |
 
-- Every owner power is either bounded on-chain (parameter ranges hard-coded, AC-REG-6) or fund-isolated (the arbiter moves only challenge bonds; `DISABLED` never touches settlement). Losing the owner key degrades governance, not the market (F2).
+- Every owner power is either bounded on-chain (parameter ranges hard-coded, AC-REG-6) or fund-isolated (`DISABLED` never touches settlement). Challenge bonds move only via contract rules (timeout, concede, proof, or Community vote) — never via an owner signature. Losing the owner key degrades governance, not the market (F2).
 - There is no standing automation key with write access to anything.
 
 ### F4: Remove unnecessary / unused mechanisms
@@ -125,7 +125,8 @@ The design must assume all of these behaviors scale up, not away, the day the li
 | **Fee path brick** | Misconfigured fee destination blocks `closeSession` | Fee path must skip (not revert) if `feeDestination` unset or rate 0; full reward goes to the provider (F2, §3.4.5). |
 | **Fee-emission accounting drift** | If the 5% fee leaves the funding account but is not counted against the emission pool, `getComputeBalance` overstates remaining budget by cumulative fees, silently over-issuing stipends | Gross payout (net + fee) counts toward `providersTotalClaimed`; conservation invariant tested explicitly (§3.4.5 FEE-R3, AC-FEE-6/8). |
 | **Stranded user stake** | Early-close lock + funding-revert leave MOR "stuck" needing external recovery | Return user funds in-tx or auto-sweep on release; decouple provider payment (§3.4.3). |
-| **Owner key compromise / loss** | Rogue or lost owner key corrupts params or stalls challenges | All parameters bounded on-chain; arbiter moves only challenge bonds; `DISABLED` never blocks settlement; market survives total key loss in a documented degraded mode (F2, F3). |
+| **Owner key compromise / loss** | Rogue or lost owner key corrupts params | All parameters bounded on-chain; `DISABLED` never blocks settlement; challenge resolution does not depend on owner keys (F2, F3). |
+| **Community vote capture** | Whale stakes into Community and votes lies into "truth" | Min join stake + quorum to slash; fail-open below quorum; prefer hard-fact proofs when available; corrupt majority must be dearer than bonds at stake (REG-R5d). |
 | **Name squatting / sprawl / impersonation** | Garbage, look-alike, or impersonating model names | Strict on-chain grammar (no Unicode/homoglyph space), deterministic ids, registration bond locked through probation + fee, bonded challenge (slash during probation; bounty-funded after graduation), commit-reveal against sniping (§3.1). |
 | **Post-graduation listing drift** | A graduated (ownerless) listing's metadata goes stale, or late-discovered fraud persists after the registrant's bond has returned | Bonded permissionless corrections with a challenge window (§3.1.3 REG-R5c); fraud challenges stay open forever with a fee-pool bounty (REG-R5b); what is *served* under a name is a provider-level offense policed by per-provider stats (§3.6) and future attestation (§3.7.2), not a listing defect. |
 | **Gas griefing** | Unbounded arrays (`userStakesOnHold`) make functions uncallable | Pagination + bounded iteration (§3.4.3, §3.7.1). |
@@ -149,7 +150,7 @@ Each subsection matures one facet/function end-to-end. Where a concern spans fac
 
 | Section | Facet / function | Changes (priority) |
 |---------|------------------|--------------------|
-| §3.1 | **ModelRegistry**: permissionless canonical catalog | Identity & on-chain name grammar (H), vocabulary (M), bonded registration + probation + graduation + challenge (H), catalog reads (M), migration (H) |
+| §3.1 | **ModelRegistry**: permissionless canonical catalog | Identity & on-chain name grammar (H), vocabulary (M), bonded registration + grace + probation + graduation + optimistic/Community challenge (H), catalog reads (M), migration (H) |
 | §3.2 | **Marketplace**: bidding | Update bid price without repost (M) |
 | §3.3 | **ProviderRegistry**: provider identity & bond | Nominal 10 MOR bond (H), endpoint update + bounds (M/L) |
 | §3.4 | **SessionRouter**: sessions, settlement & rewards | Quote (H), direct-pay semantics (H), close & stranded-MOR (H), remove limiter / enforced daily budget + stats integrity (H), provider fee with conserved accounting (H), earnings + funding-health views (M) |
@@ -188,27 +189,28 @@ Nobody approves a model. Nobody can stop you from listing one. Lying about a lis
 ```mermaid
 flowchart LR
   NAME["Registrant picks the name:<br/>lowercased HF repo id (org/name)<br/>+ optional governed suffix (:tee, :web, ...)"] --> COMMIT["commitModelRegistration(hash)<br/>(commit-reveal: no name sniping)"]
-  COMMIT -->|"after commit delay"| REG["registerCanonicalModel(name, capability,<br/>features, metadata, salt)<br/>+ bond (refundable) + fee (non-refundable)"]
-  REG -->|"on-chain grammar check + fold +<br/>deterministic id; revert if name taken"| LIVE["Listing LIVE + in PROBATION:<br/>providers can bid immediately"]
-  LIVE --> CHAL{"challenged during<br/>probation?"}
-  CHAL -->|"bonded challenge"| ARB["arbitration (v1: owner-appointed<br/>arbiter behind IArbiter)"]
-  ARB -->|"registrant wins"| LIVE
-  ARB -->|"challenger wins"| SLASH["listing removed, registrant bond slashed:<br/>half to challenger, half to fee pool"]
-  CHAL -->|"probation ends unchallenged"| GRAD["GRADUATED: bond returns to registrant,<br/>registrant powers lapse,<br/>listing is permanent protocol infrastructure"]
-  GRAD --> MAINT["ownerless maintenance:<br/>bonded corrections + bonded challenges<br/>(no decay: dormant listings wake on any new bid)"]
+  COMMIT -->|"after commit delay"| REG["registerCanonicalModel(...)<br/>+ bond + fee"]
+  REG --> LIVE["LIVE immediately<br/>+ 48h challenge grace"]
+  LIVE -->|"grace ends"| PROB["PROBATION — Challengers live"]
+  PROB -->|"no upheld challenge"| GRAD["GRADUATED: bond returns,<br/>ownerless protocol infrastructure"]
+  PROB -->|"bonded challenge"| RES{"resolve path"}
+  RES -->|"uncontested / concede / proof"| OUT["slash or keep per rules"]
+  RES -->|"contested"| COM["Community Schelling vote<br/>(no appointed panel)"]
+  GRAD --> MAINT["bonded corrections + late fraud challenges"]
 ```
 
-1. **Pick the name.** The name identifies the **model**, never who serves it (see ID-R6). Two cases, discriminated by the shape of the name itself: an open-weights model uses its lowercased Hugging Face repo id (two segments, `org/name`, e.g. `qwen/qwen3-8b`); a proprietary/hosted model uses the vendor's published API model id (one segment, no `/`, e.g. `gpt-5.5`, `claude-opus-4-8`). Either may carry a governed Morpheus suffix (`:tee`, `:web`, `:thinking`). The contract cannot check Hugging Face or a vendor's docs; it doesn't have to — a wrong or dishonest anchor is challengeable (step 5) and every client can verify the claim off-chain against the on-chain `upstream` field.
+1. **Pick the name.** The name identifies the **model**, never who serves it (see ID-R6). Two cases, discriminated by the shape of the name itself: an open-weights model uses its lowercased Hugging Face repo id (two segments, `org/name`, e.g. `qwen/qwen3-8b`); a proprietary/hosted model uses the vendor's published API model id (one segment, no `/`, e.g. `gpt-5.5`, `claude-opus-4-8`). Either may carry a governed Morpheus suffix (`:tee`, `:web`, `:thinking`). The contract cannot check Hugging Face or a vendor's docs; it doesn't have to — a wrong or dishonest anchor is challengeable (step 6) and every client can verify the claim off-chain against the on-chain `upstream` field.
 2. **Commit.** `commitModelRegistration(keccak256(nameKey, salt, msg.sender))`. This prevents a mempool watcher from sniping a valuable name out from under the registrant (the same reason ENS uses commit-reveal).
 3. **Reveal and pay.** After the commit delay, `registerCanonicalModel(...)` supplies the name, capability, feature flags, and metadata, and transfers the **registration bond** (refundable collateral, held per listing through probation) plus the **registration fee** (non-refundable, to the registry fee pool, REG-R2b). The contract folds and validates the name entirely on-chain (§3.1.1), derives the deterministic id, and reverts if the name is taken. No role check. No human.
-4. **Live immediately, on probation.** The listing is bid-able the moment it registers. Probation (`probationDays`, default 30) is not a waiting period — the market operates normally — it is the window in which the registrant remains the accountable party: they may correct their own metadata, and their bond is the slashable stake behind the listing's claims. Catalog reads expose `registeredAt` and probation state so consumers/routers can apply their own "young listing" caution policy.
-5. **Challenge (only if someone objects).** Anyone who believes a listing is fraudulent — impersonating a name, lying about capability/limits, fake upstream anchor — posts a matching challenge bond. Arbitration resolves it (v1: an owner-appointed arbiter multisig behind a pluggable `IArbiter` interface; §3.1.3 REG-R5). Loser's bond is split: half to the winner, half to the registry fee pool. A successful challenge removes the listing and frees the name. A pending challenge blocks graduation until resolved (a rejected challenge does not reset the probation clock).
-6. **Graduation (the bond comes home; the listing outgrows its creator).** When probation ends with no challenge upheld, the bond becomes claimable back in full and the registrant's special write powers lapse. The listing is now **ownerless protocol infrastructure**: a permanent fact of the network, exactly as durable as the modelId that sessions and bids reference. Registering confers no ongoing revenue or privilege, so there is nothing left for the registrant to own — they contributed a catalog entry, got their capital back, and (typically) bid on it like everyone else.
-7. **Life after graduation (no decay; dormancy instead of death).** Listings never die of neglect. If `glm-5.2` falls out of favor and every bid migrates to `glm-5.5`, the listing simply goes dormant — filtered out of active-model reads, resurrectable forever by any provider posting a single bid. Post-graduation maintenance is permissionless and bonded: metadata corrections are proposed by anyone with a `correctionBond` and apply after an unchallenged window (or go to the arbiter); a fraudulent-listing challenge remains possible (upheld → listing retired and name freed, challenger reimbursed plus a bounty from the registry fee pool). The only removal path is proven fraud, never unpopularity.
+4. **Live immediately; challenge grace (default 48h).** The listing is bid-able the moment it registers. For `challengeGrace` after `registeredAt`, challenges are **disabled** so the registrant can fix honest metadata mistakes (or voluntarily retire a wrong name when allowed). Grace is not a free pass for squatters — the listing is already public.
+5. **Probation.** Through `probationDays` (default 30, includes grace), the registrant remains accountable; their bond is the slashable stake behind the listing's claims. Catalog reads expose `registeredAt`, grace end, and probation state so consumers/routers can apply their own "young listing" caution policy.
+6. **Challenge (after grace, if someone objects).** Anyone who believes a listing is fraudulent posts a matching challenge bond, a **typed claim**, and evidence (§3.1.3 REG-R5). Resolution is **contract-driven** — no appointed panel: uncontested timeout, concede, optional hard-fact proof, or bonded **Community** Schelling vote (REG-R5d). A pending challenge blocks graduation until resolved (a rejected challenge does not reset the probation clock).
+7. **Graduation (the bond comes home; the listing outgrows its creator).** When probation ends with no challenge upheld, the bond becomes claimable back in full and the registrant's special write powers lapse. The listing is now **ownerless protocol infrastructure**.
+8. **Life after graduation (no decay; dormancy instead of death).** Listings never die of neglect. Post-graduation maintenance is permissionless and bonded: metadata corrections apply after an unchallenged window (or escalate on the same optimistic / Community rails); late fraud challenges remain possible with a fee-pool bounty. The only removal path is proven fraud, never unpopularity.
 
-**Why "make it hurt, then hand it back" works better than review.** A curation pipeline filters honest registrants (who wait) and barely slows determined bad actors (who social-engineer a PR through). Probation collateral does the opposite: for an honest registrant it is a 30-day deposit, returned in full — while for a squatter or impersonator every fake listing locks a full bond precisely during the window when a new name gets maximum scrutiny, against a challenge that confiscates it. And because being the registrant confers nothing after graduation, there is no long-game payoff for fraud that survives probation: the listing's ongoing truthfulness is what providers are held to (per-provider stats, §3.6), not a namesake privilege. Probation-then-graduation is the permissionless translation of the original "approved registry" intent: review at birth, permanence afterward — with economics and time doing the reviewing instead of a signing quorum.
+**Why "make it hurt, then hand it back" works better than review.** A curation pipeline filters honest registrants (who wait) and barely slows determined bad actors. Probation collateral does the opposite: for an honest registrant it is a 30-day deposit, returned in full — while for a squatter every fake listing locks a full bond during maximum scrutiny. Dispute resolution uses economics and Community stake, not a doxxable signing quorum. Full narrative: [`model-registry-story.md`](model-registry-story.md).
 
-**Roles.** No operator role exists in the registration path. The owner multisig keeps exactly three registry powers, none of which gate honest registration: tune parameters within on-chain bounds (bond size, fee, probation length, correction window, suffix vocabulary), appoint the arbiter for challenges (`IArbiter`, replaceable; expected to be a narrow arbitration multisig so the owner key stays out of operational work, REG-R5), and emergency-`DISABLED` a listing (stops **new** sessions only; never blocks settlement or withdrawals, F2).
+**Roles.** No operator or arbiter role exists in the registration or dispute path. The owner multisig keeps registry powers that do **not** gate honest registration or resolve disputes: tune parameters within on-chain bounds, and emergency-`DISABLED` a listing (stops **new** sessions only; never blocks settlement or withdrawals, F2).
 
 ### 3.1.1 Canonical identity & naming (Priority: High)
 
@@ -357,14 +359,16 @@ This replaces the legacy free-for-all (P1/P2). A curated alternative (PR review 
 
 ```mermaid
 flowchart LR
-  ANY["anyone"] -->|"commit, then register:<br/>bond (refundable) + fee (to registry fee pool)"| REG["registerCanonicalModel"]
-  REG --> LIVE["listing ACTIVE immediately,<br/>in PROBATION for probationDays"]
-  CH["anyone (bonded)"] -->|"challengeModel(id, reason)"| ARB["IArbiter (v1: owner-appointed<br/>arbitration multisig)"]
-  ARB -->|"challenger wins"| SLASH["listing removed; registrant bond split:<br/>half challenger, half fee pool"]
-  ARB -->|"registrant wins"| KEEP["challenger bond split the same way"]
-  LIVE -->|"probation ends, no upheld challenge"| GRAD["GRADUATED: bond claimable back,<br/>registrant powers lapse, listing permanent"]
-  GRAD --> CORR["anyone (bonded): propose metadata correction<br/>or challenge fraud (bounty from fee pool)"]
-  OWN["owner"] -->|"parameter tuning (bounded) + emergency DISABLED"| REG
+  ANY["anyone"] -->|"commit + register:<br/>bond + fee"| REG["registerCanonicalModel"]
+  REG --> GRACE["LIVE + challengeGrace<br/>(default 48h)"]
+  GRACE --> PROB["PROBATION — challenges open"]
+  CH["anyone (bonded)"] -->|"challengeModel(id, typed claim, evidence)"| DEF["defense window"]
+  DEF -->|"no defense"| U["resolveUncontested → slash"]
+  DEF -->|"concede"| C["finder's bounty; listing may stay"]
+  DEF -->|"contest"| E["proof and/or Community vote"]
+  PROB -->|"probation ends, no upheld challenge"| GRAD["GRADUATED"]
+  GRAD --> CORR["bonded corrections + late fraud challenges"]
+  OWN["owner"] -->|"params (bounded) + emergency DISABLED"| REG
 ```
 
 This is full CRUD for the catalog, economics-driven: **C**reate (permissionless register with bond), **R**ead (§3.1.4), **U**pdate (registrant during probation; bonded permissionless corrections after graduation), **D**elete (pre-graduation voluntary retire, or successful fraud challenge — never unpopularity; dormant listings persist and reawaken on any new bid).
@@ -379,17 +383,34 @@ This is full CRUD for the catalog, economics-driven: **C**reate (permissionless 
   - *Challenge:* see REG-R5.
   - There is **no idle decay**. A graduated listing with no bids is dormant, not dead: it drops out of active-model reads (§3.1.4 filters on active bids) and any provider can reawaken it forever with a single `postModelBid`. Removal-by-unpopularity is explicitly rejected: the catalog is a permanent record of models that exist, and re-registration churn (new bond, new probation) for a returning model would be pure waste.
 - **REG-R4b (Graduation)** When `block.timestamp >= registeredAt + probationDays` and no challenge is pending or has been upheld, the listing is **GRADUATED** (checkable lazily; no keeper required): the bond becomes claimable by the registrant via `claimRegistrationBond(modelId)` (pull, permissionless to trigger on the registrant's behalf), registrant-only write paths close, and the listing is permanent. `probationDays` default 30, owner-tunable within 7..365 (model release cadence is fast; the default favors speed, and the bound floor keeps a meaningful scrutiny window). A pending challenge blocks graduation until resolved; a rejected challenge does not reset the clock. Graduation emits `ModelGraduated(modelId)`.
-- **REG-R5 (bonded challenge during probation, pluggable arbiter)** `challengeModel(modelId, reasonURI)` posts a `challengeBond` equal to the listing's held registration bond and freezes the listing's lifecycle changes (not its sessions or bids) until resolution. Resolution goes through an `IArbiter` interface (REG-R5d). Outcomes: challenge **upheld** → listing `RETIRED`, name freed, registrant bond split half to challenger / half to the registry fee pool; challenge **rejected** → challenger bond split the same way in the registrant's favor. One live challenge per listing at a time; repeated frivolous challenges are self-deterring (each costs a full bond). The arbiter can move only the two bonds at stake; it can never touch session stakes, provider earnings, or any custody path (F2).
-- **REG-R5b (post-graduation fraud challenge)** A graduated listing remains challengeable for fraud (REG-R6 grounds), with adjusted economics since there is no registrant bond left to slash: the challenger posts `challengeBond`; **upheld** → listing `RETIRED`, name freed, challenger bond returned plus a fixed `challengeBounty` (default 50 MOR, owner-tunable within 0..`modelRegistrationBond`) paid from the registry fee pool (skipped without revert if the pool is short); **rejected** → challenger bond forfeits to the registry fee pool. This keeps late-discovered fraud removable while keeping griefing costly. Note the design intuition: because being a registrant confers no ongoing benefit, post-graduation fraud has no payoff *for the registrant* — misrepresentation of what is actually served is a provider-level offense policed by per-provider stats (§3.6) and, eventually, attestation (§3.7.2).
-- **REG-R5c (post-graduation metadata corrections, bonded and permissionless)** After graduation, anyone may propose a metadata correction (limits, upstream ref drift, displayName typo — never identity fields) by calling `proposeModelCorrection(modelId, newMetadata)` with a `correctionBond` (default 20 MOR, owner-tunable within bounds). The proposal applies automatically after `correctionWindow` (default 7 days) if unchallenged, refunding the bond; a challenge within the window routes both bonds to the arbiter under REG-R5 economics. Capability changes post-graduation go through this same flow (they are consumer-visible claims, so they deserve the challenge window).
-- **REG-R5d (arbiter: pluggable, narrow, and not the owner's day job)** All challenge resolution goes through an `IArbiter` interface with exactly one power: rule on open challenges and move the associated bonds. The v1 implementation is an **owner-appointed arbitration multisig** — expected to be a small, narrow-purpose quorum (e.g. 2-of-3) distinct from the owner multisig itself, so routine arbitration never requires owner-key ceremonies; the owner retains only the power to appoint/replace the arbiter (and may serve as arbiter itself as a degenerate case). The arbiter interface must support **batch resolution** (`resolveChallenges(ChallengeRuling[] calldata)`) so a backlog of challenges is one signing session, not N; each ruling still emits its own `ModelChallengeResolved` event. The implementation is explicitly replaceable by a decentralized arbiter (Kleros-style court, token-holder vote, or optimistic oracle) without touching registry storage.
-- **REG-R6 (grounds for challenge, documented not enforced)** The RFP defines the legitimate grounds so arbiters and challengers share a rubric: (a) false anchor — the name/`upstream` claim points at a model that does not exist under that naming authority (no such HF repo; no such vendor API id); (b) materially wrong capability/limits vs the anchored HF/vendor source; (c) misrepresented artifact — what is served under the name is materially not the anchored model (a fine-tune, altered weights, capability-changing quantization, or an invented variant like `qwen/qwen3-8b-v2` that doesn't exist upstream; §3.1.1 "a modified model is a different model"). Explicit **non-grounds**: registering a proprietary model's listing without vendor affiliation (ID-R6 — anyone may accurately list `gpt-5.5`), and serving a listed model through a reseller/aggregator channel (channel neutrality; quality complaints route to per-provider stats and ratings, not to the catalog). The contract stores only `reasonURI`; judgment is the arbiter's.
+- **REG-R4c (challenge grace)** For `challengeGrace` (default 48 hours, owner-tunable within 1 h .. 7 days) after `registeredAt`, `challengeModel` reverts. Bids and registrant metadata updates remain allowed. Grace does not extend or reset `probationDays`.
+- **REG-R5 (bonded challenge during probation — optimistic + Community, no panel)** After grace, `challengeModel(modelId, claimType, evidenceURI)` posts a `challengeBond` equal to the listing's held registration bond, records a typed claim (REG-R6), and freezes the listing's lifecycle changes (not its sessions or bids) until resolution. One live challenge per listing at a time. **No appointed arbiter.** Resolution paths:
+
+  | Path | Trigger | Outcome / bond split |
+  |------|---------|----------------------|
+  | **Uncontested** | No defense within `defenseWindow` (default 5 days, bounds 1 .. 14 days); anyone calls `resolveUncontested` | Challenge **upheld** → listing `RETIRED`, name freed; loser (registrant) bond → **50% challenger / 50% fee pool** |
+  | **Concede** | Registrant (or authorized defender) calls `concedeChallenge` | Challenger keeps deposit + receives `finderBounty` from fee pool (skip without revert if pool short); listing may remain if claim is cured by metadata update; mid-fight silent edit alone does **not** auto-reject the challenge |
+  | **Contest** | Defense posted within `defenseWindow` | Escalate per REG-R5a / REG-R5d |
+  | **Rejected (after contest)** | Proof or Community majority rejects the claim | Challenger bond → **50% registrant / 50% fee pool** if Community was not paid; if Community voted, use REG-R5d three-way split with registrant as winner |
+
+  Judgment uses the claim **snapshot at challenge open** (evidence hash / state at open). A metadata edit after open is not a defense of a past false claim. Challenge bonds never touch session stakes, provider earnings, or custody (F2).
+- **REG-R5a (hard-fact proof path, optional)** Where a claim type admits machine-checkable evidence (e.g. cryptographic attestation that an HTTPS response showed upstream missing), the contractor may implement `resolveByProof(challengeId, proof)` that finalizes without Community. If unimplemented for a claim type, contested challenges use REG-R5d only. Proof resolution uses the same 50/50 winner/fee-pool split as uncontested (Community not called).
+- **REG-R5b (post-graduation fraud challenge)** A graduated listing remains challengeable for fraud (REG-R6 grounds), with adjusted economics since there is no registrant bond left to slash: the challenger posts `challengeBond`; resolution uses the same optimistic / concede / proof / Community paths. **Upheld** → listing `RETIRED`, name freed, challenger bond returned plus a fixed `challengeBounty` (default 50 MOR, owner-tunable within 0..`modelRegistrationBond`) paid from the registry fee pool (skipped without revert if the pool is short); when Community voted on an upheld challenge, Community is paid from the **challenger's** bond or fee pool per REG-R5d proportions without stranding funds. **Rejected** → challenger bond forfeits per the applicable split. Serving misrepresentation under an honest name remains a provider-level offense (§3.6 / §3.7.2), not a registrant royalty game.
+- **REG-R5c (post-graduation metadata corrections, bonded and permissionless)** After graduation, anyone may propose a metadata correction (limits, upstream ref drift, displayName typo — never identity fields) by calling `proposeModelCorrection(modelId, newMetadata)` with a `correctionBond` (default 20 MOR, owner-tunable within bounds). The proposal applies automatically after `correctionWindow` (default 7 days) if unchallenged, refunding the bond; a challenge within the window uses the same optimistic / Community rails as REG-R5 (not an appointed panel). Capability changes post-graduation go through this same flow.
+- **REG-R5d (Community: staked Schelling voters, paid when called)** Contested challenges (and contested corrections) escalate to a bonded **Community** vote. There is **no** owner-appointed dispute panel and **no** `IArbiter` role.
+
+  - **Join:** `joinCommunity()` posts `communityJoinStake` (default 75 MOR, bounds 10 .. 1,000 MOR); stake is locked while participating. `leaveCommunity()` returns stake only when the wallet has no open vote commitment.
+  - **Vote:** commit-reveal yes/no on the typed claim; vote weight = staked amount (or equal weight — contractor proposes one scheme and documents it).
+  - **Quorum:** a slash/uphold that retires a listing or moves bonds against a party requires meeting `communityQuorum` (default: at least 5 distinct voters **or** ≥10% of total Community stake weight — exact formulation owner-tunable within documented bounds). **Below quorum → fail-open:** challenge expires, both challenge bonds returned, listing continues (Community napping must not freeze the market).
+  - **Pay when called:** when quorum is met, loser bond splits **40% winner / 40% Community majority (pro-rata by vote weight) / 20% fee pool**. Minority voters receive nothing from that round. Paths that never call Community (uncontested, concede, proof-only) keep **50% winner / 50% fee pool**.
+  - **Finalize:** anyone may call `finalizeCommunityVote(challengeId)` after the vote window; emits `ModelChallengeResolved` (and Community payout events). Community cannot touch funds outside these rules.
+- **REG-R6 (grounds for challenge, documented rubric for Challengers and Community)** Legitimate grounds: (a) false anchor — the name/`upstream` claim points at a model that does not exist under that naming authority (no such HF repo; no such vendor API id); (b) materially wrong capability/limits vs the anchored HF/vendor source; (c) misrepresented artifact — what is served under the name is materially not the anchored model (a fine-tune, altered weights, capability-changing quantization, or an invented variant like `qwen/qwen3-8b-v2` that doesn't exist upstream; §3.1.1 "a modified model is a different model"). Explicit **non-grounds**: registering a proprietary model's listing without vendor affiliation (ID-R6), and serving a listed model through a reseller/aggregator channel (channel neutrality; quality complaints route to per-provider stats and ratings, not to the catalog). The contract stores `claimType` + `evidenceURI` (and optional evidence hash); Community/proof paths decide against that rubric.
 - **REG-R7 (remove legacy model stake + `Model.fee`)** Delete the legacy per-model creation stake and the unused `Model.fee` field ([F4](#f4-remove-unnecessary--unused-mechanisms)). The new bond replaces both: unlike the old stake it is meaningfully sized, slashable on proven fraud during probation, and returned in full at graduation. This is the single home for the "unused fee field" cleanup.
 - **REG-R8 (input bounds)** Name bounds live in the §3.1.1 grammar. Additionally: max tag count plus per-tag length; bounded metadata blob size; reject with named errors. Enforce on new writes only (existing records grandfathered until migration). Endpoint bounds live in §3.3.2.
 - **REG-R9 (schema version-lock)** Store the accepted metadata `schemaVersion` (e.g. `morpheus.model/v1`) on-chain so the on-chain field layout is bound to a known, owner-governed version of [`morpheus.model.v1`](schemas/morpheus.model.v1.schema.json); reject writes that don't conform to an accepted version. Owner governs which schema versions are accepted.
 - **REG-R10 (lifecycle)** `enum ModelLifecycle { ACTIVE, DEPRECATED, DISABLED, RETIRED }`. DEPRECATED (registrant-set, probation only; see Discussion for post-graduation handling) rejects new bids; DISABLED (owner-only, emergency) rejects new **sessions** but never blocks closes, claims, or withdrawals (F2); RETIRED per REG-R4/R5. The probation/graduated phase (REG-R4b) is tracked orthogonally to lifecycle (a timestamp plus challenge state, not an enum value), since a listing is ACTIVE in both phases. All transitions emit `ModelLifecycleChanged`.
 
-**Why this can't be rugged or frozen** (general threat model in [F5](#f5-threat-model-if-mor-were-a-high-value-token-how-do-bad-actors-game--stall--rug-it)): there is no operator key to compromise and no approval queue to stall. If the owner multisig and the arbiter both disappear, registration, bidding, sessions, and graduation-bond claims keep working; only challenges and correction disputes cannot be *resolved* — the bonds stay escrowed until a facet upgrade installs a new arbiter. Graduation itself is a pure timestamp check, so bond refunds for honest registrants survive total key loss. The catalog is reconstructable from chain alone. The progressive-decentralization path is concrete: replace the `IArbiter` implementation, touch nothing else.
+**Why this can't be rugged or frozen** (general threat model in [F5](#f5-threat-model-if-mor-were-a-high-value-token-how-do-bad-actors-game--stall--rug-it)): there is no operator key to compromise, no approval queue to stall, and **no appointed dispute panel** whose absence freezes challenges. If the owner multisig disappears, registration, bidding, sessions, graduation-bond claims, uncontested resolves, concede, proof resolves, and Community votes keep working; only parameter tuning and emergency `DISABLED` stall. Graduation itself is a pure timestamp check. The catalog is reconstructable from chain alone.
 
 **Acceptance criteria**
 - [ ] **AC-REG-1** Any funded wallet can commit + register a grammar-valid unused name with bond+fee; no role required; the listing is immediately bid-able.
@@ -397,20 +418,23 @@ This is full CRUD for the catalog, economics-driven: **C**reate (permissionless 
 - [ ] **AC-REG-3** During probation, `updateModelMetadata`/`setModelCapability` work only for the listing's registrant, never change `canonicalModelId`/`nameKey`, and leave existing bids/sessions valid (regression). After graduation, both revert for the registrant (powers lapsed) and the correction flow is the only metadata path.
 - [ ] **AC-REG-4** Voluntary retire works only during probation and only with no active bids/open sessions, refunds the bond, frees the name, tombstones the id. No function exists that retires a listing for lack of bids; a graduated listing with zero bids accepts a new bid at any later time and reappears in active reads.
 - [ ] **AC-REG-4b** Graduation: after `probationDays` with no pending/upheld challenge, `claimRegistrationBond` refunds exactly the posted bond (once); a pending challenge blocks graduation until resolved; a rejected challenge does not extend probation; `ModelGraduated` emitted. A bond-parameter change after registration alters neither the held amount nor the refund (forward-only test).
-- [ ] **AC-REG-5** Probation challenge lifecycle: post bond → resolve upheld (listing retired, name freed, registrant bond split half challenger / half fee pool) and resolve rejected (challenger bond split the same way in registrant's favor); one live challenge per listing; arbiter cannot move any funds other than the bonds at stake.
-- [ ] **AC-REG-5b** Post-graduation challenge: upheld → listing retired, name freed, challenger reimbursed + `challengeBounty` from the fee pool (and pays nothing when the pool is short — no revert); rejected → challenger bond to the fee pool. Post-graduation correction: unchallenged proposal auto-applies after `correctionWindow` with bond refund; challenged proposal routes to the arbiter; identity fields are never correctable.
-- [ ] **AC-REG-5c** Batch resolution: the arbiter resolves N challenges/correction disputes in one transaction with per-ruling events; a non-arbiter caller cannot resolve anything.
-- [ ] **AC-REG-6** Bond/fee/probation/correction/bounty/commit parameters are owner-settable only within the hard-coded bounds; out-of-bounds set attempts revert.
-- [ ] **AC-REG-7** No legacy model stake or `Model.fee` remains; bus-factor test: with all admin keys gone, register/bid/session/withdraw/graduation-bond-claim all still work; only challenge and correction-dispute *resolution* stalls (documented degraded mode).
+- [ ] **AC-REG-4c** During `challengeGrace`, `challengeModel` reverts; after grace it succeeds; grace does not alter `probationDays`.
+- [ ] **AC-REG-5** Probation challenge lifecycle: uncontested uphold (retire + 50/50 split); reject after contest (challenger pays); concede pays finder's bounty without requiring Community; one live challenge per listing; no `onlyOwner`/`onlyArbiter` path can move challenge bonds.
+- [ ] **AC-REG-5b** Post-graduation challenge: upheld → listing retired, name freed, challenger reimbursed + `challengeBounty` from the fee pool (no revert if pool short); rejected → challenger bond forfeits per split rules. Post-graduation correction: unchallenged proposal auto-applies after `correctionWindow` with bond refund; challenged proposal uses optimistic / Community rails; identity fields are never correctable.
+- [ ] **AC-REG-5c** Community: join/leave stake; contested vote commit-reveal; below quorum fail-open (bonds returned, listing continues); at quorum, 40/40/20 split to winner / majority pro-rata / fee pool; minority unpaid; non-Community callers cannot finalize a vote early or redirect payouts.
+- [ ] **AC-REG-5d** Snapshot rule: metadata edited after challenge open does not auto-reject; concede is the cure path that pays the challenger.
+- [ ] **AC-REG-6** Bond/fee/grace/probation/defense/Community/correction/bounty/commit parameters are owner-settable only within the hard-coded bounds; out-of-bounds set attempts revert.
+- [ ] **AC-REG-7** No legacy model stake or `Model.fee` remains; bus-factor test: with all admin keys gone, register/bid/session/withdraw/graduation-bond-claim/**uncontested resolve**/Community finalize all still work; only parameter changes and `DISABLED` stall.
 - [ ] **AC-REG-8** Tag/metadata bounds enforced on new writes with named errors.
 - [ ] **AC-REG-9** A write whose metadata doesn't conform to an accepted `schemaVersion` reverts; the accepted version set is owner-governed.
 - [ ] **AC-REG-10** DEPRECATED rejects new bids; DISABLED rejects new sessions but demonstrably never blocks a close, claim, or withdrawal.
 
 > **Discussion items**
-> - Arbiter v1: confirm the owner-appointed narrow arbitration multisig (REG-R5d), with the `IArbiter` interface as the decentralization seam. The bidder should price an optional Kleros/optimistic-oracle integration as an alternative.
+> - Exact `communityQuorum` formulation (N voters vs % of stake vs both): confirm defaults in §4.1 or propose tighter bounds with rationale.
+> - Hard-fact proof path (REG-R5a): implement in v1 for at least `UPSTREAM_MISSING`, or defer all contested cases to Community — bidder states which and prices accordingly.
 > - Bond denominated in MOR means its deterrent value floats with price; owner tuning within bounds is the v1 answer. The bidder may propose an alternative (e.g. fee-oracle-pegged) if it stays simple.
 > - DEPRECATED after graduation: with registrant powers lapsed, should the deprecate flag move into the correction flow, or be dropped entirely (dormancy already handles "don't route here")? The bidder should propose the simpler consistent answer.
-> - Whether a probation challenge that is *rejected* should extend probation by the challenge's pendency duration (so a listing can't graduate mid-dispute-cleanup). Lean: no extension needed, since a pending challenge already blocks graduation.
+> - Whether a probation challenge that is *rejected* should extend probation by the challenge's pendency duration. Lean: no extension needed, since a pending challenge already blocks graduation.
 
 **Compatibility class:** `Breaking` (replaces `modelRegister` semantics and removes model stake; coordinate via §3.1.5). The challenge/graduation/correction surface is `Additive` on top of the new registry.
 
@@ -431,7 +455,7 @@ flowchart LR
 ```
 
 **Requirements**
-- **CAT-R1** View-only catalog reads: `foldModelName`, `resolveModelIdByName` (nameKey + aliases) returning `canonicalModelId`, `getCanonicalModel` (full on-chain metadata incl. `registeredAt`, probation/graduation state, held bond, challenge state), `listActiveModels(capability, …)` (active = has live bids; dormant graduated listings excluded but resolvable by name/id), `listModelsByFeature`, `getCapabilityLabel`, `getFeature`, `getModelMarketSummary` (model + active bid count + min price).
+- **CAT-R1** View-only catalog reads: `foldModelName`, `resolveModelIdByName` (nameKey + aliases) returning `canonicalModelId`, `getCanonicalModel` (full on-chain metadata incl. `registeredAt`, challenge-grace end, probation/graduation state, held bond, challenge state), `listActiveModels(capability, …)` (active = has live bids; dormant graduated listings excluded but resolvable by name/id), `listModelsByFeature`, `getCapabilityLabel`, `getFeature`, `getModelMarketSummary` (model + active bid count + min price).
 - **CAT-R2** All list functions paginated (reuse the existing `Paginator`); read only from existing/registry storage.
 - **CAT-R3 (publish the id)** Registration emits `CanonicalModelRegistered(modelId, nameKey, displayName, capability)` so off-chain sites can index and publish the `canonicalModelId` for providers to bid against; `resolveModelIdByName(name)` gives the same id on-chain for tooling that prefers a direct lookup.
 - **CAT-R4 (sort options; default newest-first)** Paginated listings accept an optional sort parameter with a deterministic default. Supported orders: by creation date (`createdAt`, ascending or descending) and alphabetical by canonical human-readable name (`displayName`/`nameKey`, ascending or descending). The default is creation date, descending (newest first), the common "what's new to bid on or pick" view, so a caller that passes nothing still gets a useful page without client-side sorting. `createdAt` already exists; expose an index ordered by it, plus a name-ordered index for the alphabetical option. A capability/feature filter still applies within the chosen order.
@@ -470,7 +494,7 @@ flowchart LR
 
 **Compatibility class:** `Breaking` (gated, governance-approved; `legacyModelRedirect` softens the cutover).
 
-**Events (indexer contract):** `CanonicalModelRegistered`, `ModelMetadataUpdated`, `ModelCapabilityChanged`, `ModelLifecycleChanged`, `ModelGraduated`, `RegistrationBondClaimed`, `ModelAliasRegistered`, `ModelAliasRepointed`, `ModelAliasRemoved`, `ModelRegistrationCommitted`, `ModelChallengeOpened`, `ModelChallengeResolved`, `ModelBondSlashed`, `ModelBondRefunded`, `ModelCorrectionProposed`, `ModelCorrectionApplied`, `ModelCorrectionChallenged`.
+**Events (indexer contract):** `CanonicalModelRegistered`, `ModelMetadataUpdated`, `ModelCapabilityChanged`, `ModelLifecycleChanged`, `ModelGraduated`, `RegistrationBondClaimed`, `ModelAliasRegistered`, `ModelAliasRepointed`, `ModelAliasRemoved`, `ModelRegistrationCommitted`, `ModelChallengeOpened`, `ModelChallengeConceded`, `ModelChallengeResolved`, `ModelBondSlashed`, `ModelBondRefunded`, `CommunityJoined`, `CommunityLeft`, `CommunityVoteCommitted`, `CommunityVoteRevealed`, `CommunityVoteFinalized`, `ModelCorrectionProposed`, `ModelCorrectionApplied`, `ModelCorrectionChallenged`.
 
 ---
 
@@ -1029,18 +1053,24 @@ Every tunable parameter in this RFP, in one place. All setters are owner-only; e
 |-----------|---------|-----------------|----------|------------|
 | `modelRegistrationBond` | 100 MOR | 10 .. 10,000 MOR (forward-only; never retroactive) | none | §3.1.3 REG-R2 |
 | `modelRegistrationFee` | 10 MOR | 0 .. 100 MOR | none | §3.1.3 REG-R2 |
+| `challengeGrace` | 48 hours | 1 h .. 7 days | none | §3.1.3 REG-R4c |
 | `probationDays` | 30 days | 7 .. 365 days | none | §3.1.3 REG-R4b |
+| `defenseWindow` | 5 days | 1 .. 14 days | none | §3.1.3 REG-R5 |
 | `aliasBond` | 20 MOR | 1 MOR .. `modelRegistrationBond` | none | §3.1.1 ID-R5 |
 | `correctionBond` | 20 MOR | 1 .. 1,000 MOR | none | §3.1.3 REG-R5c |
 | `correctionWindow` | 7 days | 1 .. 90 days | none | §3.1.3 REG-R5c |
 | `challengeBounty` | 50 MOR | 0 .. `modelRegistrationBond` | none | §3.1.3 REG-R5b |
+| `finderBounty` | 25 MOR | 0 .. `modelRegistrationBond` | none | §3.1.3 REG-R5 |
+| `communityJoinStake` | 75 MOR | 10 .. 1,000 MOR | none | §3.1.3 REG-R5d |
+| `communityQuorum` | ≥5 voters **or** ≥10% Community stake | documented dual form; owner-tunable within contractor-proposed bounds | none | §3.1.3 REG-R5d |
+| Community loser-bond split | 40% / 40% / 20% (winner / majority / fee pool) | fixed ratios or owner-tunable within hard bounds (bidder proposes) | none | §3.1.3 REG-R5d |
+| Non-Community loser-bond split | 50% / 50% (winner / fee pool) | fixed | none | §3.1.3 REG-R5 |
 | `commitDelay` | 60 s | 1 min .. 24 h | none | §3.1.3 REG-R1 |
 | Suffix vocabulary | `tee`, `web`, `thinking`, `non-thinking` | additive only (no channel/reseller labels, ID-R6) | none | §3.1.1 |
 | `providerMinimumStake` (bond) | 10 MOR | existing setter, no new bounds | none | §3.3.1 BOND-R1 |
 | `bidUpdateFee` | 0.3 MOR | sanity bound only | none | §3.2.1 BID-R2 |
 | `feeBps` (provider commission) | 500 (5%) | 0 .. 10,000 (100% overflow guard) | **7 days** | §3.4.5 FEE-R2 |
 | `feeDestination` | maintainer multisig | any address; `address(0)` disables the fee | none | §3.4.5 FEE-R2/R4 |
-| `IArbiter` implementation | owner-appointed arbitration multisig (v1, e.g. 2-of-3) | owner appoints/replaces; batch resolution required | governance | §3.1.3 REG-R5d |
 
 ### 4.2 Deliverables
 
@@ -1058,17 +1088,17 @@ Sequencing is a contracting decision, intentionally not phased here:
 
 1. **Traceability matrix.** The bid and the final delivery include a table mapping every `AC-*` in this document to the named automated test(s) that prove it. An AC with no test is not done; a test not tied to an AC is unreviewed scope.
 2. **Property tests for the money invariants.** AC-FEE-8 (emission conservation), AC-REWARD-4 (budget enforcement), and AC-CLOSE-4b (deferred-claim accounting) must be property/fuzz tests over randomized session mixes, not single-scenario unit tests.
-3. **Bus-factor drill (F2).** One test suite runs the full market lifecycle (register model, bid, open, close, claim, withdraw, graduate and claim the registration bond) with every privileged key unavailable, and demonstrates the documented degraded mode (only challenge/correction resolution and parameter changes stall).
+3. **Bus-factor drill (F2).** One test suite runs the full market lifecycle (register model, bid, open, close, claim, withdraw, graduate and claim the registration bond, open/resolve an uncontested challenge, run a Community vote finalize) with every privileged key unavailable, and demonstrates that only parameter changes and `DISABLED` stall.
 4. **Testnet rehearsal.** The §3.1.5 migration (seed, redirect, sunset) is executed end-to-end on a public testnet with a written runbook before any mainnet proposal; the seeded catalog is diffed against the live model set.
 5. **Review gate.** We review code against this document section by section; each §3 subsection's compatibility class must be verifiable from the diff (ABI diff + storage-layout report).
 
-**What a bid response should contain:** per-section estimates against §3's subsections (each is independently priceable), positions on every open Discussion item (agree with the lean or argue an alternative), the optional prices explicitly requested (decentralized arbiter integration §3.1.3; `burnSelfDealtFees` §3.4.5), and any place where the bidder believes a requirement conflicts with the on-chain reality of the current facets — flagged in the bid, not discovered mid-build.
+**What a bid response should contain:** per-section estimates against §3's subsections (each is independently priceable), positions on every open Discussion item (agree with the lean or argue an alternative), the optional prices explicitly requested (`burnSelfDealtFees` §3.4.5; optional REG-R5a proof path), and any place where the bidder believes a requirement conflicts with the on-chain reality of the current facets — flagged in the bid, not discovered mid-build.
 
 ### 4.4 Out of scope (this RFP)
 
 - What the `feeDestination` wallet does with received MOR (burn/lock/forward); that is the destination wallet's concern, not this contract (§3.4.5).
-- Off-chain tooling that verifies on-chain HF anchors against the Hugging Face API (client display of "verified vs claimed", challenger tooling); the contract only stores the claim (§3.1.1).
-- The decentralized arbiter that eventually replaces the v1 arbitration multisig behind `IArbiter` (§3.1.3); the bidder prices it as an option only.
+- Off-chain tooling that verifies on-chain HF anchors against the Hugging Face API (client display of "verified vs claimed", challenger bots); the contract only stores the claim (§3.1.1).
+- Consumer-node session selection by model name / bid servingSpec enrichment (separate design note; not this contract RFP).
 - External privacy primitives (§3.5.3) beyond an assessment.
 - Proxy-router / API gateway / MorpheusUI code changes (tracked in their repos; this RFP only guarantees the contract stays additive so those can land independently).
 
