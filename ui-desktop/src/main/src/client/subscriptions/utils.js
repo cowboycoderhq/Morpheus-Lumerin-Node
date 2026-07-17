@@ -1,6 +1,6 @@
 'use strict'
 
-const { ipcMain } = require('electron')
+const { ipcMain, app } = require('electron')
 const stringify = require('json-stringify-safe')
 
 import logger from '../../../logger'
@@ -31,8 +31,31 @@ export const isPromise = (p) => {
 export const ignoreChain = (chain, data) =>
   chain !== 'multi' && chain !== 'none' && data.chain && chain !== data.chain
 
+// Every IPC handler below can move money or read the wallet (send-mor, send-eth,
+// get-auth-headers, login-submit, logout, …). The renderer→main boundary is the
+// real trust boundary, so reject any message whose sender frame is not the app's
+// own origin. Without this, a window navigated to a hostile origin (a clicked
+// provider link) inherits the ipcRenderer bridge and can drive these channels.
+// Verified: the navigation+IPC fund-theft chain, 2026-07-17.
+const isTrustedSender = (event) => {
+  try {
+    const url = (event.senderFrame && event.senderFrame.url) || event.sender.getURL()
+    const u = new URL(url)
+    if (u.protocol === 'file:') return true // packaged renderer
+    const devUrl = process.env.ELECTRON_RENDERER_URL
+    if (!app.isPackaged && devUrl && url.startsWith(devUrl)) return true // vite dev
+    return false
+  } catch (e) {
+    return false
+  }
+}
+
 export function onRendererEvent(eventName, handler, chain) {
   ipcMain.on(eventName, function (event, evProps) {
+    if (!isTrustedSender(event)) {
+      logger.warn(`<-- ${eventName} rejected: untrusted sender frame`)
+      return
+    }
     const { id, data } = evProps
     if (ignoreChain(chain, data)) {
       return

@@ -17,6 +17,44 @@ import { join } from 'path'
 
 const installExtension = (install as any).default as typeof install
 
+// --- Navigation / external-link hardening ----------------------------------
+// This is a key-holding wallet whose renderer displays UNTRUSTED provider chat
+// (react-markdown renders real <a href> links). Without these guards, a single
+// click on a provider-supplied link top-level-navigates the wallet window to a
+// hostile origin, which then inherits the preload's ipcRenderer bridge and can
+// call money channels (send-mor/send-eth) with no XSS required. (Verified end to
+// end, 2026-07-17.) Two independent controls close it: refuse to navigate the
+// window off its own origin, and only ever hand https/mailto to the OS launcher.
+
+const isAppUrl = (url: string): boolean => {
+  try {
+    const u = new URL(url)
+    if (u.protocol === 'file:') return true // packaged renderer
+    const devUrl = process.env['ELECTRON_RENDERER_URL']
+    if (is.dev && devUrl) return url.startsWith(devUrl) // vite dev server
+    return false
+  } catch {
+    return false
+  }
+}
+
+// Only https/mailto reach the OS launcher — never file:, custom app schemes, or
+// javascript:, the classic shell.openExternal desktop-RCE vectors.
+const ALLOWED_EXTERNAL_SCHEMES = new Set(['https:', 'mailto:'])
+const openExternalSafe = (rawUrl: string): boolean => {
+  try {
+    const u = new URL(rawUrl)
+    if (ALLOWED_EXTERNAL_SCHEMES.has(u.protocol)) {
+      void shell.openExternal(rawUrl)
+      return true
+    }
+    logger.warn(`blocked openExternal for disallowed scheme: ${u.protocol}`)
+  } catch {
+    logger.warn('blocked openExternal for an unparseable url')
+  }
+  return false
+}
+
 // Dev-console hygiene: the Electron CSP warning fires on every dev boot and
 // (by its own text) never shows in a packaged app. Suppressing it in dev only
 // keeps the console readable for real errors. Content-Security-Policy hardening
@@ -48,9 +86,22 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    openExternalSafe(details.url)
     return { action: 'deny' }
   })
+
+  // Refuse to navigate the wallet window away from its own origin. The app is a
+  // hash-routed SPA that never legitimately does a top-level navigation after
+  // the initial load, so anything that tries is either a provider link click or
+  // a redirect attack — block it, and send a genuine https link to the browser.
+  const denyOffAppNavigation = (e: Electron.Event, url: string): void => {
+    if (isAppUrl(url)) return
+    e.preventDefault()
+    logger.warn(`blocked in-window navigation to: ${url}`)
+    openExternalSafe(url)
+  }
+  mainWindow.webContents.on('will-navigate', denyOffAppNavigation)
+  mainWindow.webContents.on('will-redirect', denyOffAppNavigation)
 
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
