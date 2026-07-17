@@ -1,0 +1,12 @@
+{
+  "name": "ui-verify",
+  "private": true,
+  "description": "Standalone UI verification instrument (computed-style audit + screenshots) for the desktop client. Not an app dependency.",
+  "type": "module",
+  "scripts": {
+    "verify": "node run.js"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}
