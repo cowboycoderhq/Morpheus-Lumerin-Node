@@ -8,6 +8,7 @@ import {
 } from '@tabler/icons-react';
 import { abbreviateAddress } from '../../utils';
 import { isClosed } from './utils';
+import { earlyCloseLock, weiToMor } from '../../utils/marketplace';
 import Tab from 'react-bootstrap/Tab';
 import Tabs from 'react-bootstrap/Tabs';
 import Form from 'react-bootstrap/Form';
@@ -160,9 +161,76 @@ const HistoryEntry = ({
   );
 };
 
+// Closing early does not spend the stake — it time-locks part of it for a day,
+// and letting the session run to its end locks nothing at all. The user cannot
+// know either fact from the button, so state both, with the real figure. A live
+// session lost ~2.7 MOR to this silence on 2026-07-16.
+const CloseSessionConfirm = ({
+  session,
+  onCancel,
+  onConfirm,
+}: {
+  session: any;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) => {
+  const lock = earlyCloseLock(session, Math.floor(Date.now() / 1000));
+  const when = (unix: number) =>
+    new Date(unix * 1000).toLocaleString(undefined, {
+      weekday: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+
+  return (
+    <components.ConfirmPanel data-testid="close-session-confirm">
+      {lock.known && lock.isEarly ? (
+        <>
+          <components.ConfirmText>
+            Closing now locks{' '}
+            <components.ConfirmLockAmount>
+              {weiToMor(lock.lockedWei, 4)} MOR
+            </components.ConfirmLockAmount>{' '}
+            until {when(lock.unlockAt)}. You get{' '}
+            {weiToMor(lock.returnedWei, 4)} MOR back right away — nothing is
+            lost, but the locked part is unreachable until then.
+          </components.ConfirmText>
+          <components.ConfirmHint>
+            Wait until {when(lock.endsAt)} and the session closes itself with
+            nothing locked.
+          </components.ConfirmHint>
+        </>
+      ) : (
+        // Either the session has already run its course (closing locks nothing)
+        // or it cannot be priced. Never invent a figure on a money surface.
+        <components.ConfirmText>
+          {lock.known
+            ? 'This session has already reached its end time, so closing it now locks nothing — your full stake is returned.'
+            : 'Close this session? Its stake could not be priced, so the amount held back cannot be shown here.'}
+        </components.ConfirmText>
+      )}
+      <components.ConfirmActions>
+        <components.CloseBtn
+          data-testid="close-session-confirm-btn"
+          onClick={onConfirm}
+        >
+          {lock.known && lock.isEarly ? 'Close & lock' : 'Close session'}
+        </components.CloseBtn>
+        <components.CancelBtn
+          data-testid="close-session-cancel-btn"
+          onClick={onCancel}
+        >
+          {lock.known && lock.isEarly ? 'Keep it open' : 'Cancel'}
+        </components.CancelBtn>
+      </components.ConfirmActions>
+    </components.ConfirmPanel>
+  );
+};
+
 export const ChatHistory = (props: ChatHistoryProps) => {
   const sessions = props.sessions;
   const [search, setSearch] = useState<string>('');
+  const [confirmingClose, setConfirmingClose] = useState<string | null>(null);
 
   useEffect(() => {
     setSearch('');
@@ -306,14 +374,27 @@ export const ChatHistory = (props: ChatHistoryProps) => {
                   <components.HistoryEntryContainer key={s.Id}>
                     <div>
                       {!isClosed(s) ? (
-                        <components.FlexSpaceBetween>
-                          <Badge bg="success">Active</Badge>
-                          <components.CloseBtn
-                            onClick={() => props.onCloseSession(s.Id)}
-                          >
-                            Close
-                          </components.CloseBtn>
-                        </components.FlexSpaceBetween>
+                        <>
+                          <components.FlexSpaceBetween>
+                            <Badge bg="success">Active</Badge>
+                            <components.CloseBtn
+                              data-testid={`close-session-btn-${s.Id}`}
+                              onClick={() => setConfirmingClose(s.Id)}
+                            >
+                              Close
+                            </components.CloseBtn>
+                          </components.FlexSpaceBetween>
+                          {confirmingClose === s.Id && (
+                            <CloseSessionConfirm
+                              session={s}
+                              onCancel={() => setConfirmingClose(null)}
+                              onConfirm={() => {
+                                setConfirmingClose(null);
+                                props.onCloseSession(s.Id);
+                              }}
+                            />
+                          )}
+                        </>
                       ) : null}
                     </div>
                     <components.HistoryItem>

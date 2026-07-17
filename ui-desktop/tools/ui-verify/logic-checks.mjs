@@ -1,6 +1,10 @@
 // Node-runnable assertions over the PR's exported substrate utils.
 // Run: npm run logic   (uses vite-node to transform the .ts/.tsx/.js sources)
-import { morToWei, weiToMor } from '../../src/renderer/src/utils/marketplace.ts';
+import {
+  morToWei,
+  weiToMor,
+  earlyCloseLock,
+} from '../../src/renderer/src/utils/marketplace.ts';
 import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import {
   isSecureModel,
@@ -99,6 +103,64 @@ ok('local model skipped', !merged.some((m) => m.Id === 'local'));
 ok('m1 present with a bid', merged.find((m) => m.Id === 'm1')?.bids?.length === 1);
 ok('bid gets ProviderData attached', !!merged.find((m) => m.Id === 'm1')?.bids[0]?.ProviderData);
 ok('model with only an unmatched-provider bid dropped (m2)', !merged.some((m) => m.Id === 'm2'));
+
+// ---- earlyCloseLock: what the Close button costs you -----------------------
+// Anchored to a REAL on-chain session (0xc78d14…, Base 8453, 2026-07-16) where
+// the operator closed a 6-min session at 3 min and ~2.7 MOR silently vanished
+// for a day. These numbers are the chain's, not invented: stake 5.360550 MOR,
+// openedAt 1784262329, endsAt 1784262688 (359s), closedAt 1784262509 (180s in).
+console.log('');
+console.log('queries: earlyCloseLock (the Close button warning)');
+{
+  const REAL = {
+    Stake: '5360549929977675947',
+    OpenedAt: 1784262329,
+    EndsAt: 1784262688,
+  };
+  const atClose = earlyCloseLock(REAL, 1784262509);
+  ok('real session: priced', atClose.known && atClose.isEarly);
+  // getSession reported providerWithdrawnAmount 0.008333 MOR and hold_ carried
+  // ~2.69 for this session; predicted lock must land on that, not near it.
+  ok(
+    `real session: locks ~2.6877 MOR (got ${weiToMor(atClose.lockedWei, 4)})`,
+    weiToMor(atClose.lockedWei, 4) === '2.6877',
+  );
+  ok(
+    `real session: returns ~2.6728 MOR (got ${weiToMor(atClose.returnedWei, 4)})`,
+    weiToMor(atClose.returnedWei, 4) === '2.6728',
+  );
+  // The lock is the ONLY thing the user can avoid, and waiting is how.
+  ok('real session: nothing is lost — locked + returned == stake',
+    atClose.lockedWei + atClose.returnedWei === BigInt(REAL.Stake));
+  // startOfDay(1784262509) = 1784246400 -> unlock 1784332800
+  ok('real session: unlock is startOfDay(close) + 1 day', atClose.unlockAt === 1784332800);
+
+  // The good path: waiting until endsAt locks NOTHING. This is the asymmetry
+  // the warning exists to tell the user about, so it must be pinned.
+  const atEnd = earlyCloseLock(REAL, 1784262688);
+  ok('closing AT endsAt locks nothing', atEnd.known && !atEnd.isEarly && atEnd.lockedWei === 0n);
+  ok('closing at endsAt returns the whole stake', atEnd.returnedWei === BigInt(REAL.Stake));
+  const after = earlyCloseLock(REAL, 1784262688 + 999);
+  ok('closing AFTER endsAt locks nothing', !after.isEarly && after.lockedWei === 0n);
+
+  // Monotonic: the longer you wait (within the session) the more is locked.
+  const early = earlyCloseLock(REAL, 1784262329 + 30);
+  ok('locks less 30s in than 180s in', early.lockedWei < atClose.lockedWei);
+  ok('locking is proportional at the halfway point',
+    earlyCloseLock({ Stake: '1000', OpenedAt: 1784246400, EndsAt: 1784246400 + 100 }, 1784246400 + 50)
+      .lockedWei === 500n);
+
+  // An unpriceable session must produce NO number rather than a wrong one — a
+  // fabricated MOR figure on a money warning is worse than no warning.
+  ok('missing Stake -> not known', !earlyCloseLock({ OpenedAt: 1, EndsAt: 2 }, 1).known);
+  ok('missing EndsAt -> not known', !earlyCloseLock({ Stake: '1', OpenedAt: 1 }, 1).known);
+  ok('null session -> not known', !earlyCloseLock(null, 1).known);
+  ok('zero stake -> not known', !earlyCloseLock({ Stake: '0', OpenedAt: 1, EndsAt: 2 }, 1).known);
+  ok('endsAt <= openedAt -> not known',
+    !earlyCloseLock({ Stake: '10', OpenedAt: 500, EndsAt: 500 }, 400).known);
+  ok('lock never exceeds the stake',
+    earlyCloseLock({ Stake: '100', OpenedAt: 1784246400, EndsAt: 1784246401 }, 1784246400).lockedWei <= 100n);
+}
 
 console.log('');
 console.log(`LOGIC CHECKS: ${pass} passed, ${fail} failed`);

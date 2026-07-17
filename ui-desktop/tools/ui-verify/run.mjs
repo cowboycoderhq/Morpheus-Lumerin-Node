@@ -34,6 +34,10 @@ async function drive(page, name, url, fn) {
 
 const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
 
+// The real session behind the close-session cases (Base 8453, 2026-07-16).
+const SESSION_ID = '0xc78d14e43e9802cd063f32b0513a3e5049c5f0c8d5ab190636e18b661bf63796';
+const SESSION_ID_JS = SESSION_ID;
+
 const server = await createServer({ configFile: resolve(here, 'isolate/vite.config.mjs') });
 await server.listen(PORT);
 const browser = await chromium.launch();
@@ -408,11 +412,42 @@ const browser = await chromium.launch();
       assert(new RegExp(item, 'i').test(body), `sidebar missing nav item: ${item}`);
     }
 
-    // PR3 keeps pr2's client contract — crypto renamed this to onLinkClick and
-    // wrapped it in a menu. If the rename ever leaks in, this goes to 0.
+    // Help offers a choice instead of guessing (operator, 2026-07-17). Opening
+    // the menu must open NOTHING — a Help button that fires a browser at you
+    // before you have chosen is the bug this replaced.
     await p.getByTestId('help-nav-btn').click();
-    const helps = await p.evaluate(() => window.__help);
-    assert(helps === 1, `Help did not call onHelpLinkClick (fired ${helps}x, want 1)`);
+    await p.waitForSelector('[data-testid="help-menu"]', { timeout: 5000 });
+    let opened = await p.evaluate(() => window.__docs + window.__discord);
+    assert(opened === 0, `opening the Help menu opened a link (${opened}x, want 0)`);
+
+    const menu = await p.locator('[data-testid="help-menu"]').innerText();
+    assert(/discord/i.test(menu), `Help menu missing the Discord choice: ${menu}`);
+    assert(/documentation/i.test(menu), `Help menu missing the Documentation choice: ${menu}`);
+
+    // Each choice opens ONLY its own destination. Wiring both to the same
+    // handler would still render two items and look right.
+    await p.getByTestId('help-discord-btn').click();
+    let d = await p.evaluate(() => ({ docs: window.__docs, discord: window.__discord }));
+    assert(d.discord === 1 && d.docs === 0, `Discord opened wrong target: ${JSON.stringify(d)}`);
+    assert(
+      !(await p.locator('[data-testid="help-menu"]').count()),
+      'Help menu stayed open after choosing',
+    );
+
+    await p.getByTestId('help-nav-btn').click();
+    await p.getByTestId('help-docs-btn').click();
+    d = await p.evaluate(() => ({ docs: window.__docs, discord: window.__discord }));
+    assert(d.docs === 1 && d.discord === 1, `Documentation opened wrong target: ${JSON.stringify(d)}`);
+
+    // Escape must dismiss: this menu sits on a rail whose other controls all
+    // navigate away, so a menu you cannot close is a trap.
+    await p.getByTestId('help-nav-btn').click();
+    await p.waitForSelector('[data-testid="help-menu"]');
+    await p.keyboard.press('Escape');
+    assert(
+      !(await p.locator('[data-testid="help-menu"]').count()),
+      'Help menu did not close on Escape',
+    );
 
     // The rail's background is a token, so it must change with the variant.
     const railBg = () =>
@@ -571,6 +606,66 @@ const browser = await chromium.launch();
     assert(!/covers \d+ of \d+ providers/.test(text), 'showed a partial-affordability count when NOTHING is affordable');
     const opened = await p.evaluate(() => window.__opened.length);
     assert(opened === 0, `onOpenSession fired ${opened}x (must be 0)`);
+  });
+  await page.close();
+}
+
+// --- close-session: the Close button must state what it locks ---------------
+// Fixture is the real session a user lost ~2.7 MOR of access to (0xc78d14…).
+// The tab has to be opened first — sessions live behind it.
+{
+  const page = await browser.newPage({ viewport: { width: 460, height: 900 } });
+  const openSessions = async (p) => {
+    await p.waitForSelector('text=Sessions', { timeout: 20000 });
+    await p.getByText('Sessions', { exact: false }).first().click();
+    await p.waitForSelector(`[data-testid="close-session-btn-${SESSION_ID}"]`, { timeout: 5000 });
+  };
+
+  await drive(page, 'close-session-warns', `http://localhost:${PORT}/?case=close-session&at=1784262509`, async (p) => {
+    await openSessions(p);
+
+    // THE regression that cost real money: Close must not close on one click.
+    await p.getByTestId(`close-session-btn-${SESSION_ID}`).click();
+    await p.waitForSelector('[data-testid="close-session-confirm"]', { timeout: 5000 });
+    let closed = await p.evaluate(() => window.__closed.length);
+    assert(closed === 0, `Close closed the session on the FIRST click (${closed}x, want 0)`);
+
+    // The figure must be the real one, not a vague "some MOR may be held".
+    // 180s of a 359s session on a 5.360550 MOR stake -> 2.6877 locked / 2.6728 back.
+    const panel = await p.locator('[data-testid="close-session-confirm"]').innerText();
+    assert(/2\.6877 MOR/.test(panel), `confirm did not state the locked amount: ${panel}`);
+    assert(/2\.6728 MOR/.test(panel), `confirm did not state what comes back: ${panel}`);
+    // The escape hatch is the whole point: waiting costs nothing.
+    assert(/nothing locked/i.test(panel), `confirm did not say waiting locks nothing: ${panel}`);
+    assert(/nothing is lost/i.test(panel), `confirm did not say the MOR is not lost: ${panel}`);
+
+    // Backing out must not close it.
+    await p.getByTestId('close-session-cancel-btn').click();
+    closed = await p.evaluate(() => window.__closed.length);
+    assert(closed === 0, `cancelling still closed the session (${closed}x, want 0)`);
+    assert(
+      !(await p.locator('[data-testid="close-session-confirm"]').count()),
+      'confirm stayed open after cancel',
+    );
+
+    // Confirming closes exactly once.
+    await p.getByTestId(`close-session-btn-${SESSION_ID}`).click();
+    await p.getByTestId('close-session-confirm-btn').click();
+    const ids = await p.evaluate(() => window.__closed);
+    assert(ids.length === 1 && ids[0] === SESSION_ID_JS, `confirm did not close once: ${JSON.stringify(ids)}`);
+    await p.screenshot({ path: `${SHOTS}/close-session-warns.png` });
+  });
+
+  // At/after endsAt the contract locks NOTHING. Claiming a lock here would be a
+  // lie that pushes users into keeping dead sessions open.
+  await drive(page, 'close-session-late-locks-nothing', `http://localhost:${PORT}/?case=close-session&at=1784262688`, async (p) => {
+    await p.waitForSelector('text=Sessions', { timeout: 20000 });
+    await p.getByText('Sessions', { exact: false }).first().click();
+    // isClosed() treats now >= EndsAt as closed, so the row offers no Close
+    // button at all — there is nothing to warn about. Assert the UI does not
+    // invent one, which is the failure that matters here.
+    const body = await p.locator('body').innerText();
+    assert(!/locks/i.test(body), `an ended session still threatened a lock: ${body.slice(0, 300)}`);
   });
   await page.close();
 }

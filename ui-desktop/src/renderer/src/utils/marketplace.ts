@@ -135,3 +135,126 @@ export function weiToMor(wei: bigint, maxFractionDigits = 8): string {
   const trimmed = fraction.slice(0, maxFractionDigits).replace(/0+$/, '');
   return `${negative ? '-' : ''}${whole}${trimmed ? `.${trimmed}` : ''}`;
 }
+
+// ---- Early-close lock -----------------------------------------------------
+// Closing a session BEFORE it ends does not spend your stake — it TIME-LOCKS
+// part of it. SessionRouter._rewardUserAfterClose:
+//
+//   isClosingLate_ = closedAt >= endsAt
+//   if (!isClosingLate_) {
+//       userDuration_    = min(endsAt, closedAt) - max(openedAt, startOfDay(closedAt))
+//       userInitialLock_ = userDuration_ * pricePerSecond
+//       userStakeToLock_ = userStake.min(stipendToStake(userInitialLock_, startOfDay(closedAt)))
+//       userStakesOnHold[user].push(OnHold(userStakeToLock_, startOfDay(closedAt) + 1 days))
+//   }
+//   userAmountToWithdraw_ = userStake - userStakeToLock_    // returned NOW
+//
+// Let it run to endsAt instead and isClosingLate_ is true: NOTHING is locked.
+// That asymmetry is the whole reason this warning exists — a real user closed a
+// 6-minute session at 3 minutes and watched ~2.7 MOR disappear for a day with
+// no warning at all (2026-07-16).
+//
+// WHY PROPORTIONAL, AND WHEN IT IS EXACT: the lock is
+// stipendToStake(userDuration * price), and the stake itself was
+// stipendToStake-equivalent over the FULL duration at open. stipendToStake is
+// linear in its stipend argument, so the conversion ratio cancels and
+//     lock / stake  ==  userDuration / fullDuration
+// EXACTLY — provided the ratio is the same at open and at close. It is fixed per
+// UTC day (totalMORSupply/computeBalance are read at startOfDay), so any session
+// that opens and closes on the same UTC day is exact. One that straddles UTC
+// midnight is an estimate, which is also when the max(openedAt, startOfDay)
+// clamp shortens userDuration — both push the real lock DOWN, so this figure is
+// a conservative ceiling, never an under-promise. Checked against the real
+// on-chain session 0xc78d14…: predicted 2.6877 MOR locked, actual ~2.69.
+//
+// Deliberately NOT an eth_call: this renders on a hover/click path in the
+// session list, and a warning that has to await the chain is a warning that
+// sometimes is not there when the button is pressed.
+
+const DAY = 86400;
+
+export type EarlyCloseLock = {
+  /** false when the session lacks the fields to price a close — show no number */
+  known: boolean;
+  /** true when closing NOW would lock part of the stake */
+  isEarly: boolean;
+  lockedWei: bigint;
+  returnedWei: bigint;
+  /** unix seconds; the lock releases at startOfDay(now) + 1 day */
+  unlockAt: number;
+  /** unix seconds; wait until this and nothing is locked */
+  endsAt: number;
+  secondsUntilEnd: number;
+};
+
+const toBig = (v: unknown): bigint | null => {
+  if (v === null || v === undefined || v === '') return null;
+  try {
+    // Values arrive as decimal strings or numbers; never trust a float here.
+    return BigInt(typeof v === 'number' ? Math.trunc(v) : String(v));
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * What closing `session` at `nowSec` costs the user, per the contract above.
+ *
+ * @param session a session as returned by /blockchain/sessions/user
+ *                (Stake / OpenedAt / EndsAt, all seconds & wei)
+ * @param nowSec  unix seconds
+ */
+export function earlyCloseLock(session: any, nowSec: number): EarlyCloseLock {
+  const none: EarlyCloseLock = {
+    known: false,
+    isEarly: false,
+    lockedWei: 0n,
+    returnedWei: 0n,
+    unlockAt: 0,
+    endsAt: 0,
+    secondsUntilEnd: 0,
+  };
+
+  const stake = toBig(session?.Stake);
+  const openedAt = toBig(session?.OpenedAt);
+  const endsAt = toBig(session?.EndsAt);
+  if (stake === null || openedAt === null || endsAt === null) return none;
+  if (stake <= 0n || endsAt <= openedAt) return none;
+
+  const now = BigInt(Math.trunc(nowSec));
+  const startOfDay = now - (now % BigInt(DAY));
+  const unlockAt = Number(startOfDay) + DAY;
+
+  // Closing at or after endsAt locks nothing — the good path.
+  if (now >= endsAt) {
+    return {
+      known: true,
+      isEarly: false,
+      lockedWei: 0n,
+      returnedWei: stake,
+      unlockAt,
+      endsAt: Number(endsAt),
+      secondsUntilEnd: 0,
+    };
+  }
+
+  const fullDuration = endsAt - openedAt;
+  // Mirrors userDuration_: clamped to this UTC day, and never negative.
+  const from = openedAt > startOfDay ? openedAt : startOfDay;
+  const to = endsAt < now ? endsAt : now;
+  const userDuration = to > from ? to - from : 0n;
+
+  let locked = (stake * userDuration) / fullDuration;
+  if (locked > stake) locked = stake; // mirrors userStake.min(...)
+  if (locked < 0n) locked = 0n;
+
+  return {
+    known: true,
+    isEarly: true,
+    lockedWei: locked,
+    returnedWei: stake - locked,
+    unlockAt,
+    endsAt: Number(endsAt),
+    secondsUntilEnd: Number(endsAt - now),
+  };
+}

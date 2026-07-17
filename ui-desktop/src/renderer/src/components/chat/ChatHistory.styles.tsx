@@ -257,6 +257,49 @@ export const CloseBtn = styled(Btn)`
   padding: 0 1rem;
 `;
 
+/* The early-close confirm. This is a money surface: solid, effect-free, and the
+ * cost is stated in WORDS AND FIGURES, never by colour alone. It exists because
+ * Close was a single click that time-locked a real user's stake for 24h with no
+ * warning (2026-07-16). */
+export const ConfirmPanel = styled.div`
+  background: ${(p) => p.theme.colors.voidElevated};
+  border: 1px solid ${(p) => p.theme.colors.warning};
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin-top: 0.8rem;
+`;
+
+export const ConfirmText = styled.p`
+  color: ${(p) => p.theme.colors.textPrimary};
+  font-size: 1.3rem;
+  line-height: 1.5;
+  margin: 0 0 0.4rem;
+`;
+
+export const ConfirmLockAmount = styled.strong`
+  color: ${(p) => p.theme.colors.warning};
+`;
+
+export const ConfirmHint = styled.p`
+  color: ${(p) => p.theme.colors.textSecondary};
+  font-size: 1.2rem;
+  line-height: 1.5;
+  margin: 0 0 0.8rem;
+`;
+
+export const ConfirmActions = styled.div`
+  display: flex;
+  gap: 0.8rem;
+`;
+
+export const CancelBtn = styled(Btn)`
+  font-size: 1.4rem;
+  padding: 0 1rem;
+  background: transparent;
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.35)};
+  color: ${(p) => p.theme.colors.textPrimary};
+`;
+
 export const Duration = styled.div`
   color: ${(p) => p.theme.colors.textPrimary};
 `;

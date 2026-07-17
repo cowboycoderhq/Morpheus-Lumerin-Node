@@ -26,13 +26,24 @@ const store = {
   dispatch: () => {},
 };
 
-// Counters, not spies: the case asserts the Help link still calls pr2's
-// onHelpLinkClick contract (PR3 keeps it; crypto's menu renamed it).
-window.__help = 0;
+// Counters, not spies.
+//
+// This case used to assert Help called pr2's single onHelpLinkClick (straight to
+// the docs), deliberately pinning PR3's choice NOT to adopt crypto-version's
+// menu. That decision was reversed by the operator on 2026-07-17: a user who
+// clicks Help wants either a reference or a person, and only they know which, so
+// Help now offers Discord and Documentation instead of choosing for them. The
+// contract asserted below is the NEW one — Help opens a menu and opens nothing
+// by itself.
+window.__docs = 0;
+window.__discord = 0;
 window.__copy = 0;
 const client = {
-  onHelpLinkClick: () => {
-    window.__help++;
+  onDocsLinkClick: () => {
+    window.__docs++;
+  },
+  onDiscordLinkClick: () => {
+    window.__discord++;
   },
   copyToClipboard: () => {
     window.__copy++;

@@ -252,6 +252,41 @@ func (g *SessionRouter) ClaimProviderBalance(opts *bind.TransactOpts, sessionId 
 	return tx.Hash(), nil
 }
 
+// GetUserStakesOnHold reports the stake a user has locked from closing sessions
+// EARLY. `available` has passed its release time and can be withdrawn now;
+// `hold` is still locked. Closing a session before it ends pushes an
+// OnHold(amount, startOfDay(closedAt)+1day) entry onto this list — see
+// SessionRouter._rewardUserAfterClose. Closing late locks nothing.
+func (g *SessionRouter) GetUserStakesOnHold(ctx context.Context, userAddr common.Address, iterations uint8) (available *big.Int, hold *big.Int, err error) {
+	res, err := g.sessionRouter.GetUserStakesOnHold(&bind.CallOpts{Context: ctx}, userAddr, iterations)
+	if err != nil {
+		return nil, nil, lib.TryConvertGethError(err)
+	}
+	return res.Available, res.Hold, nil
+}
+
+// WithdrawUserStakes returns matured on-hold stake to the user. The contract
+// SKIPS entries whose releaseAt has not passed (it does not revert on them), so
+// calling this early is a wasted gas fee, not an error — check the `available`
+// leg of GetUserStakesOnHold first. It reverts with
+// SessionUserAmountToWithdrawIsZero when there are no entries at all.
+func (g *SessionRouter) WithdrawUserStakes(opts *bind.TransactOpts, userAddr common.Address, iterations uint8) (common.Hash, error) {
+	tx, err := g.sessionRouter.WithdrawUserStakes(opts, userAddr, iterations)
+	if err != nil {
+		return common.Hash{}, lib.TryConvertGethError(err)
+	}
+
+	receipt, err := lib.WaitMinedWithTimeout(opts.Context, g.client, tx, lib.DefaultTxMineTimeout)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	if receipt.Status != 1 {
+		return receipt.TxHash, fmt.Errorf("withdraw transaction failed with status %d", receipt.Status)
+	}
+
+	return tx.Hash(), nil
+}
+
 func (g *SessionRouter) GetTodaysBudget(ctx context.Context, timestamp *big.Int) (*big.Int, error) {
 	budget, err := g.sessionRouter.GetTodaysBudget(&bind.CallOpts{Context: ctx}, timestamp)
 	if err != nil {

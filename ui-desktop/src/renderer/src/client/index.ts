@@ -21,6 +21,29 @@ import './sentry';
 // under Ecosystem) and NOT apidocs.mor.org (developer/API reference only).
 export const DOCS_URL = 'https://nodedocs.mor.org';
 
+// The MOR staking dashboard. NOT staking.mor.lumerin.io — that is the legacy
+// Lumerin-era host this tile pointed at until 2026-07-16. Keep the tile's
+// visible subtitle equal to this host: the stale one sat on screen naming a
+// destination it no longer opened, and nobody noticed because the text and the
+// href were separate literals.
+export const STAKING_DASHBOARD_URL = 'https://dashboard.mor.org';
+
+// The Morpheus community Discord.
+//
+// This was previously left UNVERIFIED (mor.org answers automated fetches with
+// 429, so it could not be confirmed first-party) and Help silently fell back to
+// the docs. Confirmed 2026-07-16 by a chain that does not depend on mor.org:
+//   1. this repo's own docs cite the Morpheus Discord as guild 1151741790408429580
+//      (docs/concepts/what-is-morpheus.mdx — a channel deep-link into that guild);
+//   2. three first-party MorpheusAIs repos (MySuperAgent, morpheus-stats-frontend,
+//      pwa) all use discord.gg/Dc26EFb6JK as their Discord link;
+//   3. Discord's public invite API resolves Dc26EFb6JK to guild
+//      1151741790408429580 — the same guild — with expires_at: null.
+// A web search proposed a DIFFERENT invite code for "Morpheus"; several unrelated
+// projects share the name, which is exactly why this is pinned to the guild ID
+// rather than to a search result.
+export const DISCORD_URL = 'https://discord.gg/Dc26EFb6JK';
+
 const createClient = function (createStore) {
   const reduxDevtoolsOptions = {
     // actionsBlacklist: ['price-updated$'],
@@ -73,13 +96,14 @@ const createClient = function (createStore) {
     );
 
   // Help used to open mor.org/fair-launch — a tokenomics page with nothing to
-  // say to a user who needs help. Point it at somewhere a question can actually
-  // be asked.
-  //
-  // UNVERIFIED: mor.org blocks automated fetches (429) and no official invite
-  // is published in the MorpheusAIs repos, so this invite code could not be
-  // confirmed against a first-party source. Confirm before shipping to users.
-  const onHelpLinkClick = () => window.openLink(DOCS_URL);
+  // say to a user who needs help — and then the docs, unconditionally. The two
+  // places a question can actually be answered are the docs and the Discord, and
+  // which one you want depends on whether you need a reference or a person, so
+  // Help now asks instead of guessing (operator, 2026-07-17). The single
+  // onHelpLinkClick it used to expose is gone rather than left dangling: nothing
+  // called it once the menu landed.
+  const onDocsLinkClick = () => window.openLink(DOCS_URL);
+  const onDiscordLinkClick = () => window.openLink(DISCORD_URL);
 
   const onLinkClick = (url) => window.openLink(url);
 
@@ -279,7 +303,8 @@ const createClient = function (createStore) {
     onTermsLinkClick,
     onTransactionLinkClick,
     copyToClipboard,
-    onHelpLinkClick,
+    onDocsLinkClick,
+    onDiscordLinkClick,
     getAppVersion: window.getAppVersion,
     onLinkClick,
     onInit,

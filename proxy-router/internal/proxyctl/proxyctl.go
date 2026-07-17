@@ -73,8 +73,12 @@ type Proxy struct {
 	modelConfigLoader    *config.ModelConfigLoader
 	blockchainService    *blockchainapi.BlockchainService
 	sessionExpiryHandler *blockchainapi.SessionExpiryHandler
-	backendVerifier      proxyapi.BackendTEEVerifier
-	modelHealthChecker   *modelhealth.Checker
+	// Built here rather than threaded through NewProxyCtl's already 16-argument
+	// signature: it needs nothing but the blockchain service and a logger, both
+	// of which this constructor already receives.
+	stakeClaimer       *blockchainapi.StakeClaimer
+	backendVerifier    proxyapi.BackendTEEVerifier
+	modelHealthChecker *modelhealth.Checker
 
 	state         lib.AtomicValue[ProxyState]
 	tsk           *lib.Task
@@ -97,6 +101,7 @@ func NewProxyCtl(eventListerer *blockchainapi.EventsListener, wallet interfaces.
 		blockchainService:    blockchainService,
 		sessionRepo:          sessionRepo,
 		sessionExpiryHandler: sessionExpiryHandler,
+		stakeClaimer:         blockchainapi.NewStakeClaimer(blockchainService, log),
 		backendVerifier:      backendVerifier,
 		modelHealthChecker:   modelHealthChecker,
 		serverStarted:        make(chan struct{}),
@@ -223,6 +228,14 @@ func (p *Proxy) run(ctx context.Context, prKey lib.HexString) error {
 
 	g.Go(func() error {
 		return p.sessionExpiryHandler.Run(errCtx)
+	})
+
+	// Sweep back stake that an early session close time-locked, once it matures.
+	// Waits for the TCP server the same way afterStart does, so the wallet is
+	// actually ready before we try to read its address.
+	g.Go(func() error {
+		<-tcpServer.Started()
+		return p.stakeClaimer.Run(errCtx)
 	})
 
 	if p.modelHealthChecker != nil {

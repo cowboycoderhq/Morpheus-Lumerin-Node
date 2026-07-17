@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useContext } from 'react';
 import { useLocation } from 'react-router-dom';
+import { STAKING_DASHBOARD_URL } from '../../client';
 import styled, { keyframes } from 'styled-components';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -9,9 +10,11 @@ import {
   IconArrowUpRight,
   IconChartBar,
   IconLock,
+  IconClock,
 } from '@tabler/icons-react';
 
 import withDashboardState from '../../store/hocs/withDashboardState';
+import { weiToMor } from '../../utils/marketplace';
 
 import TransactionModal from './tx-modal';
 import TxList from './tx-list/TxList';
@@ -385,6 +388,7 @@ const Dashboard = ({
   address,
   copyToClipboard,
   getBalances,
+  getStakesOnHold,
   ethCoinPrice,
   loadTransactions,
   getSessionsByUser,
@@ -434,6 +438,16 @@ const Dashboard = ({
     refetchInterval: 30000,
   });
 
+  // MOR that closing a session early time-locked. Polled on the same cadence as
+  // balances because it IS part of the balance story: without it, a user who
+  // closed early just sees their MOR gone.
+  const stakesOnHoldQuery = useQuery({
+    queryKey: ['stakesOnHold', address],
+    queryFn: getStakesOnHold,
+    enabled: !!address && typeof getStakesOnHold === 'function',
+    refetchInterval: 30000,
+  });
+
   const transactionsQuery = useQuery({
     queryKey: queryKeys.transactions(address),
     queryFn: () => loadTransactions(1, 15),
@@ -472,6 +486,22 @@ const Dashboard = ({
   }, [balancesQuery.data, ethCoinPrice, props.symbol, props.symbolEth]);
 
   const transactions = transactionsQuery.data ?? [];
+  // available + hold: both are the user's money and both come home on their own
+  // (the router's stake auto-claimer sweeps `available` as soon as it matures),
+  // so the tile states ONE number — what is not in your balance yet. Splitting
+  // it into two figures would ask the user to understand a release schedule they
+  // cannot act on: the lock is enforced on-chain and nobody can shorten it.
+  const onHoldMor = useMemo(() => {
+    const data = stakesOnHoldQuery.data;
+    if (!data) return null; // null = could not ask; never render a fake 0
+    try {
+      const total = BigInt(data.available ?? 0) + BigInt(data.hold ?? 0);
+      return total > 0n ? weiToMor(total, 4) : null;
+    } catch {
+      return null;
+    }
+  }, [stakesOnHoldQuery.data]);
+
   const staked = useMemo(
     () => computeStakedFunds(sessionsQuery.data),
     [sessionsQuery.data],
@@ -569,6 +599,26 @@ const Dashboard = ({
             </StatText>
           </StatCard>
 
+          {/* Stake that closing a session EARLY time-locked. Rendered only when
+              there IS something locked — a permanent "0 MOR on hold" tile would
+              be noise, and this must read as an answer to "where did my MOR
+              go?", which is only a question when some went.
+              It sits next to Staked Balance deliberately: that is the tile a
+              user stares at when their MOR seems to have vanished. */}
+          {onHoldMor && (
+            <StatCard data-testid="stakes-on-hold-tile">
+              <StatIcon>
+                <IconClock size={22} />
+              </StatIcon>
+              <StatText>
+                <StatLabel>On Hold (returns automatically)</StatLabel>
+                <StatValue>
+                  {onHoldMor} {morSymbol}
+                </StatValue>
+              </StatText>
+            </StatCard>
+          )}
+
           <ActionTile onClick={() => onTabSwitch('send')} data-testid="send-tile">
             <StatIcon>
               <IconArrowUpRight size={22} />
@@ -589,15 +639,20 @@ const Dashboard = ({
             </ActionText>
           </ActionTile>
 
+          {/* staking.mor.lumerin.io is the legacy Lumerin host. The staking
+              dashboard lives at dashboard.mor.org. The subtitle repeats the
+              destination, so it has to change with the URL — a tile that says
+              one host and opens another is how this went stale unnoticed. */}
           <ActionTile
-            onClick={() => window.openLink('https://staking.mor.lumerin.io')}
+            data-testid="staking-dashboard-btn"
+            onClick={() => window.openLink(STAKING_DASHBOARD_URL)}
           >
             <StatIcon>
               <IconChartBar size={22} />
             </StatIcon>
             <ActionText>
               <ActionTitle>Staking Dashboard</ActionTitle>
-              <ActionSub>staking.mor.lumerin.io</ActionSub>
+              <ActionSub>dashboard.mor.org</ActionSub>
             </ActionText>
           </ActionTile>
         </StatsRow>

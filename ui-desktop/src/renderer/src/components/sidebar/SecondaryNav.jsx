@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 import { withClient } from '../../store/hocs/clientContext';
 import { NavLink } from 'react-router-dom';
@@ -7,6 +7,7 @@ import { IconPlugConnected } from '@tabler/icons-react';
 import { IconSettings } from '@tabler/icons-react';
 import { IconHelp } from '@tabler/icons-react';
 import { IconTools } from '@tabler/icons-react';
+import { IconBrandDiscord, IconBook } from '@tabler/icons-react';
 
 const Container = styled.div`
   display: flex;
@@ -152,16 +153,88 @@ const NavHeader = styled.h3`
   }
 `;
 
+/* The Help choice. A popover rather than a modal: this is a two-item menu
+ * hanging off a rail button, and a full-screen react-modal for "docs or people?"
+ * would be heavier than the decision it asks for. Positioned relative to the
+ * Container so it survives the collapsed rail. */
+const HelpMenu = styled.div`
+  position: absolute;
+  bottom: 100%;
+  left: 1.6rem;
+  z-index: 10;
+  min-width: 21rem;
+  padding: 0.6rem;
+  border-radius: 8px;
+  background: ${(p) => p.theme.colors.voidElevated};
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.28)};
+`;
+
+const HelpMenuItem = styled.button.attrs({ type: 'button' })`
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  padding: 1rem 1.2rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: ${(p) => p.theme.colors.textPrimary};
+  font-family: ${(p) => p.theme.fontUI};
+  font-size: 1.4rem;
+
+  &:hover,
+  &:focus-visible {
+    background: ${(p) => p.theme.colors.brandTint(0.12)};
+  }
+`;
+
+const HelpMenuSub = styled.span`
+  display: block;
+  color: ${(p) => p.theme.colors.textSecondary};
+  font-size: 1.2rem;
+`;
+
 const iconSize = '2rem';
 
 function SecondaryNav({
   parent,
-  client: { onHelpLinkClick },
+  client: { onDocsLinkClick, onDiscordLinkClick },
   activeIndex,
   setActiveIndex,
 }) {
+  // Help used to jump straight to the docs. A user who needs help wants either a
+  // reference or a person, and only they know which — so offer both rather than
+  // picking for them.
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpRef = useRef(null);
+
+  // Dismiss on outside click / Escape. Without this the menu is a trap on a rail
+  // whose only other controls navigate away.
+  useEffect(() => {
+    if (!helpOpen) return;
+    const onDown = (e) => {
+      if (helpRef.current && !helpRef.current.contains(e.target)) {
+        setHelpOpen(false);
+      }
+    };
+    const onKey = (e) => e.key === 'Escape' && setHelpOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [helpOpen]);
+
+  const choose = (open) => {
+    setHelpOpen(false);
+    open();
+  };
+
   return (
-    <Container>
+    <Container ref={helpRef} style={{ position: 'relative' }}>
       {/* <NavHeader parent={parent}>Tools</NavHeader>
       <Button
         onClick={() => setActiveIndex(4)}
@@ -199,10 +272,38 @@ function SecondaryNav({
         </IconWrapper>
         <Label parent={parent}>Settings</Label>
       </Button>
+      {helpOpen && (
+        <HelpMenu data-testid="help-menu" role="menu">
+          <HelpMenuItem
+            role="menuitem"
+            data-testid="help-discord-btn"
+            onClick={() => choose(onDiscordLinkClick)}
+          >
+            <IconBrandDiscord size={18} />
+            <span>
+              Discord
+              <HelpMenuSub>Ask the community</HelpMenuSub>
+            </span>
+          </HelpMenuItem>
+          <HelpMenuItem
+            role="menuitem"
+            data-testid="help-docs-btn"
+            onClick={() => choose(onDocsLinkClick)}
+          >
+            <IconBook size={18} />
+            <span>
+              Documentation
+              <HelpMenuSub>nodedocs.mor.org</HelpMenuSub>
+            </span>
+          </HelpMenuItem>
+        </HelpMenu>
+      )}
       <HelpLink
         data-testid="help-nav-btn"
         aria-label="Help"
-        onClick={onHelpLinkClick}
+        aria-haspopup="menu"
+        aria-expanded={helpOpen}
+        onClick={() => setHelpOpen((v) => !v)}
       >
         <IconWrapper parent={parent}>
           <IconHelp width={iconSize} />
