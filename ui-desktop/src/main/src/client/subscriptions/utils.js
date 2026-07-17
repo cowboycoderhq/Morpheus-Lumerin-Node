@@ -37,13 +37,18 @@ export const ignoreChain = (chain, data) =>
 // own origin. Without this, a window navigated to a hostile origin (a clicked
 // provider link) inherits the ipcRenderer bridge and can drive these channels.
 // Verified: the navigation+IPC fund-theft chain, 2026-07-17.
-const isTrustedSender = (event) => {
+export const isTrustedSender = (event) => {
   try {
     const url = (event.senderFrame && event.senderFrame.url) || event.sender.getURL()
     const u = new URL(url)
-    if (u.protocol === 'file:') return true // packaged renderer
+    // Packaged renderer only — scoped to the app bundle, not any file:// on disk.
+    if (u.protocol === 'file:') {
+      return decodeURIComponent(u.pathname).startsWith(app.getAppPath())
+    }
+    // Dev: ORIGIN equality, not startsWith (which `localhost:5173@evil.com` and a
+    // port suffix both defeat).
     const devUrl = process.env.ELECTRON_RENDERER_URL
-    if (!app.isPackaged && devUrl && url.startsWith(devUrl)) return true // vite dev
+    if (!app.isPackaged && devUrl) return u.origin === new URL(devUrl).origin
     return false
   } catch (e) {
     return false
