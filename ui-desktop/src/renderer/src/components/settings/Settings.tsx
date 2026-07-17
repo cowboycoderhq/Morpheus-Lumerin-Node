@@ -33,8 +33,11 @@ import {
   ToggleRow,
 } from './Settings.styles';
 
+// The 'aurora' variant is presented to users as "Jarvis". The internal key stays
+// 'aurora' everywhere (theme map, stored preference, tests) — only the label
+// changes, so existing installs keep their saved choice.
 const THEME_LABELS: Record<ThemeVariant, string> = {
-  aurora: 'Aurora',
+  aurora: 'Jarvis',
   classic: 'Classic',
 };
 
@@ -77,7 +80,7 @@ const Common = (props: CommonProps) => {
           <SectionHeader>Appearance</SectionHeader>
         </Flex.Row>
         <SectionDescription>
-          Choose how the app looks. Aurora is the futuristic cyan/glass theme;
+          Choose how the app looks. Jarvis is the futuristic cyan/glass theme;
           Classic is the calm Morpheus green. You can switch anytime.
         </SectionDescription>
         <Flex.Row gap="0.8rem">

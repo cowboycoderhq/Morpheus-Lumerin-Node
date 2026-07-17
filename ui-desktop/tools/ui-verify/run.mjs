@@ -335,7 +335,11 @@ const browser = await chromium.launch();
     const body = await p.locator('body').innerText();
     assert(/choose your look/i.test(body), 'missing title');
     assert(!/step\s*\d+\s*of\s*\d+/i.test(body), 'presetup claims to be a numbered wizard step');
-    assert(/aurora/i.test(body) && /classic/i.test(body), 'missing a theme choice');
+    // The aurora variant is labelled "Jarvis" for users (operator, 2026-07-17);
+    // its internal key stays 'aurora' (asserted via localStorage below), so the
+    // label and the key must NOT be the same word.
+    assert(/jarvis/i.test(body) && /classic/i.test(body), 'missing a theme choice (Jarvis/Classic)');
+    assert(!/\baurora\b/i.test(body), 'the old "Aurora" label is still shown to users');
 
     // Each card's swatch shows ITS OWN accent — the bug being pinned is both
     // swatches painting with the ACTIVE theme's brand, which would make the
@@ -508,6 +512,10 @@ const browser = await chromium.launch();
     const body = await p.locator('body').innerText();
     assert(/appearance/i.test(body), 'Appearance section missing from Settings');
     assert(!!(await p.$('[data-testid="theme-classic"]')), 'classic option missing');
+    // The aurora variant is labelled "Jarvis" (the testid + stored key stay
+    // 'aurora' — see the aria-pressed / localStorage checks below).
+    assert(/jarvis/i.test(body), 'Settings appearance does not label the theme "Jarvis"');
+    assert(!/\baurora\b/i.test(body), 'Settings still shows the old "Aurora" label');
 
     // Default classic, and the control reflects it.
     assert(
