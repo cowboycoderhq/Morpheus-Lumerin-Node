@@ -4,6 +4,7 @@ import {
   morToWei,
   weiToMor,
   earlyCloseLock,
+  nextStakeReleaseAt,
 } from '../../src/renderer/src/utils/marketplace.ts';
 import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import {
@@ -160,6 +161,53 @@ console.log('queries: earlyCloseLock (the Close button warning)');
     !earlyCloseLock({ Stake: '10', OpenedAt: 500, EndsAt: 500 }, 400).known);
   ok('lock never exceeds the stake',
     earlyCloseLock({ Stake: '100', OpenedAt: 1784246400, EndsAt: 1784246401 }, 1784246400).lockedWei <= 100n);
+}
+
+// ---- nextStakeReleaseAt: WHEN the on-hold tile says it returns --------------
+// Same real session: closed 1784262509 (2026-07-17 in UTC), so its lock releases
+// at startOfDay(1784262509)+1day = 1784332800 (2026-07-18 00:00 UTC).
+console.log('');
+console.log('queries: nextStakeReleaseAt (the On Hold tile clock)');
+{
+  const REAL = { Stake: '5360549929977675947', OpenedAt: 1784262329, EndsAt: 1784262688, ClosedAt: 1784262509 };
+  // Standing BEFORE that release, it is the next unlock.
+  ok('early-closed session -> releaseAt 1784332800',
+    nextStakeReleaseAt([REAL], 1784262600) === 1784332800);
+  // Standing AFTER it, the entry has matured (auto-claimer's job) -> null.
+  ok('after release -> null (matured, not a future date)',
+    nextStakeReleaseAt([REAL], 1784332800 + 1) === null);
+  // Exactly at release is matured too (contract frees at >=).
+  ok('at the release second -> null',
+    nextStakeReleaseAt([REAL], 1784332800) === null);
+
+  // Closed LATE (>= endsAt) locks nothing, so it never contributes a date.
+  const late = { ...REAL, ClosedAt: 1784262688 };
+  ok('closed at endsAt -> no release (locks nothing)',
+    nextStakeReleaseAt([late], 1784262600) === null);
+  const later = { ...REAL, ClosedAt: 1784262999 };
+  ok('closed after endsAt -> no release',
+    nextStakeReleaseAt([later], 1784262600) === null);
+
+  // Still open (ClosedAt 0) -> nothing on hold from it.
+  ok('open session -> no release',
+    nextStakeReleaseAt([{ ...REAL, ClosedAt: 0 }], 1784262600) === null);
+
+  // The EARLIEST future release wins across many sessions, and matured/late ones
+  // do not drag it. Three early closes on three different UTC days:
+  const day = 86400;
+  const mk = (closedAt) => ({ Stake: '1000', OpenedAt: closedAt - 100, EndsAt: closedAt + 100, ClosedAt: closedAt });
+  const d1 = 1784332800 + 10 * 3600; // closes on 2026-07-18 -> release 2026-07-19 00:00 = 1784419200
+  const d2 = d1 + day; //                                    -> release +1 day
+  const now = d1 - 3600;
+  ok('earliest future release across sessions',
+    nextStakeReleaseAt([mk(d2), mk(d1)], now) === 1784332800 + day);
+  ok('a matured entry does not become "next"',
+    nextStakeReleaseAt([mk(d1), { ...REAL, ClosedAt: 1784262509 }], now) === 1784332800 + day);
+
+  // Robustness: never throw on junk, never invent a date.
+  ok('empty -> null', nextStakeReleaseAt([], 1784262600) === null);
+  ok('undefined -> null', nextStakeReleaseAt(undefined, 1784262600) === null);
+  ok('missing fields -> null', nextStakeReleaseAt([{ foo: 1 }], 1784262600) === null);
 }
 
 console.log('');

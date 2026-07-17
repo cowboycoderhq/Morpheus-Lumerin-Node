@@ -173,6 +173,17 @@ export function weiToMor(wei: bigint, maxFractionDigits = 8): string {
 
 const DAY = 86400;
 
+// Sessions arrive untyped from the proxy-router (the codebase treats them as
+// `any` everywhere — see computeStakedFunds). These functions read only these
+// four fields, all decimal strings or numbers on the wire, so this narrow shape
+// documents the dependency without pretending to type the whole blob.
+type SessionLike = {
+  Stake?: string | number;
+  OpenedAt?: string | number;
+  EndsAt?: string | number;
+  ClosedAt?: string | number;
+};
+
 export type EarlyCloseLock = {
   /** false when the session lacks the fields to price a close — show no number */
   known: boolean;
@@ -204,7 +215,10 @@ const toBig = (v: unknown): bigint | null => {
  *                (Stake / OpenedAt / EndsAt, all seconds & wei)
  * @param nowSec  unix seconds
  */
-export function earlyCloseLock(session: any, nowSec: number): EarlyCloseLock {
+export function earlyCloseLock(
+  session: SessionLike | null | undefined,
+  nowSec: number,
+): EarlyCloseLock {
   const none: EarlyCloseLock = {
     known: false,
     isEarly: false,
@@ -257,4 +271,39 @@ export function earlyCloseLock(session: any, nowSec: number): EarlyCloseLock {
     endsAt: Number(endsAt),
     secondsUntilEnd: Number(endsAt - now),
   };
+}
+
+// When the NEXT chunk of on-hold stake becomes claimable.
+//
+// getUserStakesOnHold returns aggregate amounts (available/hold) and throws the
+// per-entry releaseAt away, so the "when" cannot come from that endpoint. But an
+// early close pushes OnHold(amount, startOfDay(closedAt)+1day), and the session
+// list carries ClosedAt — so the release time is the SAME formula as an early
+// close's unlockAt, applied to sessions that are already closed.
+//
+// Returns the earliest release still in the FUTURE across all the user's
+// sessions — i.e. the soonest moment any held stake frees — or null when nothing
+// is pending. Entries whose release has passed are excluded: the router's
+// auto-claimer sweeps those within minutes, so they are "returning now", not a
+// future date. Session fetch is complete (apiCallsHelper pages to exhaustion),
+// and held stake only comes from closes within the last ~day, so this sees every
+// entry that could still be locked.
+export function nextStakeReleaseAt(
+  sessions: SessionLike[] | undefined,
+  nowSec: number,
+): number | null {
+  const now = Math.trunc(nowSec);
+  let next: number | null = null;
+  for (const s of sessions ?? []) {
+    const closedAt = toBig(s?.ClosedAt);
+    const endsAt = toBig(s?.EndsAt);
+    if (closedAt === null || endsAt === null) continue;
+    if (closedAt <= 0n) continue; // still open — nothing on hold from it
+    if (closedAt >= endsAt) continue; // closed late — the contract locks nothing
+    const startOfDay = closedAt - (closedAt % BigInt(DAY));
+    const releaseAt = Number(startOfDay) + DAY;
+    if (releaseAt <= now) continue; // already matured — auto-claimer's job
+    if (next === null || releaseAt < next) next = releaseAt;
+  }
+  return next;
 }
