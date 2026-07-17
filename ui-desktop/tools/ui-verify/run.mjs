@@ -726,31 +726,61 @@ const browser = await chromium.launch();
         .map((x) => x.n);
     };
 
-    // Standard defaults active and is alphabetical.
+    // Standard defaults active: the SECTIONED browse view (Local + Marketplace
+    // headers), marketplace models alphabetical within their section.
     assert(
       (await p.getAttribute('[data-testid="sort-standard"]', 'aria-pressed')) === 'true',
       'standard sort not active by default',
     );
+    let body = await p.locator('body').innerText();
+    assert(/Marketplace/.test(body) && /Local/.test(body), `standard view lost its section headers: ${body.slice(0, 300)}`);
     assert(
       JSON.stringify(await orderOf()) === JSON.stringify(['Aardvark', 'Broadcast', 'Test Model']),
       `standard order wrong: ${JSON.stringify(await orderOf())}`,
     );
 
-    // Cheapest: Test Model (0.001) < Broadcast (0.004) < Aardvark (0.009).
+    // Cheapest: FLATTENS the sections into one global list (this is the fix —
+    // sorting must cross section boundaries). Marketplace order becomes Test
+    // Model (0.001) < Broadcast (0.004) < Aardvark (0.009), and the free local
+    // model leads everything despite its late name.
     await p.getByTestId('sort-cheapest').click();
     await p.waitForTimeout(150);
+    assert(
+      (await p.locator('[data-testid="flat-model-list"]').count()) === 1,
+      'cheapest did not flatten into a single list',
+    );
+    body = await p.locator('body').innerText();
+    assert(/cheapest first/i.test(body), 'flat cheapest label missing');
+    assert(!/Marketplace/.test(body), 'section headers still shown when sorting globally');
     assert(
       JSON.stringify(await orderOf()) === JSON.stringify(['Test Model', 'Broadcast', 'Aardvark']),
       `cheapest order wrong: ${JSON.stringify(await orderOf())}`,
     );
+    // The free local model leads the whole flattened list.
+    assert(
+      body.indexOf('Zulu Local') < body.indexOf('Test Model'),
+      'free local model did not lead the cheapest global sort',
+    );
 
-    // Most providers: Broadcast (3) > Test Model (2) > Aardvark (1).
+    // Most providers: also flat/global. Broadcast (3) > Test Model (2) >
+    // Aardvark (1); the local model (no providers) trails the paid ones.
     await p.getByTestId('sort-mostProviders').click();
     await p.waitForTimeout(150);
     assert(
       JSON.stringify(await orderOf()) === JSON.stringify(['Broadcast', 'Test Model', 'Aardvark']),
       `most-providers order wrong: ${JSON.stringify(await orderOf())}`,
     );
+    body = await p.locator('body').innerText();
+    assert(
+      body.indexOf('Broadcast') < body.indexOf('Zulu Local'),
+      'most-providers put the 0-provider local model ahead of a 3-provider one',
+    );
+
+    // Back to Standard restores the sectioned view.
+    await p.getByTestId('sort-standard').click();
+    await p.waitForTimeout(150);
+    body = await p.locator('body').innerText();
+    assert(/Marketplace/.test(body), 'standard did not restore section headers');
 
     // Sorting selects nothing.
     const picked = await p.evaluate(() => window.__picked.length);

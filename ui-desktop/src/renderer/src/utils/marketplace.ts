@@ -200,9 +200,14 @@ export function modelPriceDisplay(
 }
 
 // ---- Model-picker ordering ------------------------------------------------
-// The cheapest a model can be opened at (min per-second bid, wei). Infinity when
-// it has no priceable bid, so those sort last under "cheapest".
-export function modelMinPriceWei(model: { bids?: PricedBid[] }): number {
+// The cheapest a model can be opened at (min per-second bid, wei). A LOCAL model
+// runs on the user's machine for free, so it is the cheapest of all (0). A remote
+// model with no priceable bid is unopenable, so it sorts LAST (Infinity).
+export function modelMinPriceWei(model: {
+  isLocal?: boolean;
+  bids?: PricedBid[];
+}): number {
+  if (model?.isLocal) return 0;
   const prices = (model?.bids || [])
     .filter((b) => b?.Id)
     .map((b) => Number(b?.PricePerSecond))

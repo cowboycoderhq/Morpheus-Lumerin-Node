@@ -396,7 +396,17 @@ console.log('queries: sortModelsForPicker (picker ordering)');
   // keys
   ok('modelMinPriceWei = cheapest bid', modelMinPriceWei(mid) === 3e15);
   ok('modelMinPriceWei = Infinity with no bids', modelMinPriceWei({ bids: [] }) === Infinity);
+  ok('modelMinPriceWei = 0 for a local model (free)', modelMinPriceWei({ isLocal: true }) === 0);
   ok('modelProviderCount counts bids with Id', modelProviderCount(broad) === 3);
+
+  // A local model is free, so "cheapest" puts it FIRST — ahead of the cheapest
+  // paid model. This is what makes the flattened global sort correct: local no
+  // longer sinks below the marketplace on Infinity.
+  const localFree = { Name: 'MyLocal', isOnline: true, isLocal: true };
+  const cheapWithLocal = names(sortModelsForPicker([cheap, mid, localFree], 'cheapest'));
+  ok('cheapest: local (free) leads the paid models', cheapWithLocal[0] === 'MyLocal');
+  ok('cheapest: paid models still follow in price order',
+    cheapWithLocal.indexOf('Cheap') < cheapWithLocal.indexOf('Mid'));
 
   // cheapest: online by price asc, offline last (even though it is the cheapest).
   const byCheap = names(sortModelsForPicker(all, 'cheapest'));

@@ -35,6 +35,16 @@ const models = [
     IpfsCID: '',
     bids: [bid('4000000000000000'), bid('5000000000000000'), bid('6000000000000000')],
   },
+  // "Zulu Local": a local model — free. In Standard it lives in its own Local
+  // section; in Cheapest (flattened) it leads everything (0 cost) even though its
+  // name sorts last. Proves the sort is global AND that local prices as free.
+  {
+    Id: '0xzululocal000000000000000000000000000000000000000000000000000000',
+    Name: 'Zulu Local',
+    Tags: [],
+    IpfsCID: '',
+    isLocal: true,
+  },
 ];
 
 window.__picked = [];
