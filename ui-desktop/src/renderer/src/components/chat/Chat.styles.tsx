@@ -177,6 +177,15 @@ export const ChatIntroInnerText = styled.p`
   margin-bottom: 1.6rem;
 `;
 
+// The partial-affordability notice. Amber comes from the theme so it swaps with
+// the variant; the warning itself is carried by the TEXT ("covers N of M"), with
+// colour only reinforcing it — this is a money surface, and money surfaces never
+// state anything by colour alone.
+export const ChatIntroWarningText = styled(ChatIntroInnerText)`
+  color: ${(p) => p.theme.colors.warning};
+  font-weight: 500;
+`;
+
 export const Control = styled.div`
   height: fit-content;
   position: relative;
