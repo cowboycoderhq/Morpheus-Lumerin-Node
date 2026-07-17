@@ -122,6 +122,16 @@ function createWindow(): void {
   mainWindow.webContents.on('will-navigate', denyOffAppNavigation)
   mainWindow.webContents.on('will-redirect', denyOffAppNavigation)
 
+  // Belt for child frames: will-navigate only covers the main frame. A subframe
+  // has no preload today (so no ipcRenderer) and react-markdown emits no raw
+  // iframes, but deny off-app frame navigation anyway so a future regression
+  // can't quietly reopen a navigation vector.
+  mainWindow.webContents.on('will-frame-navigate', (details) => {
+    if (isAppUrl(details.url)) return
+    details.preventDefault()
+    logger.warn(`blocked frame navigation to: ${details.url}`)
+  })
+
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -144,6 +154,43 @@ app
   .then(async () => {
     // Set app user model id for windows
     electronApp.setAppUserModelId('com.electron')
+
+    // Content-Security-Policy — packaged builds ONLY. Vite's dev server needs
+    // inline script + eval + a websocket for HMR, so a strict CSP would break
+    // `npm run dev`; the packaged app has none of that. This is the second wall
+    // behind the nav-guard + IPC sender-check: if any XSS primitive is ever
+    // introduced (e.g. someone adds rehype-raw), the CSP still denies script and
+    // exfiltration. img-src/media-src also CLOSE the provider IP-beacon — a chat
+    // `![x](http://attacker/px.png)` no longer auto-loads (only self/data/blob and
+    // the local router are allowed). connect-src is the local router only (the
+    // renderer's fetches all target it; the marketplace raw-RPC path is dead and
+    // the price API is fetched in main, not the renderer). style-src keeps
+    // 'unsafe-inline' for styled-components; frame-src 'self' preserves the
+    // same-origin mnemonic-print iframe.
+    if (!is.dev) {
+      const csp = [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob: http://localhost:* http://127.0.0.1:*",
+        "media-src 'self' data: blob: http://localhost:* http://127.0.0.1:*",
+        "font-src 'self'",
+        "connect-src 'self' http://localhost:* http://127.0.0.1:*",
+        "frame-src 'self'",
+        "worker-src 'self' blob:",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'"
+      ].join('; ')
+      session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+        callback({
+          responseHeaders: {
+            ...details.responseHeaders,
+            'Content-Security-Policy': [csp]
+          }
+        })
+      })
+    }
 
     // Allow the renderer to use the microphone (STT recording) and other
     // media devices. Without an explicit handler Electron does not grant the
