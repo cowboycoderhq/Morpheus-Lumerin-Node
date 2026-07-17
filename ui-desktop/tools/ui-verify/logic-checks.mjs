@@ -5,6 +5,7 @@ import {
   weiToMor,
   earlyCloseLock,
   nextStakeReleaseAt,
+  stakeReleaseSchedule,
 } from '../../src/renderer/src/utils/marketplace.ts';
 import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import {
@@ -208,6 +209,59 @@ console.log('queries: nextStakeReleaseAt (the On Hold tile clock)');
   ok('empty -> null', nextStakeReleaseAt([], 1784262600) === null);
   ok('undefined -> null', nextStakeReleaseAt(undefined, 1784262600) === null);
   ok('missing fields -> null', nextStakeReleaseAt([{ foo: 1 }], 1784262600) === null);
+}
+
+// ---- stakeReleaseSchedule: MOR returning at MULTIPLE times -------------------
+// The case a single "next release" hides: stake locked by sessions closed on
+// different UTC days frees on different days, and the tile must show each chunk
+// with its own amount and time — not the total at the earliest date.
+console.log('');
+console.log('queries: stakeReleaseSchedule (multi-session breakdown)');
+{
+  const day = 86400;
+  // Two sessions on the SAME day at supply/budget=1 (lock = stake*elapsed/total):
+  //   A: opened D+10, ends D+110, closed D+60  -> 50/100 of 1000 = 500, release D+day
+  //   B: opened D+20, ends D+120, closed D+40  -> 20/100 of 2000 = 400, release D+day
+  // Same release day -> ONE tranche summing 900.
+  const D = 1784332800; // a UTC-midnight
+  const A = { Stake: '1000', OpenedAt: D + 10, EndsAt: D + 110, ClosedAt: D + 60 };
+  const B = { Stake: '2000', OpenedAt: D + 20, EndsAt: D + 120, ClosedAt: D + 40 };
+  const now = D - 100; // before either releases
+  const same = stakeReleaseSchedule([A, B], now);
+  ok('same-day closes collapse to ONE tranche', same.length === 1);
+  ok('same-day tranche sums the locks (500+400=900)', same[0]?.lockedWei === 900n);
+  ok('same-day tranche releases at startOfDay+1day', same[0]?.releaseAt === D + day);
+
+  // Two sessions on DIFFERENT days -> two tranches, earliest first.
+  const C = { Stake: '1000', OpenedAt: D + day + 10, EndsAt: D + day + 110, ClosedAt: D + day + 60 };
+  const multi = stakeReleaseSchedule([C, A], now);
+  ok('different-day closes -> TWO tranches', multi.length === 2);
+  ok('tranches sorted earliest-first', multi[0].releaseAt < multi[1].releaseAt);
+  ok('first tranche is the earlier day', multi[0].releaseAt === D + day);
+  ok('second tranche is the later day', multi[1].releaseAt === D + 2 * day);
+  ok('each tranche carries its own amount', multi[0].lockedWei === 500n && multi[1].lockedWei === 500n);
+
+  // Matured tranches drop out; only future remain. Stand AFTER A/B's release,
+  // BEFORE C's -> just C.
+  const afterFirst = stakeReleaseSchedule([A, B, C], D + day + 1);
+  ok('matured tranche excluded, future kept', afterFirst.length === 1 && afterFirst[0].releaseAt === D + 2 * day);
+
+  // The real session as a one-tranche schedule, amount matching earlyCloseLock.
+  const REAL_S = { Stake: '5360549929977675947', OpenedAt: 1784262329, EndsAt: 1784262688, ClosedAt: 1784262509 };
+  const real = stakeReleaseSchedule([REAL_S], 1784262600);
+  ok('real session -> one tranche', real.length === 1);
+  ok('real tranche amount == earlyCloseLock lock (2.6877)',
+    weiToMor(real[0].lockedWei, 4) === '2.6877');
+  ok('real tranche release == 1784332800', real[0].releaseAt === 1784332800);
+
+  // nextStakeReleaseAt is now the head of the schedule — still the earliest.
+  ok('nextStakeReleaseAt == first tranche',
+    nextStakeReleaseAt([C, A], now) === multi[0].releaseAt);
+
+  // Junk never throws, never invents a tranche.
+  ok('schedule empty on []', stakeReleaseSchedule([], now).length === 0);
+  ok('schedule empty on junk', stakeReleaseSchedule([{ foo: 1 }], now).length === 0);
+  ok('open session -> no tranche', stakeReleaseSchedule([{ ...A, ClosedAt: 0 }], now).length === 0);
 }
 
 console.log('');

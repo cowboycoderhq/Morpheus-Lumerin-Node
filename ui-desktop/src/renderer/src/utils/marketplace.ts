@@ -273,37 +273,62 @@ export function earlyCloseLock(
   };
 }
 
-// When the NEXT chunk of on-hold stake becomes claimable.
+export type StakeReleaseTranche = {
+  /** unix seconds when this chunk unlocks (a UTC-midnight boundary) */
+  releaseAt: number;
+  /** MOR (wei) unlocking at that time, summed across sessions sharing the day */
+  lockedWei: bigint;
+};
+
+// The schedule on which on-hold stake frees — the answer to "when do I get it
+// back" when the money came from MORE THAN ONE early close.
 //
 // getUserStakesOnHold returns aggregate amounts (available/hold) and throws the
-// per-entry releaseAt away, so the "when" cannot come from that endpoint. But an
-// early close pushes OnHold(amount, startOfDay(closedAt)+1day), and the session
-// list carries ClosedAt — so the release time is the SAME formula as an early
-// close's unlockAt, applied to sessions that are already closed.
+// per-entry releaseAt away, so neither the times NOR their split can come from
+// that endpoint. But each early close pushes OnHold(amount,
+// startOfDay(closedAt)+1day), and the session list carries ClosedAt and Stake —
+// so a session's locked amount and release time are exactly what earlyCloseLock
+// computes for a close AT its ClosedAt. Two sessions closed on different UTC days
+// therefore free on different days, and this groups them by release day.
 //
-// Returns the earliest release still in the FUTURE across all the user's
-// sessions — i.e. the soonest moment any held stake frees — or null when nothing
-// is pending. Entries whose release has passed are excluded: the router's
-// auto-claimer sweeps those within minutes, so they are "returning now", not a
-// future date. Session fetch is complete (apiCallsHelper pages to exhaustion),
-// and held stake only comes from closes within the last ~day, so this sees every
-// entry that could still be locked.
+// FUTURE entries only. A matured entry (releaseAt <= now) is excluded because the
+// router's auto-claimer sweeps it within minutes AND — unlike a future entry —
+// the contract may already have POPPED it, so the session would overcount stake
+// that is no longer held. Future entries are never popped, so their session-
+// derived amounts still match the chain. The session fetch pages to exhaustion
+// and held stake only comes from closes within the last ~day, so every still-
+// locked entry is visible.
+//
+// Amount precision: each tranche's lock is exact within its UTC day (the
+// stipendToStake ratio cancels — see earlyCloseLock); a session straddling UTC
+// midnight is a conservative ceiling. Sorted earliest-first.
+export function stakeReleaseSchedule(
+  sessions: SessionLike[] | undefined,
+  nowSec: number,
+): StakeReleaseTranche[] {
+  const now = Math.trunc(nowSec);
+  const byDay = new Map<number, bigint>();
+  for (const s of sessions ?? []) {
+    const closedAt = toBig(s?.ClosedAt);
+    if (closedAt === null || closedAt <= 0n) continue; // still open
+    // earlyCloseLock priced at the moment of close gives this session's real
+    // historical lock and its unlockAt (startOfDay(closedAt)+1day).
+    const at = earlyCloseLock(s, Number(closedAt));
+    if (!at.known || !at.isEarly || at.lockedWei <= 0n) continue; // late / nothing
+    if (at.unlockAt <= now) continue; // matured — auto-claimer's, and maybe popped
+    byDay.set(at.unlockAt, (byDay.get(at.unlockAt) ?? 0n) + at.lockedWei);
+  }
+  return [...byDay.entries()]
+    .map(([releaseAt, lockedWei]) => ({ releaseAt, lockedWei }))
+    .sort((a, b) => a.releaseAt - b.releaseAt);
+}
+
+// The earliest future release, or null. Kept as a thin read over the schedule so
+// there is one source of truth for the release math.
 export function nextStakeReleaseAt(
   sessions: SessionLike[] | undefined,
   nowSec: number,
 ): number | null {
-  const now = Math.trunc(nowSec);
-  let next: number | null = null;
-  for (const s of sessions ?? []) {
-    const closedAt = toBig(s?.ClosedAt);
-    const endsAt = toBig(s?.EndsAt);
-    if (closedAt === null || endsAt === null) continue;
-    if (closedAt <= 0n) continue; // still open — nothing on hold from it
-    if (closedAt >= endsAt) continue; // closed late — the contract locks nothing
-    const startOfDay = closedAt - (closedAt % BigInt(DAY));
-    const releaseAt = Number(startOfDay) + DAY;
-    if (releaseAt <= now) continue; // already matured — auto-claimer's job
-    if (next === null || releaseAt < next) next = releaseAt;
-  }
-  return next;
+  const schedule = stakeReleaseSchedule(sessions, nowSec);
+  return schedule.length ? schedule[0].releaseAt : null;
 }
