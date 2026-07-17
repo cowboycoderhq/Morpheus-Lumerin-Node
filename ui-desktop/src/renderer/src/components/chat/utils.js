@@ -147,6 +147,37 @@ export function formatModelName(name) {
 }
 
 
+// The user-bubble text for one stored history turn.
+//
+// THE BUG THIS FIXES: the proxy-router stores each turn's request with the WHOLE
+// prepended conversation in `prompt.messages` (turn N holds [u,a,u,a,…,u]), so
+// `prompt.messages[0]` is always the FIRST turn's text — every bubble in a
+// resumed chat rendered as the opening prompt ("hello", "hello", "hello"…). The
+// text for THIS turn is the LAST user message: the one that elicited m.response.
+//
+// Handles all three stored shapes:
+//   - chat/LLM: { messages: [{ role, content }, …] } — take the last user turn
+//   - TTS:      { input: '…' }
+//   - STT:      audio request flagged with isAudioContent (audio not replayable)
+// Falls back to '' rather than guessing, so a malformed turn renders blank, not
+// wrong.
+export function userTextFromPrompt(prompt, isAudioContent) {
+  const p = prompt || {};
+  if (Array.isArray(p.messages) && p.messages.length > 0) {
+    for (let i = p.messages.length - 1; i >= 0; i--) {
+      if (p.messages[i]?.role === 'user') {
+        return p.messages[i]?.content ?? '';
+      }
+    }
+    // No user-role entry (shouldn't happen — a request ends with the user turn);
+    // last message is still a better guess than the first.
+    return p.messages[p.messages.length - 1]?.content ?? '';
+  }
+  if (typeof p.input === 'string') return p.input; // TTS
+  if (isAudioContent) return p.Prompt || p.prompt || '🎤 Audio input'; // STT
+  return '';
+}
+
 // Token-based model matching, shared with the chat model picker.
 // A single contiguous `includes` means the separators in a model's name decide
 // whether you can find it: "deepseek v4 pro" would miss `deepseek-v4-pro`

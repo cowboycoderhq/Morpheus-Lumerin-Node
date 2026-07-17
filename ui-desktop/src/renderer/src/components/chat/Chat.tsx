@@ -79,6 +79,7 @@ import {
   SECURE_BADGE_TOOLTIP,
   getModelModality,
   formatModelName,
+  userTextFromPrompt,
 } from './utils';
 import { Cooldown } from './Cooldown';
 import ImageViewer from 'react-simple-image-viewer';
@@ -567,17 +568,10 @@ export const Chat = (props: ChatProps) => {
           !isChatPrompt && typeof prompt.input === 'string';
         const isSttMessage = !isChatPrompt && !isTtsPrompt && !!m.isAudioContent;
 
-        let userText: string;
-        if (isChatPrompt) {
-          userText = prompt.messages[0]?.content ?? '';
-        } else if (isTtsPrompt) {
-          userText = prompt.input;
-        } else if (isSttMessage) {
-          // The uploaded/recorded audio is not retained in a replayable form.
-          userText = prompt.Prompt || prompt.prompt || '🎤 Audio input';
-        } else {
-          userText = '';
-        }
+        // The router prepends the full conversation into each turn's
+        // prompt.messages, so THIS turn's text is the last user message, not
+        // messages[0]. See userTextFromPrompt.
+        const userText: string = userTextFromPrompt(prompt, m.isAudioContent);
 
         messages.push({
           id: makeId(16),

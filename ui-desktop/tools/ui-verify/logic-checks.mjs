@@ -13,6 +13,7 @@ import {
   SECURE_TAG,
   formatModelName,
   modelMatchesQuery,
+  userTextFromPrompt,
 } from '../../src/renderer/src/components/chat/utils.js';
 import { buildModelsWithBids } from '../../src/renderer/src/store/queries.ts';
 
@@ -262,6 +263,63 @@ console.log('queries: stakeReleaseSchedule (multi-session breakdown)');
   ok('schedule empty on []', stakeReleaseSchedule([], now).length === 0);
   ok('schedule empty on junk', stakeReleaseSchedule([{ foo: 1 }], now).length === 0);
   ok('open session -> no tranche', stakeReleaseSchedule([{ ...A, ClosedAt: 0 }], now).length === 0);
+}
+
+// ---- userTextFromPrompt: resumed-chat bubbles show the RIGHT prompt ----------
+// The bug: proxy-router stores each turn with the full prepended conversation in
+// prompt.messages, so messages[0] is always the first turn — every bubble in a
+// resumed chat rendered as the opening prompt. Fixture is the operator's real
+// stored chat 0x056db22a (turns of length 1,3,5,7), each turn's expected text
+// being the LAST user message.
+console.log('');
+console.log('queries: userTextFromPrompt (resumed-chat bubble text)');
+{
+  // Real prepended shapes, growing [u], [u,a,u], [u,a,u,a,u], …
+  const turn0 = { messages: [{ role: 'user', content: 'hello' }] };
+  const turn1 = {
+    messages: [
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: '你好！' },
+      { role: 'user', content: 'speak in english' },
+    ],
+  };
+  const turn2 = {
+    messages: [
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: '你好！' },
+      { role: 'user', content: 'speak in english' },
+      { role: 'assistant', content: 'Of course!' },
+      { role: 'user', content: 'what language were you speaking in' },
+    ],
+  };
+  // THE bug: every turn must NOT collapse to "hello".
+  ok('turn 0 -> "hello"', userTextFromPrompt(turn0) === 'hello');
+  ok('turn 1 -> "speak in english" (NOT hello)', userTextFromPrompt(turn1) === 'speak in english');
+  ok('turn 2 -> the third prompt (NOT hello)',
+    userTextFromPrompt(turn2) === 'what language were you speaking in');
+  ok('not all turns collapse to the first',
+    new Set([turn0, turn1, turn2].map((t) => userTextFromPrompt(t))).size === 3);
+
+  // Single-message turns (the other stored format) still work — last == first.
+  ok('single-message turn -> its own text',
+    userTextFromPrompt({ messages: [{ role: 'user', content: 'type 750 words' }] }) === 'type 750 words');
+
+  // A trailing non-user entry must not become the bubble text.
+  ok('skips a trailing assistant entry',
+    userTextFromPrompt({
+      messages: [
+        { role: 'user', content: 'real prompt' },
+        { role: 'assistant', content: 'stray' },
+      ],
+    }) === 'real prompt');
+
+  // Other modalities and junk.
+  ok('TTS input', userTextFromPrompt({ input: 'say this aloud' }) === 'say this aloud');
+  ok('STT audio placeholder', userTextFromPrompt({}, true) === '🎤 Audio input');
+  ok('STT keeps a stored transcript', userTextFromPrompt({ prompt: 'transcribed' }, true) === 'transcribed');
+  ok('empty prompt -> ""', userTextFromPrompt({}) === '');
+  ok('null prompt -> ""', userTextFromPrompt(null) === '');
+  ok('empty messages array -> "" (no crash)', userTextFromPrompt({ messages: [] }) === '');
 }
 
 console.log('');
