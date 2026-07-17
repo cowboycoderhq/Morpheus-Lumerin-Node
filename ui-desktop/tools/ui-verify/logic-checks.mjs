@@ -8,6 +8,9 @@ import {
   stakeReleaseSchedule,
   sixMinuteStakeMor,
   modelPriceDisplay,
+  sortModelsForPicker,
+  modelMinPriceWei,
+  modelProviderCount,
 } from '../../src/renderer/src/utils/marketplace.ts';
 import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import {
@@ -372,6 +375,62 @@ console.log('queries: sixMinuteStakeMor / modelPriceDisplay (picker toggle)');
   ok('perSec and stake differ',
     modelPriceDisplay(bids, 'perSec', meta1).min !==
       modelPriceDisplay(bids, 'stake6m', meta1).min);
+}
+
+// ---- sortModelsForPicker: order by cheapest / standard / most providers -----
+console.log('');
+console.log('queries: sortModelsForPicker (picker ordering)');
+{
+  const bid = (price) => ({ Id: 'b' + price, PricePerSecond: String(price) });
+  // Cheap has the lowest price but ONE provider; Broad is dearer but has THREE;
+  // Mid sits between. Zed is dearest, alphabetically last.
+  const cheap = { Name: 'Cheap', isOnline: true, bids: [bid(1e15)] };
+  const mid = { Name: 'Mid', isOnline: true, bids: [bid(3e15), bid(4e15)] };
+  const broad = { Name: 'Broad', isOnline: true, bids: [bid(5e15), bid(6e15), bid(7e15)] };
+  const zed = { Name: 'Zed', isOnline: true, bids: [bid(9e15)] };
+  const offlineCheap = { Name: 'OfflineCheap', isOnline: false, bids: [bid(1e14)] };
+  const all = [zed, broad, cheap, mid, offlineCheap];
+
+  const names = (arr) => arr.map((m) => m.Name);
+
+  // keys
+  ok('modelMinPriceWei = cheapest bid', modelMinPriceWei(mid) === 3e15);
+  ok('modelMinPriceWei = Infinity with no bids', modelMinPriceWei({ bids: [] }) === Infinity);
+  ok('modelProviderCount counts bids with Id', modelProviderCount(broad) === 3);
+
+  // cheapest: online by price asc, offline last (even though it is the cheapest).
+  const byCheap = names(sortModelsForPicker(all, 'cheapest'));
+  ok('cheapest: Cheap first', byCheap[0] === 'Cheap');
+  ok('cheapest: order Cheap<Mid<Broad<Zed', JSON.stringify(byCheap.slice(0, 4)) === JSON.stringify(['Cheap', 'Mid', 'Broad', 'Zed']));
+  ok('cheapest: offline model sorts LAST despite lowest price', byCheap[byCheap.length - 1] === 'OfflineCheap');
+
+  // most providers: Broad(3) first, then the 1-provider models A–Z.
+  const byProviders = names(sortModelsForPicker(all, 'mostProviders'));
+  ok('mostProviders: Broad(3) first', byProviders[0] === 'Broad');
+  ok('mostProviders: Mid(2) second', byProviders[1] === 'Mid');
+  ok('mostProviders: 1-provider models tie-break A–Z (Cheap<Zed)',
+    byProviders.indexOf('Cheap') < byProviders.indexOf('Zed'));
+
+  // standard: online, local-first, then A–Z.
+  const local = { Name: 'zzz-local', isOnline: true, isLocal: true };
+  const byStd = names(sortModelsForPicker([zed, cheap, local], 'standard'));
+  ok('standard: local first even if name is last', byStd[0] === 'zzz-local');
+  ok('standard: then alphabetical (Cheap<Zed)', byStd.indexOf('Cheap') < byStd.indexOf('Zed'));
+
+  // the three modes must actually differ on this fixture.
+  ok('the three sorts are not all identical',
+    new Set([
+      JSON.stringify(byCheap),
+      JSON.stringify(byProviders),
+      JSON.stringify(names(sortModelsForPicker(all, 'standard'))),
+    ]).size === 3);
+
+  // purity + robustness.
+  ok('does not mutate the input', (() => { const a = [zed, cheap]; sortModelsForPicker(a, 'cheapest'); return a[0] === zed; })());
+  ok('undefined input -> []', sortModelsForPicker(undefined, 'cheapest').length === 0);
+  ok('two no-price models tie to name, no NaN scramble',
+    JSON.stringify(names(sortModelsForPicker(
+      [{ Name: 'B', isOnline: true }, { Name: 'A', isOnline: true }], 'cheapest'))) === JSON.stringify(['A', 'B']));
 }
 
 console.log('');

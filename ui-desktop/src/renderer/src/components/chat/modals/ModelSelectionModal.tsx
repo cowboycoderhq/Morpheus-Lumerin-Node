@@ -20,6 +20,7 @@ import {
 import Modal from '../../contracts/modals/Modal';
 import ModelRow from './ModelRow';
 import { isSecureModel, SECURE_MODE_INFO } from '../utils';
+import { sortModelsForPicker, ModelSortMode } from '../../../utils/marketplace';
 
 /* The shared outer modal `Body` (in CreateContractModal.styles) bakes in
    `padding: 5rem` and never sets `overflow: hidden`, so an `auto`-height box
@@ -373,6 +374,7 @@ const ModelSelectionModal = ({
   const [filter, setFilter] = useState<FilterId>('all');
   const [showTeeInfo, setShowTeeInfo] = useState(false);
   const [priceMode, setPriceMode] = useState<'perSec' | 'stake6m'>('perSec');
+  const [sortMode, setSortMode] = useState<ModelSortMode>('standard');
 
   // The 6-minute stake needs marketplace supply/budget; until those load, the
   // stake cannot be computed, so that toggle is disabled rather than showing a
@@ -452,14 +454,8 @@ const ModelSelectionModal = ({
       }
     });
 
-    // Stable sort: online first, then local first inside online group,
-    // then alphabetical by name.
-    return filtered.sort((a: any, b: any) => {
-      if (!!b.isOnline !== !!a.isOnline) return b.isOnline ? 1 : -1;
-      if (!!b.isLocal !== !!a.isLocal) return b.isLocal ? 1 : -1;
-      return (a.Name || '').localeCompare(b.Name || '');
-    });
-  }, [enriched, search, filter]);
+    return sortModelsForPicker(filtered, sortMode);
+  }, [enriched, search, filter, sortMode]);
 
   // Bail out *after* all hooks have run.
   if (!isActive) return null;
@@ -551,6 +547,32 @@ const ModelSelectionModal = ({
               );
             })}
           </FilterRow>
+          <PriceModeRow>
+            <PriceModeGroup
+              role="group"
+              aria-label="Sort models"
+              data-testid="sort-toggle"
+            >
+              {(
+                [
+                  ['standard', 'Standard'],
+                  ['cheapest', 'Cheapest'],
+                  ['mostProviders', 'Most providers'],
+                ] as [ModelSortMode, string][]
+              ).map(([id, label]) => (
+                <PriceModeBtn
+                  key={id}
+                  type="button"
+                  $active={sortMode === id}
+                  aria-pressed={sortMode === id}
+                  data-testid={`sort-${id}`}
+                  onClick={() => setSortMode(id)}
+                >
+                  {label}
+                </PriceModeBtn>
+              ))}
+            </PriceModeGroup>
+          </PriceModeRow>
           <PriceModeRow>
             <PriceModeLabel>Show price as</PriceModeLabel>
             <PriceModeGroup

@@ -199,6 +199,58 @@ export function modelPriceDisplay(
     : { kind: 'range', min, max };
 }
 
+// ---- Model-picker ordering ------------------------------------------------
+// The cheapest a model can be opened at (min per-second bid, wei). Infinity when
+// it has no priceable bid, so those sort last under "cheapest".
+export function modelMinPriceWei(model: { bids?: PricedBid[] }): number {
+  const prices = (model?.bids || [])
+    .filter((b) => b?.Id)
+    .map((b) => Number(b?.PricePerSecond))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  return prices.length ? Math.min(...prices) : Infinity;
+}
+
+export function modelProviderCount(model: { bids?: PricedBid[] }): number {
+  return (model?.bids || []).filter((b) => b?.Id).length;
+}
+
+export type ModelSortMode = 'standard' | 'cheapest' | 'mostProviders';
+
+// Order models for the picker. Online always sorts before offline (an offline
+// model is useless however cheap), THEN by the chosen key, with an alphabetical
+// tiebreak so the order is stable:
+//   'standard'      -> local first, then A–Z (the historical default)
+//   'cheapest'      -> lowest min price first
+//   'mostProviders' -> most providers first (more redundancy / availability)
+// Pure and non-mutating (copies before sorting). Uses a NaN-safe numeric compare
+// so two no-price models (both Infinity) tie to the name rather than scrambling.
+type SortableModel = {
+  Name?: string;
+  isOnline?: boolean;
+  isLocal?: boolean;
+  bids?: PricedBid[];
+};
+
+export function sortModelsForPicker<T extends SortableModel>(
+  models: T[] | undefined,
+  mode: ModelSortMode,
+): T[] {
+  const num = (x: number, y: number): number => (x < y ? -1 : x > y ? 1 : 0);
+  return [...(models || [])].sort((a, b): number => {
+    if (!!b?.isOnline !== !!a?.isOnline) return b?.isOnline ? 1 : -1;
+    if (mode === 'cheapest') {
+      const d = num(modelMinPriceWei(a), modelMinPriceWei(b));
+      if (d) return d;
+    } else if (mode === 'mostProviders') {
+      const d = num(modelProviderCount(b), modelProviderCount(a));
+      if (d) return d;
+    } else if (!!b?.isLocal !== !!a?.isLocal) {
+      return b?.isLocal ? 1 : -1;
+    }
+    return String(a?.Name || '').localeCompare(String(b?.Name || ''));
+  });
+}
+
 // ---- Early-close lock -----------------------------------------------------
 // Closing a session BEFORE it ends does not spend your stake — it TIME-LOCKS
 // part of it. SessionRouter._rewardUserAfterClose:

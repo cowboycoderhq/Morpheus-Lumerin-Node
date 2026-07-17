@@ -710,6 +710,53 @@ const browser = await chromium.launch();
     assert(picked === 0, `price toggle selected a model (${picked}x, must be 0)`);
     await p.screenshot({ path: `${SHOTS}/model-picker-price-toggle.png` });
   });
+
+  // --- sort: Standard / Cheapest / Most providers reorder the list -----------
+  // Fixture prices/providers:  Test Model (min 0.001/s, 2 prov) · Aardvark
+  // (0.009/s, 1) · Broadcast (0.004–0.006/s, 3). Read the on-screen order of the
+  // three distinctive names.
+  await drive(page, 'model-picker-sort', `http://localhost:${PORT}/?case=model-picker`, async (p) => {
+    await p.waitForSelector('[data-testid="sort-toggle"]', { timeout: 20000 });
+    const orderOf = async () => {
+      const text = await p.locator('body').innerText();
+      return ['Aardvark', 'Broadcast', 'Test Model']
+        .map((n) => ({ n, i: text.indexOf(n) }))
+        .filter((x) => x.i >= 0)
+        .sort((a, b) => a.i - b.i)
+        .map((x) => x.n);
+    };
+
+    // Standard defaults active and is alphabetical.
+    assert(
+      (await p.getAttribute('[data-testid="sort-standard"]', 'aria-pressed')) === 'true',
+      'standard sort not active by default',
+    );
+    assert(
+      JSON.stringify(await orderOf()) === JSON.stringify(['Aardvark', 'Broadcast', 'Test Model']),
+      `standard order wrong: ${JSON.stringify(await orderOf())}`,
+    );
+
+    // Cheapest: Test Model (0.001) < Broadcast (0.004) < Aardvark (0.009).
+    await p.getByTestId('sort-cheapest').click();
+    await p.waitForTimeout(150);
+    assert(
+      JSON.stringify(await orderOf()) === JSON.stringify(['Test Model', 'Broadcast', 'Aardvark']),
+      `cheapest order wrong: ${JSON.stringify(await orderOf())}`,
+    );
+
+    // Most providers: Broadcast (3) > Test Model (2) > Aardvark (1).
+    await p.getByTestId('sort-mostProviders').click();
+    await p.waitForTimeout(150);
+    assert(
+      JSON.stringify(await orderOf()) === JSON.stringify(['Broadcast', 'Test Model', 'Aardvark']),
+      `most-providers order wrong: ${JSON.stringify(await orderOf())}`,
+    );
+
+    // Sorting selects nothing.
+    const picked = await p.evaluate(() => window.__picked.length);
+    assert(picked === 0, `sort selected a model (${picked}x, must be 0)`);
+    await p.screenshot({ path: `${SHOTS}/model-picker-sort.png` });
+  });
   await page.close();
 }
 
