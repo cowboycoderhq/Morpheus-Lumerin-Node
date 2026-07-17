@@ -6,6 +6,8 @@ import {
   earlyCloseLock,
   nextStakeReleaseAt,
   stakeReleaseSchedule,
+  sixMinuteStakeMor,
+  modelPriceDisplay,
 } from '../../src/renderer/src/utils/marketplace.ts';
 import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import {
@@ -320,6 +322,56 @@ console.log('queries: userTextFromPrompt (resumed-chat bubble text)');
   ok('empty prompt -> ""', userTextFromPrompt({}) === '');
   ok('null prompt -> ""', userTextFromPrompt(null) === '');
   ok('empty messages array -> "" (no crash)', userTextFromPrompt({ messages: [] }) === '');
+}
+
+// ---- model-picker pricing: MOR/s vs 6-minute stake -------------------------
+// The 6-min stake mirrors the marketplace floor used by the affordability gate:
+// price * 360 * supply / budget. At supply/budget = 1 the arithmetic is legible
+// (a 1e15 wei/s price -> 0.36 MOR to open), exactly the numbers the affordability
+// evidence used.
+console.log('');
+console.log('queries: sixMinuteStakeMor / modelPriceDisplay (picker toggle)');
+{
+  const meta1 = { supply: 1, budget: 1 };
+  ok('1e15 wei/s -> 0.36 MOR to open', sixMinuteStakeMor(1e15, meta1) === 0.36);
+  ok('2e15 wei/s -> 0.72 MOR', Math.abs(sixMinuteStakeMor(2e15, meta1) - 0.72) < 1e-9);
+  ok('1e16 wei/s -> 3.6 MOR', Math.abs(sixMinuteStakeMor(1e16, meta1) - 3.6) < 1e-9);
+  // The ratio scales it: supply/budget = 1000 -> 1000x the stake.
+  ok('supply/budget ratio scales the stake',
+    Math.abs(sixMinuteStakeMor(1e15, { supply: 1e24, budget: 1e21 }) - 360) < 1e-6);
+  // Meta not loaded -> null (unknowable), never a fake 0.
+  ok('no supply -> null', sixMinuteStakeMor(1e15, { budget: 1 }) === null);
+  ok('zero budget -> null', sixMinuteStakeMor(1e15, { supply: 1, budget: 0 }) === null);
+  ok('undefined meta -> null', sixMinuteStakeMor(1e15, undefined) === null);
+  ok('non-positive price -> null', sixMinuteStakeMor(0, meta1) === null);
+
+  // modelPriceDisplay: per-second is Number(price)/1e18.
+  const bids = [
+    { Id: 'b1', PricePerSecond: '1000000000000000' }, // 1e15
+    { Id: 'b2', PricePerSecond: '2000000000000000' }, // 2e15
+  ];
+  const ps = modelPriceDisplay(bids, 'perSec', meta1);
+  ok('perSec range 0.001–0.002 MOR/s',
+    ps.kind === 'range' && Math.abs(ps.min - 0.001) < 1e-9 && Math.abs(ps.max - 0.002) < 1e-9);
+  // Same bids in stake mode: 0.36–0.72 MOR to open.
+  const st = modelPriceDisplay(bids, 'stake6m', meta1);
+  ok('stake range 0.36–0.72 MOR',
+    st.kind === 'range' && Math.abs(st.min - 0.36) < 1e-9 && Math.abs(st.max - 0.72) < 1e-9);
+  // stake mode with NO meta -> offline, not a bogus number.
+  ok('stake mode without meta -> offline',
+    modelPriceDisplay(bids, 'stake6m', {}).kind === 'offline');
+  // Single bid -> single, not range.
+  ok('single bid -> single',
+    modelPriceDisplay([bids[0]], 'perSec', meta1).kind === 'single');
+  // No priceable bids -> offline.
+  ok('no bids -> offline', modelPriceDisplay([], 'perSec', meta1).kind === 'offline');
+  ok('bids without Id -> offline',
+    modelPriceDisplay([{ PricePerSecond: '1' }], 'perSec', meta1).kind === 'offline');
+  // The two modes must not agree on a nontrivial bid (proves the toggle changes
+  // the number, not just the label).
+  ok('perSec and stake differ',
+    modelPriceDisplay(bids, 'perSec', meta1).min !==
+      modelPriceDisplay(bids, 'stake6m', meta1).min);
 }
 
 console.log('');

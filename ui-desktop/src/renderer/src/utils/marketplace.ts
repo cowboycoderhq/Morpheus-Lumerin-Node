@@ -136,6 +136,69 @@ export function weiToMor(wei: bigint, maxFractionDigits = 8): string {
   return `${negative ? '-' : ''}${whole}${trimmed ? `.${trimmed}` : ''}`;
 }
 
+// ---- Model-picker pricing -------------------------------------------------
+// A bid's price is a per-second rate. Two ways to show it, both from the same
+// number: the RATE itself (MOR/s), or what it costs to START — the stake for the
+// minimum 6-minute session, which is what actually leaves the wallet on open.
+//
+// The 6-minute stake mirrors the marketplace floor used everywhere else
+// (calculateStake at MIN_REQUEST_SECONDS): price * 360 * supply / budget. That
+// needs marketplace meta; without it the stake is unknowable, so this returns
+// null and the caller shows the rate instead. Display-only Number math (the ratio
+// dominates, exact wei precision is not needed to render a price label).
+
+const MIN_SESSION_SECONDS = 360; // 5-min contract floor + 1-min cushion
+
+export function sixMinuteStakeMor(
+  pricePerSecondWei: string | number,
+  meta: { supply?: string | number; budget?: string | number } | undefined,
+): number | null {
+  const price = Number(pricePerSecondWei);
+  const supply = Number(meta?.supply);
+  const budget = Number(meta?.budget);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  if (!Number.isFinite(supply) || !Number.isFinite(budget) || budget <= 0) {
+    return null;
+  }
+  return (price * MIN_SESSION_SECONDS * supply) / budget / 1e18;
+}
+
+export type ModelPrice =
+  | { kind: 'offline' }
+  | { kind: 'single'; value: number }
+  | { kind: 'range'; min: number; max: number };
+
+// The price label for a model's bids, in the requested mode.
+//   'perSec'  -> MOR per second (Number(price)/1e18)
+//   'stake6m' -> MOR to open the 6-minute minimum session (sixMinuteStakeMor)
+// 'offline' when there are no priceable bids — or, in stake mode, when meta is
+// not loaded so no bid can be priced. Callers gate the stake toggle on meta being
+// ready, so 'stake6m' + missing meta should not reach the user, but it degrades
+// to 'offline' rather than inventing a number.
+type PricedBid = { Id?: string; PricePerSecond?: string | number };
+
+export function modelPriceDisplay(
+  bids: PricedBid[] | undefined,
+  mode: 'perSec' | 'stake6m',
+  meta: { supply?: string | number; budget?: string | number } | undefined,
+): ModelPrice {
+  const list = (bids || []).filter((b) => b?.Id);
+  if (list.length === 0) return { kind: 'offline' };
+  const toValue = (b: PricedBid): number | null =>
+    mode === 'stake6m'
+      ? sixMinuteStakeMor(b?.PricePerSecond ?? 0, meta)
+      : Number(b?.PricePerSecond) / 1e18;
+  const values = list
+    .map(toValue)
+    .filter((n): n is number => n !== null && Number.isFinite(n));
+  if (values.length === 0) return { kind: 'offline' };
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  return min === max
+    ? { kind: 'single', value: min }
+    : { kind: 'range', min, max };
+}
+
 // ---- Early-close lock -----------------------------------------------------
 // Closing a session BEFORE it ends does not spend your stake — it TIME-LOCKS
 // part of it. SessionRouter._rewardUserAfterClose:

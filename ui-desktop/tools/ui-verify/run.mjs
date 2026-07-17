@@ -670,6 +670,49 @@ const browser = await chromium.launch();
   await page.close();
 }
 
+// --- model-picker: the price-mode toggle switches rate <-> 6-min stake -------
+{
+  const page = await browser.newPage({ viewport: { width: 760, height: 900 } });
+  await drive(page, 'model-picker-price-toggle', `http://localhost:${PORT}/?case=model-picker`, async (p) => {
+    await p.waitForSelector('[data-testid="price-mode-toggle"]', { timeout: 20000 });
+
+    // Default is per-second: the row shows the MOR/s rate range.
+    let body = await p.locator('body').innerText();
+    assert(/0\.001\s*–\s*0\.002/.test(body), `default per-second range missing: ${body.slice(0, 300)}`);
+    assert(/MOR\/s/.test(body), 'per-second unit MOR/s missing by default');
+    assert(
+      (await p.getAttribute('[data-testid="price-mode-persec"]', 'aria-pressed')) === 'true',
+      'per-second not marked active by default',
+    );
+
+    // Switch to 6-min stake: the SAME bids now read as the stake to open
+    // (0.36–0.72 MOR), a different number — proving the toggle recomputes, not
+    // relabels. supply/budget=1 makes 1e15 -> 0.36, 2e15 -> 0.72.
+    await p.getByTestId('price-mode-stake').click();
+    await p.waitForTimeout(150);
+    body = await p.locator('body').innerText();
+    assert(/0\.36\s*–\s*0\.72/.test(body), `stake range 0.36–0.72 missing after toggle: ${body.slice(0, 300)}`);
+    assert(/MOR to open/.test(body), 'stake unit "MOR to open" missing');
+    assert(!/0\.001\s*–\s*0\.002/.test(body), 'per-second range still shown in stake mode');
+    assert(
+      (await p.getAttribute('[data-testid="price-mode-stake"]', 'aria-pressed')) === 'true',
+      'stake not marked active after click',
+    );
+
+    // Toggling back restores the rate.
+    await p.getByTestId('price-mode-persec').click();
+    await p.waitForTimeout(150);
+    body = await p.locator('body').innerText();
+    assert(/0\.001\s*–\s*0\.002/.test(body), 'per-second not restored after toggling back');
+
+    // The toggle is a display control only — it must not select a model.
+    const picked = await p.evaluate(() => window.__picked.length);
+    assert(picked === 0, `price toggle selected a model (${picked}x, must be 0)`);
+    await p.screenshot({ path: `${SHOTS}/model-picker-price-toggle.png` });
+  });
+  await page.close();
+}
+
 await browser.close();
 await server.close();
 

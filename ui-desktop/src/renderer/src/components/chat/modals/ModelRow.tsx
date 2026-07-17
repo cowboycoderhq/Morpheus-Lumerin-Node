@@ -14,6 +14,7 @@ import {
   IconShieldLock,
 } from '@tabler/icons-react';
 import { formatSmallNumber, SECURE_TAG, SECURE_BADGE_TOOLTIP } from '../utils';
+import { modelPriceDisplay } from '../../../utils/marketplace';
 
 type IconCmp = React.ComponentType<any>;
 
@@ -253,29 +254,14 @@ function classifyTags(rawTags: string[] = [], modelName: string = '') {
   return { modalityKeys, familyTags, hasTee };
 }
 
-type PriceInfo =
-  | { kind: 'local' }
-  | { kind: 'offline' }
-  | { kind: 'single'; perSec: number }
-  | { kind: 'range'; minPerSec: number; maxPerSec: number };
-
-function computePrice(model: any): PriceInfo {
-  if (model?.isLocal) return { kind: 'local' };
-  const bids = (model?.bids || []).filter((b: any) => b?.Id);
-  if (bids.length === 0) return { kind: 'offline' };
-  const prices = bids
-    .map((b: any) => Number(b.PricePerSecond))
-    .filter((n: number) => Number.isFinite(n));
-  if (prices.length === 0) return { kind: 'offline' };
-  const min = Math.min(...prices) / 1e18;
-  const max = Math.max(...prices) / 1e18;
-  if (min === max) return { kind: 'single', perSec: min };
-  return { kind: 'range', minPerSec: min, maxPerSec: max };
-}
-
 function ModelRow(props: {
   model: any;
   symbol: string;
+  // How to price the row: per-second rate (default) or the 6-minute stake it
+  // takes to open a session. `meta` (marketplace supply/budget) is required to
+  // compute the stake; the modal only offers that mode once meta has loaded.
+  priceMode?: 'perSec' | 'stake6m';
+  meta?: { supply?: string | number; budget?: string | number };
   onChangeModel: (data: { modelId: string; bidId?: string; isLocal?: boolean }) => void;
 }) {
   const model = props.model || {};
@@ -296,7 +282,14 @@ function ModelRow(props: {
   const ModalityIcon =
     MODALITY[primaryModalityKey]?.Icon || IconMessage;
 
-  const price = useMemo(() => computePrice(model), [model]);
+  const priceMode = props.priceMode ?? 'perSec';
+  const price = useMemo(
+    () =>
+      model?.isLocal
+        ? ({ kind: 'local' } as const)
+        : modelPriceDisplay(model?.bids, priceMode, props.meta),
+    [model, priceMode, props.meta],
+  );
   const providerCount = (model?.bids || []).filter((b: any) => b?.Id).length;
 
   const handleSelect = () => {
@@ -377,16 +370,20 @@ function ModelRow(props: {
         {price.kind === 'offline' && <OfflineBadge>Unavailable</OfflineBadge>}
         {price.kind === 'single' && (
           <>
-            <PriceValue>{formatSmallNumber(price.perSec)}</PriceValue>
-            <PriceUnit>{symbol}/s</PriceUnit>
+            <PriceValue>{formatSmallNumber(price.value)}</PriceValue>
+            <PriceUnit>
+              {priceMode === 'stake6m' ? `${symbol} to open` : `${symbol}/s`}
+            </PriceUnit>
           </>
         )}
         {price.kind === 'range' && (
           <>
             <PriceValue>
-              {formatSmallNumber(price.minPerSec)} – {formatSmallNumber(price.maxPerSec)}
+              {formatSmallNumber(price.min)} – {formatSmallNumber(price.max)}
             </PriceValue>
-            <PriceUnit>{symbol}/s</PriceUnit>
+            <PriceUnit>
+              {priceMode === 'stake6m' ? `${symbol} to open` : `${symbol}/s`}
+            </PriceUnit>
           </>
         )}
       </PriceBlock>
