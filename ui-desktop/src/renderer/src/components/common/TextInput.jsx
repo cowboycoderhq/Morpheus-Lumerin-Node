@@ -23,8 +23,14 @@ const TextInput = ({
       <Label hasErrors={hasErrors} htmlFor={id}>
         {label}
       </Label>
+      {/* `data-testid` is destructured out of props above, so it never reached
+          the control — it was used only to name the error element. Every
+          `<TextInput data-testid="pass-field">` in the app therefore rendered an
+          input with no test id, and any check targeting it silently matched
+          nothing rather than failing. Forward it. */}
       <InputControl
         id={id}
+        data-testid={dataTestId}
         rows={rows}
         cols={cols}
         value={value || ''}

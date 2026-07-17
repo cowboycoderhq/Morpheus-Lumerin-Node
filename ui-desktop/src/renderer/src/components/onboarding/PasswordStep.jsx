@@ -1,28 +1,22 @@
-import React, { useState } from 'react';
+import React from 'react';
 import styled from 'styled-components';
 import PropTypes from 'prop-types';
-import 'react-hint/css/index.css';
 import * as utils from '../../store/utils';
 import {
   PasswordStrengthMeter,
   TextInput,
   AltLayoutNarrow,
   Btn,
-  Sp,
-  Tooltip
+  Sp
 } from '../common';
 import WizardChrome, { Callout } from './WizardChrome';
 
-// crypto-version's copy and structure, with its two defects fixed:
-//
-// - It says the password unlocks the app "on this Mac". The app ships Windows
-//   and Linux builds too (see electron.builder targets), so the sentence is
-//   simply false for those users. "this device" is true everywhere and costs
-//   nothing.
-// - It drops the live zxcvbn suggestion tooltip for a static hint. The meter
-//   tells you a password is weak; the suggestions tell you what to DO about it,
-//   which is the part that changes the password someone actually picks. Kept —
-//   it costs one piece of state and rides alongside crypto's MeterHint.
+// No suggestion tooltip here: PasswordStrengthMeter now renders guidance
+// INLINE (a "Stronger if:" checklist + a suggestion line). Reading this file
+// alone makes it look like crypto dropped the live suggestions — it didn't, it
+// moved them into the meter, where they sit beside the bar instead of floating
+// over the callout. Two of crypto's own defects ARE fixed below: "on this Mac"
+// (false on the win/linux builds) and a cyan hover literal that never swapped.
 
 const Explainer = styled.p`
   margin: 0 0 2.4rem;
@@ -38,18 +32,12 @@ const MeterHint = styled.p`
   color: ${p => p.theme.colors.textSecondary};
 `;
 
-// Anchors the suggestion tooltip to the field.
-const PasswordInputWrap = styled.div`
-  position: relative;
-`;
-
 const SecondaryBtn = styled(Btn)`
-  border-radius: ${p => p.theme.radii.md};
+  border-radius: ${(p) => p.theme.radii.md};
   border: 1px solid ${p => p.theme.colors.brand};
   color: ${p => p.theme.colors.brand};
   background: transparent;
 
-  /* Was a pinned cyan literal — stays cyan under classic. */
   &:not([disabled]):hover,
   &:not([disabled]):focus {
     background: ${p => p.theme.colors.brandTint(0.08)};
@@ -57,10 +45,6 @@ const SecondaryBtn = styled(Btn)`
 `;
 
 const PasswordStep = props => {
-  const [typed, setTyped] = useState(false);
-  const [suggestion, setSuggestion] = useState('');
-  let tooltipTimeout;
-
   const onPasswordSubmit = (e, useImportFlow) => {
     e.preventDefault();
     props.onPasswordSubmit({ clearOnError: false, useImportFlow });
@@ -82,52 +66,33 @@ const PasswordStep = props => {
       </AltLayoutNarrow>
 
       <Callout>
-        A wallet is a secure account only you control — no signup, no company
-        holds it. This app creates one for you on this device.
+        A wallet is a secure account only you control — no signup, no
+        company holds it. This app creates one for you on this device.
       </Callout>
 
       <AltLayoutNarrow>
         <form data-testid="pass-form">
-          <PasswordInputWrap>
-            <Sp mt={4}>
-              <Tooltip
-                content={suggestion}
-                show={typed && props.password && suggestion.length}
-              />
-              <TextInput
-                data-testid="pass-field"
-                autoFocus
-                onChange={e => {
-                  if (!typed) {
-                    tooltipTimeout && clearTimeout(tooltipTimeout);
-                    setTyped(true);
-                    tooltipTimeout = setTimeout(() => setTyped(false), 5000);
-                  }
-                  return props.onInputChange(e);
-                }}
-                error={props.errors.password}
-                label="Password"
-                value={props.password}
-                type="password"
-                id="password"
-              />
-              {!props.errors.password && (
-                <>
-                  <PasswordStrengthMeter
-                    password={props.password}
-                    onChange={res => {
-                      const string = res?.suggestions?.join(`\n`);
-                      setSuggestion(string);
-                    }}
-                  />
-                  <MeterHint>
-                    This bar is a guide, not a requirement — longer and more
-                    unique is safer.
-                  </MeterHint>
-                </>
-              )}
-            </Sp>
-          </PasswordInputWrap>
+          <Sp mt={4}>
+            <TextInput
+              data-testid="pass-field"
+              autoFocus
+              onChange={props.onInputChange}
+              error={props.errors.password}
+              label="Password"
+              value={props.password}
+              type="password"
+              id="password"
+            />
+            {!props.errors.password && (
+              <>
+                <PasswordStrengthMeter password={props.password} />
+                <MeterHint>
+                  This bar is a guide, not a requirement — longer and more
+                  unique is safer.
+                </MeterHint>
+              </>
+            )}
+          </Sp>
           <Sp mt={3}>
             <TextInput
               data-testid="pass-again-field"
@@ -140,12 +105,12 @@ const PasswordStep = props => {
             />
           </Sp>
           <Sp mt={6}>
-            <Btn block onClick={e => onPasswordSubmit(e, false)}>
+            <Btn block onClick={(e) => onPasswordSubmit(e, false)}>
               Create a new wallet
             </Btn>
           </Sp>
-          <Sp style={{ marginTop: '10px' }}>
-            <SecondaryBtn block onClick={e => onPasswordSubmit(e, true)}>
+          <Sp style={{ marginTop: '10px'}}>
+            <SecondaryBtn block onClick={(e) => onPasswordSubmit(e, true)}>
               Import an existing wallet
             </SecondaryBtn>
           </Sp>

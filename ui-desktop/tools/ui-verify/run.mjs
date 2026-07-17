@@ -177,6 +177,67 @@ const browser = await chromium.launch();
   await page.close();
 }
 
+// --- password: the strength meter guides instead of scolding — bar and label
+//     side by side (they used to overlap), checklist + inline suggestion ---
+{
+  const page = await browser.newPage({ viewport: { width: 900, height: 1000 } });
+  await drive(page, 'password-meter', `http://localhost:${PORT}/?case=password`, async (p) => {
+    await p.waitForSelector('[data-testid="pass-field"]', { timeout: 20000 });
+
+    // Nothing typed: the meter must not exist yet — an empty field is not a
+    // weak password, it's an unstarted one.
+    assert(!/Stronger if/i.test(await p.locator('body').innerText()), 'meter shown before typing');
+
+    await p.getByTestId('pass-field').fill('ab');
+    await p.waitForSelector('text=Stronger if', { timeout: 5000 });
+    const weak = await p.locator('body').innerText();
+    assert(/12\+ characters/.test(weak), 'checklist missing the length criterion');
+    assert(/letters, numbers/i.test(weak), 'checklist missing the variety criterion');
+
+    // The bar and its score label must not occupy the same pixels. This is the
+    // reported defect: the label sat on top of the hint text underneath.
+    const overlap = await p.evaluate(() => {
+      const label = [...document.querySelectorAll('*')].find((el) =>
+        /^(Too weak|Very weak|Almost there|Strong|Very strong)$/.test(el.textContent.trim()) &&
+        el.children.length === 0,
+      );
+      if (!label) return { found: false };
+      const hint = [...document.querySelectorAll('p')].find((el) =>
+        /guide, not a requirement/i.test(el.textContent),
+      );
+      if (!hint) return { found: true, collided: false, note: 'no hint element' };
+      const a = label.getBoundingClientRect();
+      const b = hint.getBoundingClientRect();
+      const collided = !(a.bottom <= b.top || b.bottom <= a.top || a.right <= b.left || b.right <= a.left);
+      return { found: true, collided };
+    });
+    assert(overlap.found, 'no strength label rendered');
+    assert(!overlap.collided, 'the strength label overlaps the hint text — the reported bug');
+
+    // Never red at the low end: a half-typed password is unfinished, not wrong.
+    const labelColor = await p.evaluate(() => {
+      const el = [...document.querySelectorAll('*')].find((x) =>
+        /^(Too weak|Very weak)$/.test(x.textContent.trim()) && x.children.length === 0,
+      );
+      return el ? getComputedStyle(el).color : null;
+    });
+    if (labelColor) {
+      assert(
+        !/\b(255,\s*(0|59|7[0-9]),|219,\s*38)/.test(labelColor),
+        `weak password shown as an error colour (${labelColor}) — it should read as unfinished, not wrong`,
+      );
+    }
+    await p.screenshot({ path: `${SHOTS}/password-meter.png` });
+
+    // A strong password lights the checklist up rather than blocking anything.
+    await p.getByTestId('pass-field').fill('correct horse battery staple 7!');
+    await p.waitForTimeout(300);
+    assert(/Strong/i.test(await p.locator('body').innerText()), 'strong password not reported as strong');
+    await p.screenshot({ path: `${SHOTS}/password-meter-strong.png` });
+  });
+  await page.close();
+}
+
 // --- terms: BOTH consents still gate Accept, and the terms text is still on
 //     screen when you agree to it (crypto-version drops both) ---
 {
