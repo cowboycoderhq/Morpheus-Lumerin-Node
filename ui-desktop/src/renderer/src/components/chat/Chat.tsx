@@ -131,7 +131,10 @@ type ChatProps = {
   closeSession: (sessionId: string) => Promise<any>;
 };
 
-const Chat = (props: ChatProps) => {
+// Exported unwrapped for the isolate kit: withChatState only maps redux/context
+// into these props, so a case can mount the REAL component with mock props
+// instead of standing up a redux double whose shape would drift from the store.
+export const Chat = (props: ChatProps) => {
   const chatBlockRef = useRef<null | HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
