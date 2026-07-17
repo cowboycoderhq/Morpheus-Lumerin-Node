@@ -13,7 +13,7 @@ import initContextMenu from './contextMenu'
 import initMenu from './menu'
 import errorHandler from './errorHandler'
 import logger from './logger'
-import { join } from 'path'
+import { join, relative, normalize, sep, isAbsolute } from 'path'
 
 const installExtension = (install as any).default as typeof install
 
@@ -26,19 +26,31 @@ const installExtension = (install as any).default as typeof install
 // end, 2026-07-17.) Two independent controls close it: refuse to navigate the
 // window off its own origin, and only ever hand https/mailto to the OS launcher.
 
+// A file: URL that resolves to a path INSIDE the app bundle — not merely one
+// that shares its string prefix. `startsWith(getAppPath())` is wrong twice: it
+// accepts a sibling (`app.asar.unpacked`, `app.asar-evil`), and on Windows the
+// URL pathname (`/C:/…`, forward slashes) never prefix-matches getAppPath()
+// (`C:\…`, backslashes), which would reject the LEGIT renderer and brick the app.
+// (Kept in sync with isTrustedSender in subscriptions/utils.js.)
+const fileUrlIsInAppBundle = (u: URL): boolean => {
+  if (u.host) return false // reject file://host/… (UNC / authority tricks)
+  let p = decodeURIComponent(u.pathname)
+  if (process.platform === 'win32' && /^\/[a-zA-Z]:/.test(p)) p = p.slice(1)
+  const rel = relative(app.getAppPath(), normalize(p))
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel))
+}
+
 const isAppUrl = (url: string): boolean => {
   try {
     const u = new URL(url)
-    // Packaged renderer only — the app's OWN bundle, not any file:// on disk
-    // (a downloaded/planted evil.html must not be trusted just for being file:).
-    if (u.protocol === 'file:') {
-      return decodeURIComponent(u.pathname).startsWith(app.getAppPath())
-    }
-    // Dev: the vite origin, compared by ORIGIN — a `startsWith` prefix check is
-    // defeated by `http://localhost:5173@evil.com` (real host = evil.com) and by
-    // a port suffix like `http://localhost:51730`.
+    if (u.protocol === 'file:') return fileUrlIsInAppBundle(u) // packaged renderer
+    // Dev: the vite origin, by strict ORIGIN equality (a `startsWith` prefix is
+    // defeated by `http://localhost:5173@evil.com` and a port suffix), and only
+    // for http/https so a `blob:`/`data:` cannot ride the origin match.
     const devUrl = process.env['ELECTRON_RENDERER_URL']
-    if (is.dev && devUrl) return u.origin === new URL(devUrl).origin
+    if (is.dev && devUrl && (u.protocol === 'http:' || u.protocol === 'https:')) {
+      return u.origin === new URL(devUrl).origin
+    }
     return false
   } catch {
     return false

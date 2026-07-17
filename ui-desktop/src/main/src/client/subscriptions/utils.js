@@ -1,6 +1,7 @@
 'use strict'
 
 const { ipcMain, app } = require('electron')
+const path = require('path')
 const stringify = require('json-stringify-safe')
 
 import logger from '../../../logger'
@@ -37,18 +38,29 @@ export const ignoreChain = (chain, data) =>
 // own origin. Without this, a window navigated to a hostile origin (a clicked
 // provider link) inherits the ipcRenderer bridge and can drive these channels.
 // Verified: the navigation+IPC fund-theft chain, 2026-07-17.
+// A file: URL that resolves INSIDE the app bundle (proper path boundary +
+// cross-platform), not merely one sharing its string prefix. Mirrors
+// fileUrlIsInAppBundle in main/index.ts — keep the two in sync.
+const fileUrlIsInAppBundle = (u) => {
+  if (u.host) return false // reject file://host/… (UNC / authority tricks)
+  let p = decodeURIComponent(u.pathname)
+  if (process.platform === 'win32' && /^\/[a-zA-Z]:/.test(p)) p = p.slice(1)
+  const rel = path.relative(app.getAppPath(), path.normalize(p))
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel))
+}
+
 export const isTrustedSender = (event) => {
   try {
     const url = (event.senderFrame && event.senderFrame.url) || event.sender.getURL()
     const u = new URL(url)
-    // Packaged renderer only — scoped to the app bundle, not any file:// on disk.
-    if (u.protocol === 'file:') {
-      return decodeURIComponent(u.pathname).startsWith(app.getAppPath())
-    }
-    // Dev: ORIGIN equality, not startsWith (which `localhost:5173@evil.com` and a
-    // port suffix both defeat).
+    if (u.protocol === 'file:') return fileUrlIsInAppBundle(u) // packaged renderer
+    // Dev: strict ORIGIN equality (a startsWith prefix is defeated by
+    // `localhost:5173@evil.com` and a port suffix), http/https only so a
+    // `blob:`/`data:` cannot ride the origin match.
     const devUrl = process.env.ELECTRON_RENDERER_URL
-    if (!app.isPackaged && devUrl) return u.origin === new URL(devUrl).origin
+    if (!app.isPackaged && devUrl && (u.protocol === 'http:' || u.protocol === 'https:')) {
+      return u.origin === new URL(devUrl).origin
+    }
     return false
   } catch (e) {
     return false
