@@ -6,6 +6,20 @@ staging remote (`cowboycoder` → `morpheus-lumerin-node-staging`). Read
 "Invariants" before changing anything visual — several of those lines were paid
 for with real defects.
 
+## Getting set up (read this before the first build fails)
+- **Where it lives**: private remote `cowboycoder` →
+  `github.com/cowboycoderhq/morpheus-lumerin-node-staging`, branch `pr3-reskin`,
+  tagged `aurora-v1`. `ccfork` is the PUBLIC fork — resolve remotes by URL, never by
+  name, before any push (`git remote -v`).
+- **Deps**: in the operator's checkout `ui-desktop/node_modules` is a SYMLINK to the
+  sibling clone (`Morpheus-Lumerin-Node/ui-desktop/node_modules`) — it is machine-local
+  and not in git. A fresh clone has nothing: run `cd ui-desktop && npm install`.
+  The isolate kit brings its own: `cd ui-desktop/tools/ui-verify && npm install &&
+  npx playwright install chromium`. The kit mounts REAL components, so it needs the
+  app's deps installed too.
+- **Multiple sessions**: edit in a git worktree, never a shared checkout — concurrent
+  sessions in one working tree contaminate each other.
+
 ## Commands (ui-desktop/)
 - dev: `npm run dev` (Vite + Electron; kill orphans first: `lsof -ti:5173 | xargs kill`)
 - check: `npm run typecheck` · build: `npm run build` (build includes typecheck)
