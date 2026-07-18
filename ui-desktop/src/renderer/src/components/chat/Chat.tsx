@@ -1790,7 +1790,9 @@ export const Chat = (props: ChatProps) => {
                     <span title={providerAddress}>{providerAddress}</span>
                     {' · '}
                     {stakedFunds} MOR staked
-                    {activeSession?.EndsAt && (
+                    {/* While rolling, the per-block countdown resets every 6 min
+                        and just adds noise — show the total-remaining instead. */}
+                    {activeSession?.EndsAt && !keepAlive.status?.running && (
                       <>
                         {' · '}
                         <Cooldown endDate={activeSession?.EndsAt} />
@@ -1817,9 +1819,10 @@ export const Chat = (props: ChatProps) => {
             {keepAlive.status?.running && (
               <KeepAliveStopBtn
                 onClick={keepAlive.stop}
-                title="Stop the rolling keep-alive session (the current block lapses on its own)"
+                title="Stop keep-alive (the current block lapses on its own)"
+                aria-label="Stop keep-alive"
               >
-                <IconPlayerStopFilled size={16} /> Stop keep-alive
+                <IconPlayerStopFilled size={16} />
               </KeepAliveStopBtn>
             )}
             <HeaderBtn onClick={toggleDrawer} title="Chat history">
