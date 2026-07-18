@@ -1,7 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import styled from 'styled-components';
 import Markdown from 'marked-react';
-import termsPath from '../../termsAndConditions.md';
+// Inline the markdown at build time (?raw) instead of fetch()-ing the bundled
+// asset at runtime. The packaged app loads over file://, where the strict CSP
+// (connect-src 'self') blocks a fetch() of the file:// asset, leaving the terms
+// box empty. Inlining sidesteps the fetch entirely — no CSP relaxation needed.
+import termsContent from '../../termsAndConditions.md?raw';
 
 const StyledTC = styled.div`
   text-align: justify;
@@ -18,18 +22,9 @@ const StyledTC = styled.div`
 `;
 
 const TermsAndConditions = () => {
-  const [result, setResult] = useState('');
-
-  useEffect(() => {
-    // TODO: replace with an md loader
-    fetch(termsPath)
-      .then(res => res.text())
-      .then(setResult);
-  }, []);
-
   return (
     <StyledTC>
-      <Markdown>{result}</Markdown>
+      <Markdown>{termsContent}</Markdown>
     </StyledTC>
   );
 };
