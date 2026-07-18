@@ -77,7 +77,11 @@ const props = {
   getBidInfo: async () => ({}),
   getBidsByModelId: async () => bids,
   onOpenSession: async (args) => {
-    window.__opened.push(args);
+    window.__opened.push({ route: 'model', ...args });
+    return null;
+  },
+  onOpenSessionByBid: async (args) => {
+    window.__opened.push({ route: 'bid', ...args });
     return null;
   },
   closeSession: async () => {},
