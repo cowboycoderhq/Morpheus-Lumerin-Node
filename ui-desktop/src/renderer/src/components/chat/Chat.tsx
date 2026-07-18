@@ -254,7 +254,28 @@ export const Chat = (props: ChatProps) => {
   const meta = modelsDataQuery.data?.meta ?? { budget: 0, supply: 0 };
   const balances = modelsDataQuery.data?.userBalances ?? { eth: 0, mor: 0 };
   const providersAvailability = availabilityQuery.data ?? [];
+  const allProviders: any[] = modelsDataQuery.data?.providers ?? [];
   const bidsLoading = modelsWithBidsQuery.isFetching;
+
+  // A provider registers an endpoint (e.g. "mordiem.com:3333"); its hostname is
+  // the friendly name. Show that when it's a real domain, else fall back to the
+  // abbreviated wallet address (bids only carry the address).
+  const providerLabel = (address: string) => {
+    const ep = allProviders.find((p) => p.Address == address)?.Endpoint;
+    if (ep) {
+      try {
+        const host = new URL(
+          ep.includes('://') ? ep : `http://${ep}`,
+        ).hostname;
+        if (host && !/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+          return host;
+        }
+      } catch {
+        /* malformed endpoint — fall through to the address */
+      }
+    }
+    return abbreviateAddress(address, 4);
+  };
 
   const sessions = useMemo(() => {
     const raw = sessionsQuery.data;
@@ -298,7 +319,7 @@ export const Chat = (props: ChatProps) => {
   const providerAddress = isLocal
     ? '(local)'
     : selectedBid?.Provider
-      ? abbreviateAddress(selectedBid?.Provider, 6)
+      ? providerLabel(selectedBid?.Provider)
       : 'Unknown';
   const isDisabled = (!activeSession && !isLocal) || isReadonly;
   // Staked MOR is the on-chain Stake on the session, not session cost. The old
@@ -1645,7 +1666,7 @@ export const Chat = (props: ChatProps) => {
                               verticalAlign: 'middle',
                             }}
                           />
-                          {abbreviateAddress(bid.Provider, 4)}
+                          {providerLabel(bid.Provider)}
                           {stake6m ? ` · ${stake6m}` : ''}
                         </KeepAliveChip>
                       );
