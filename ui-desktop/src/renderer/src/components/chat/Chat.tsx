@@ -1804,9 +1804,6 @@ export const Chat = (props: ChatProps) => {
                           {keepAlive.status.index}/{keepAlive.status.total} ·{' '}
                           <Cooldown endDate={keepAlive.status.targetEndTime} />{' '}
                           left
-                          <KeepAliveStopBtn onClick={keepAlive.stop}>
-                            <IconPlayerStopFilled size={12} /> Stop
-                          </KeepAliveStopBtn>
                         </KeepAliveStatus>
                       </>
                     )}
@@ -1817,6 +1814,14 @@ export const Chat = (props: ChatProps) => {
           </ChatIdentity>
 
           <HeaderActions>
+            {keepAlive.status?.running && (
+              <KeepAliveStopBtn
+                onClick={keepAlive.stop}
+                title="Stop the rolling keep-alive session (the current block lapses on its own)"
+              >
+                <IconPlayerStopFilled size={16} /> Stop keep-alive
+              </KeepAliveStopBtn>
+            )}
             <HeaderBtn onClick={toggleDrawer} title="Chat history">
               <IconHistory size={18} stroke={1.75} />
             </HeaderBtn>
