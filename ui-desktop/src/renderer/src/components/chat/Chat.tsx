@@ -13,7 +13,6 @@ import {
   IconBulb,
   IconCode,
   IconListSearch,
-  IconClock,
 } from '@tabler/icons-react';
 import {
   View,
@@ -64,8 +63,6 @@ import {
   KeepAliveRow,
   KeepAliveLabel,
   KeepAliveChip,
-  KeepAliveStatus,
-  KeepAliveStopBtn,
 } from './Chat.styles';
 import withChatState from '../../store/hocs/withChatState';
 import { abbreviateAddress } from '../../utils';
@@ -1525,8 +1522,17 @@ export const Chat = (props: ChatProps) => {
 
   const renderChatBlock = () => {
     const isNewChat = !messages?.length;
+    // A keep-alive run has started (timer running) but its first block hasn't
+    // been mirrored into activeSession yet — a transient "opening…" state, not a
+    // reason to show the payment screen.
+    const isKeepAliveStarting =
+      !!keepAlive.status?.running && !activeSession;
     const isCreateSessionMode =
-      isNewChat && !isLocal && !activeSession && !isLoading;
+      isNewChat &&
+      !isLocal &&
+      !activeSession &&
+      !isLoading &&
+      !isKeepAliveStarting;
 
     // Stake mode: gate on the CHEAPEST provider — enough to stake if at least one
     // of the model's providers is affordable. `known` is false until bids AND
@@ -1570,7 +1576,19 @@ export const Chat = (props: ChatProps) => {
 
     return (
       <>
-        {isCreateSessionMode ? (
+        {isKeepAliveStarting ? (
+          <ChatIntroContainer>
+            <ChatIntroInner>
+              <ChatIntroInnerTitle>
+                Starting your rolling session…
+              </ChatIntroInnerTitle>
+              <ChatIntroInnerText>
+                Opening the first 6-minute block — this can take a few seconds
+                while the stake confirms on-chain.
+              </ChatIntroInnerText>
+            </ChatIntroInner>
+          </ChatIntroContainer>
+        ) : isCreateSessionMode ? (
           <ChatIntroContainer>
             <ChatIntroInner>
               {cannotPayAtAll ? (
@@ -1790,23 +1808,18 @@ export const Chat = (props: ChatProps) => {
                     <span title={providerAddress}>{providerAddress}</span>
                     {' · '}
                     {stakedFunds} MOR staked
-                    {/* While rolling, the per-block countdown resets every 6 min
-                        and just adds noise — show the total-remaining instead. */}
-                    {activeSession?.EndsAt && !keepAlive.status?.running && (
+                    {/* One timer. During a rolling session it counts down the
+                        TOTAL time remaining, not the current 6-min block. */}
+                    {(keepAlive.status?.running || activeSession?.EndsAt) && (
                       <>
                         {' · '}
-                        <Cooldown endDate={activeSession?.EndsAt} />
-                      </>
-                    )}
-                    {keepAlive.status?.running && (
-                      <>
-                        {' · '}
-                        <KeepAliveStatus>
-                          <IconClock size={12} /> keep-alive{' '}
-                          {keepAlive.status.index}/{keepAlive.status.total} ·{' '}
-                          <Cooldown endDate={keepAlive.status.targetEndTime} />{' '}
-                          left
-                        </KeepAliveStatus>
+                        <Cooldown
+                          endDate={
+                            keepAlive.status?.running
+                              ? keepAlive.status.targetEndTime
+                              : activeSession?.EndsAt
+                          }
+                        />
                       </>
                     )}
                   </>
@@ -1816,15 +1829,6 @@ export const Chat = (props: ChatProps) => {
           </ChatIdentity>
 
           <HeaderActions>
-            {keepAlive.status?.running && (
-              <KeepAliveStopBtn
-                onClick={keepAlive.stop}
-                title="Stop keep-alive (the current block lapses on its own)"
-                aria-label="Stop keep-alive"
-              >
-                <IconPlayerStopFilled size={16} />
-              </KeepAliveStopBtn>
-            )}
             <HeaderBtn onClick={toggleDrawer} title="Chat history">
               <IconHistory size={18} stroke={1.75} />
             </HeaderBtn>
