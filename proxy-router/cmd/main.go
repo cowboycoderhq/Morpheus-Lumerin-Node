@@ -386,7 +386,8 @@ func start() error {
 			Bids:         blockchainApi,
 			Models:       blockchainApi,
 			ModelConfigs: modelConfigLoader,
-		}, cfg.Proxy.ModelHealthCheckInterval, cfg.Proxy.ModelHealthCheckTimeout, cfg.Proxy.ModelHealthCheckProbeDelay, appLog)
+			TeeStatus:    backendVerifier,
+		}, cfg.Proxy.ModelHealthCheckInterval, cfg.Proxy.ModelHealthCheckTimeout, cfg.Proxy.ModelHealthCheckProbeDelay, cfg.Proxy.ModelHealthMaxConsecErrors, appLog)
 		modelHealthReporter = modelHealthChecker
 	}
 
