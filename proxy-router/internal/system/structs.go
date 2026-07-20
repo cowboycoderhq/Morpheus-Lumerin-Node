@@ -30,12 +30,22 @@ const (
 	ModelHealthStatusNoBid     = "no_bid"
 	ModelHealthStatusNoModel   = "no_model_configured"
 	ModelHealthStatusSkipped   = "skipped"
+	// ModelHealthStatusTeeUnverified marks a TEE-tagged model whose backend
+	// TEE self-attestation failed (or never succeeded) on this provider.
+	// Session requests for the model would be rejected, so it is reported
+	// separately from a plain backend probe failure.
+	ModelHealthStatusTeeUnverified = "tee_unverified"
 
 	ModelHealthErrorTimeout     = "timeout"
 	ModelHealthErrorConnection  = "connection"
 	ModelHealthErrorBadResponse = "bad_response"
 	ModelHealthErrorRateLimited = "rate_limited"
 	ModelHealthErrorTypeLookup  = "model_type_lookup"
+	// ModelHealthErrorSessionErrors marks a model flipped to unhealthy by
+	// consecutive real-session prompt failures rather than a scheduled probe.
+	ModelHealthErrorSessionErrors = "session_errors"
+	// ModelHealthErrorTeeAttestation accompanies ModelHealthStatusTeeUnverified.
+	ModelHealthErrorTeeAttestation = "tee_attestation"
 )
 
 // ModelHealthReport is the sanitized per-model self-report exposed on the
