@@ -78,6 +78,7 @@ type Config struct {
 		ModelHealthCheckInterval   time.Duration `env:"MODEL_HEALTH_CHECK_INTERVAL" flag:"model-health-check-interval" validate:"omitempty,duration" desc:"how often to probe configured models with a test prompt, result is cached between runs"`
 		ModelHealthCheckTimeout    time.Duration `env:"MODEL_HEALTH_CHECK_TIMEOUT" flag:"model-health-check-timeout" validate:"omitempty,duration" desc:"per-model health probe timeout"`
 		ModelHealthCheckProbeDelay time.Duration `env:"MODEL_HEALTH_CHECK_PROBE_DELAY" flag:"model-health-check-probe-delay" validate:"omitempty,duration" desc:"pause between per-model health probes so many-model providers don't burst their upstream and trip rate limits"`
+		ModelHealthMaxConsecErrors int           `env:"MODEL_HEALTH_MAX_CONSECUTIVE_ERRORS" flag:"model-health-max-consecutive-errors" validate:"omitempty,gte=1" desc:"consecutive session prompt failures after which a model is immediately reported unhealthy, without waiting for the next scheduled probe"`
 	}
 	System struct {
 		Enable           bool   `env:"SYS_ENABLE"              flag:"sys-enable" desc:"enable system level configuration adjustments"`
@@ -222,6 +223,9 @@ func (cfg *Config) SetDefaults() {
 	if cfg.Proxy.ModelHealthCheckProbeDelay == 0 {
 		cfg.Proxy.ModelHealthCheckProbeDelay = 2 * time.Second
 	}
+	if cfg.Proxy.ModelHealthMaxConsecErrors == 0 {
+		cfg.Proxy.ModelHealthMaxConsecErrors = 3
+	}
 
 	// IPFS
 	if cfg.IPFS.Address == "" {
@@ -283,6 +287,7 @@ func (cfg *Config) GetSanitized() interface{} {
 	publicCfg.Proxy.ModelHealthCheckInterval = cfg.Proxy.ModelHealthCheckInterval
 	publicCfg.Proxy.ModelHealthCheckTimeout = cfg.Proxy.ModelHealthCheckTimeout
 	publicCfg.Proxy.ModelHealthCheckProbeDelay = cfg.Proxy.ModelHealthCheckProbeDelay
+	publicCfg.Proxy.ModelHealthMaxConsecErrors = cfg.Proxy.ModelHealthMaxConsecErrors
 
 	publicCfg.System.Enable = cfg.System.Enable
 	publicCfg.System.LocalPortRange = cfg.System.LocalPortRange
