@@ -3,7 +3,7 @@ title: "Consumer quickstart"
 description: "Install the MorpheusUI desktop app, let it fetch its services (proxy-router, local llama.cpp, IPFS), fund a wallet, and chat."
 audience: ["consumer"]
 product: ["proxy-router", "ui-desktop"]
-last_verified: "v7.6.0"
+last_verified: "v7.7.0"
 source: "docs/04-consumer-setup.md"
 ---
 
@@ -53,10 +53,10 @@ The consumer release is a **single desktop app** per OS. On first launch, the ap
   <Step title="Let the app fetch and start its services">
     The first launch (and the first one after each update) shows a **Starting services** screen with two sections:
 
-    - **Downloading** — the app fetches the proxy-router, the `llama.cpp` AI runtime, the `tinyllama` demo model, and an IPFS node, skipping anything already present on disk.
-    - **Startup** — each service is started and probed: IPFS, AI Runtime, Container Runtime, Proxy Router.
+    - **Downloading** — the app fetches the proxy-router first (required), then best-effort downloads for the `llama.cpp` AI runtime, the `tinyllama` demo model, and an IPFS node, skipping anything already present on disk.
+    - **Startup** — **Proxy Router** starts first (required for onboarding and marketplace use). IPFS, AI Runtime, and Container Runtime are optional and started afterward; a failure there does not block the UI.
 
-    **Container Runtime** (Docker) is only *detected*, never installed — it is needed solely for containerized agent features. If you don't have or need Docker (or another service fails), click **Skip** to continue into the app anyway; **Retry** re-runs any failed step.
+    **Container Runtime** (Docker) is only *detected*, never installed — it is needed solely for containerized agent features. Local AI Runtime is only for the free `tinyllama` demo; remote Morpheus models do not need it. **Skip** continues into the app; **Retry** re-runs any failed step.
   </Step>
   <Step title="Onboard MorpheusUI">
     - Read & accept the terms.
