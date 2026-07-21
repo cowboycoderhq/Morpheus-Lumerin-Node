@@ -75,13 +75,28 @@ type mockDeps struct {
 	teeStatus  TeeStatusProvider
 }
 
-// mockTeeStatus returns canned backend attestation snapshots per model.
+// mockTeeStatus returns canned backend attestation snapshots per model and
+// records ReattestBackend calls. When onReattest is set, it is applied to the
+// snapshot map before the checker reads the status back.
 type mockTeeStatus struct {
-	snapshots map[string]*attestation.BackendAttestationSnapshot
+	snapshots  map[string]*attestation.BackendAttestationSnapshot
+	reattested map[string]int
+	onReattest func(modelID string)
 }
 
 func (m *mockTeeStatus) GetStatus(modelID string) *attestation.BackendAttestationSnapshot {
 	return m.snapshots[modelID]
+}
+
+func (m *mockTeeStatus) ReattestBackend(ctx context.Context, modelID string, endpoint string) error {
+	if m.reattested == nil {
+		m.reattested = make(map[string]int)
+	}
+	m.reattested[modelID]++
+	if m.onReattest != nil {
+		m.onReattest(modelID)
+	}
+	return nil
 }
 
 func (m *mockDeps) GetActiveBidsByProvider(ctx context.Context, provider common.Address, offset *big.Int, limit uint8, order registries.Order) ([]*structs.Bid, error) {
@@ -478,6 +493,37 @@ func TestCheckAllTeeModelAttestationGate(t *testing.T) {
 		llm := reportByID(t, checker.GetReports(), modelLLM)
 		require.Equal(t, system.ModelHealthStatusHealthy, llm.Status)
 		require.NotNil(t, llm.PromptCorrect)
+	})
+
+	t.Run("first sweep skips re-attestation, later sweeps re-attest regardless of status", func(t *testing.T) {
+		tee := &mockTeeStatus{snapshots: map[string]*attestation.BackendAttestationSnapshot{
+			modelLLM.Hex(): {ModelID: modelLLM.Hex(), Status: attestation.StatusPassed},
+		}}
+		checker := newTestChecker(teeDeps(tee))
+
+		checker.checkAll(context.Background(), common.Address{})
+		require.Zero(t, tee.reattested[modelLLM.Hex()], "first sweep must rely on the startup attestation")
+
+		checker.checkAll(context.Background(), common.Address{})
+		checker.checkAll(context.Background(), common.Address{})
+		require.Equal(t, 2, tee.reattested[modelLLM.Hex()], "re-attestation must run on every later sweep, even when passed")
+	})
+
+	t.Run("failed attestation self-heals when re-attestation passes", func(t *testing.T) {
+		tee := &mockTeeStatus{snapshots: map[string]*attestation.BackendAttestationSnapshot{
+			modelLLM.Hex(): {ModelID: modelLLM.Hex(), Status: attestation.StatusFailed},
+		}}
+		tee.onReattest = func(modelID string) {
+			tee.snapshots[modelID] = &attestation.BackendAttestationSnapshot{ModelID: modelID, Status: attestation.StatusPassed}
+		}
+		checker := newTestChecker(teeDeps(tee))
+		checker.firstTeeSweepDone = true
+
+		checker.checkAll(context.Background(), common.Address{})
+
+		llm := reportByID(t, checker.GetReports(), modelLLM)
+		require.Equal(t, system.ModelHealthStatusHealthy, llm.Status, "a stale startup failure must heal once re-attestation passes")
+		require.Equal(t, 1, tee.reattested[modelLLM.Hex()])
 	})
 
 	t.Run("no TEE status provider probes normally", func(t *testing.T) {
