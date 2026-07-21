@@ -57,10 +57,15 @@ type ModelConfigProvider interface {
 	GetAll() ([]common.Hash, []config.ModelConfig)
 }
 
-// TeeStatusProvider exposes the cached backend TEE attestation state
-// (implemented by attestation.BackendVerifier). Optional dependency.
+// TeeStatusProvider exposes the backend TEE attestation state and lets the
+// checker re-run attestation on every sweep (implemented by
+// attestation.BackendVerifier). Optional dependency.
 type TeeStatusProvider interface {
 	GetStatus(modelID string) *attestation.BackendAttestationSnapshot
+	// ReattestBackend re-runs full backend attestation for the model;
+	// endpoint is the model's apiUrl used to resolve the attestation URL
+	// when no snapshot exists yet.
+	ReattestBackend(ctx context.Context, modelID string, endpoint string) error
 }
 
 // DefaultMaxConsecutiveErrors is the number of consecutive real-session
@@ -95,6 +100,12 @@ type Checker struct {
 	// triggerCh carries manual re-check requests into the Run loop; buffered
 	// at 1 so triggers queue at most one extra sweep and can never overlap.
 	triggerCh chan struct{}
+
+	// firstTeeSweepDone flips after the first sweep. Backend TEE attestation
+	// already runs at process startup (cmd/main.go), and the first sweep
+	// fires right after it, so that sweep only reads the cached snapshot;
+	// re-attestation starts from the second sweep onward.
+	firstTeeSweepDone bool
 }
 
 // Deps groups the external dependencies of the checker.
@@ -103,8 +114,10 @@ type Deps struct {
 	Bids         BidProvider
 	Models       ModelMetaProvider
 	ModelConfigs ModelConfigProvider
-	// TeeStatus is optional; when set, TEE-tagged models whose backend
-	// attestation is not currently passed are reported as tee_unverified.
+	// TeeStatus is optional; when set, backend attestation of TEE-tagged
+	// models is re-run on every sweep after the first (pass or fail; the
+	// first sweep relies on the startup attestation), and models whose
+	// attestation does not pass are reported as tee_unverified.
 	TeeStatus TeeStatusProvider
 }
 
@@ -182,7 +195,7 @@ func (c *Checker) GetReports() []system.ModelHealthReport {
 // missing from models-config.json (reported as no_model_configured — the
 // provider is selling capacity it cannot serve).
 func (c *Checker) checkAll(ctx context.Context, walletAddr common.Address) {
-	modelIDs, _ := c.deps.ModelConfigs.GetAll()
+	modelIDs, modelCfgs := c.deps.ModelConfigs.GetAll()
 
 	bidsByModel, err := c.activeBidModels(ctx, walletAddr)
 	if err != nil {
@@ -192,8 +205,15 @@ func (c *Checker) checkAll(ctx context.Context, walletAddr common.Address) {
 
 	seen := make(map[string]bool, len(modelIDs)+len(bidsByModel))
 
+	// Skip TEE re-attestation on the very first sweep: it runs right after
+	// the startup attestation in cmd/main.go and would just duplicate it.
+	c.mu.Lock()
+	reattestTee := c.firstTeeSweepDone
+	c.firstTeeSweepDone = true
+	c.mu.Unlock()
+
 	probed := false
-	for _, modelID := range modelIDs {
+	for i, modelID := range modelIDs {
 		select {
 		case <-ctx.Done():
 			return
@@ -207,7 +227,7 @@ func (c *Checker) checkAll(ctx context.Context, walletAddr common.Address) {
 		if hasBid && probed && !c.sleep(ctx, c.probeDelay) {
 			return
 		}
-		c.checkModel(ctx, modelID, bidID, hasBid)
+		c.checkModel(ctx, modelID, bidID, hasBid, modelCfgs[i].ApiURL, reattestTee)
 		if hasBid {
 			probed = true
 		}
@@ -312,7 +332,7 @@ func (c *Checker) activeBidModels(ctx context.Context, walletAddr common.Address
 	return byModel, nil
 }
 
-func (c *Checker) checkModel(ctx context.Context, modelID common.Hash, bidID common.Hash, hasBid bool) {
+func (c *Checker) checkModel(ctx context.Context, modelID common.Hash, bidID common.Hash, hasBid bool, apiURL string, reattestTee bool) {
 	report := system.ModelHealthReport{
 		ModelID:      modelID.Hex(),
 		HasActiveBid: hasBid,
@@ -344,10 +364,23 @@ func (c *Checker) checkModel(ctx context.Context, modelID common.Hash, bidID com
 	report.ModelName = meta.name
 	report.ModelType = string(meta.modelType)
 
-	// A TEE-tagged model whose backend attestation is not currently passed
-	// cannot serve sessions (session requests are rejected by the receiver),
-	// so report it as tee_unverified and skip the backend probe.
+	// Re-run backend attestation for TEE-tagged models on every sweep after
+	// the first (the first sweep relies on the startup attestation),
+	// regardless of the current snapshot status: a transient failure at
+	// startup self-heals here instead of sticking until a restart, and a
+	// stale pass is re-proven against the live backend. A model whose
+	// attestation does not pass cannot serve sessions (session requests are
+	// rejected by the receiver), so it is reported as tee_unverified and the
+	// backend probe is skipped.
 	if meta.isTee && c.deps.TeeStatus != nil {
+		if reattestTee {
+			attestCtx, cancel := context.WithTimeout(ctx, c.timeout)
+			if err := c.deps.TeeStatus.ReattestBackend(attestCtx, modelID.Hex(), apiURL); err != nil {
+				c.log.Warnf("model %s: backend TEE re-attestation failed: %s", lib.Short(modelID), err)
+			}
+			cancel()
+		}
+
 		snapshot := c.deps.TeeStatus.GetStatus(modelID.Hex())
 		if snapshot == nil || snapshot.Status != attestation.StatusPassed {
 			c.log.Warnf("model %s: backend TEE attestation is not passed, reporting tee_unverified", lib.Short(modelID))
