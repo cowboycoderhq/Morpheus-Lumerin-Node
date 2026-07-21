@@ -246,6 +246,23 @@ func (cfg *Config) SetDefaults() {
 	cfg.Proxy.RatingConfigPath = filepath.FromSlash(cfg.Proxy.RatingConfigPath)
 	cfg.Proxy.CookieFilePath = filepath.FromSlash(cfg.Proxy.CookieFilePath)
 	cfg.Proxy.AuthConfigFilePath = filepath.FromSlash(cfg.Proxy.AuthConfigFilePath)
+
+	// Resolve relative auth paths against the process working directory once at
+	// startup. Without this, /auth/cookie/path may re-join a path that is already
+	// absolute and produce invalid Windows paths (issue #792).
+	cfg.Proxy.CookieFilePath = mustAbsPath(cfg.Proxy.CookieFilePath)
+	cfg.Proxy.AuthConfigFilePath = mustAbsPath(cfg.Proxy.AuthConfigFilePath)
+}
+
+func mustAbsPath(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	return abs
 }
 
 // GetSanitized returns a copy of the config with sensitive data removed
