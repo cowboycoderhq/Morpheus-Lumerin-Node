@@ -120,7 +120,7 @@ If the user's question doesn't match anything in this file or the repo:
 ## Repository sub-projects
 
 - `proxy-router/` — Go service: the consumer/provider router. Hosts the HTTP API.
-- `MorpheusUI/` — Electron consumer GUI.
+- `ui-desktop/` — Electron consumer GUI (product name **MorpheusUI**).
 - `cli/` — Go CLI client.
 - `smart-contracts/` — Solidity contracts (Diamond marketplace).
 - `agents/` — agent reference implementations.
