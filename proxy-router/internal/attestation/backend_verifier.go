@@ -308,6 +308,31 @@ func (bv *BackendVerifier) AttestBackend(ctx context.Context, modelID string, at
 	return nil
 }
 
+// ReattestBackend re-runs full backend attestation for a model regardless of
+// the current snapshot status, so a transient failure (e.g. a portal glitch
+// during startup attestation) self-heals on the next health sweep and a
+// stale pass is re-proven. endpoint is the model's apiUrl, used to resolve
+// the attestation URL when no snapshot with a URL exists.
+func (bv *BackendVerifier) ReattestBackend(ctx context.Context, modelID string, endpoint string) error {
+	bv.mu.RLock()
+	snapshot := bv.cache[modelID]
+	bv.mu.RUnlock()
+
+	attestationURL := ""
+	if snapshot != nil {
+		attestationURL = snapshot.AttestationURL
+	}
+	if attestationURL == "" {
+		resolved, err := bv.ResolveAttestationURL(ctx, endpoint)
+		if err != nil {
+			return fmt.Errorf("cannot resolve attestation URL for model %s: %w", modelID, err)
+		}
+		attestationURL = resolved
+	}
+
+	return bv.AttestBackend(ctx, modelID, attestationURL)
+}
+
 // FastVerifyBackend performs a lightweight per-request check.
 // Always re-fetches /cpu and compares sha256(quote) + TLS fingerprint against
 // the cached attestation snapshot (~50ms). If the quote hash changes, triggers
