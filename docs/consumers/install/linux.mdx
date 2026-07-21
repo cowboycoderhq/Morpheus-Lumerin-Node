@@ -3,7 +3,7 @@ title: "Linux install"
 description: "Run the MorpheusUI desktop app (AppImage) on Linux."
 audience: ["consumer"]
 product: ["proxy-router", "ui-desktop"]
-last_verified: "v7.5.0"
+last_verified: "v7.6.0"
 ---
 
 The Linux release is a single **AppImage**. On first launch, the app downloads and manages its own services — proxy-router, `llama.cpp` AI runtime with the `tinyllama` demo model, and an IPFS node. For a source-build walk-through, see [macOS install (from source)](/consumers/install/macos) — the steps are nearly identical on Linux.
@@ -39,7 +39,11 @@ The Linux release is a single **AppImage**. On first launch, the app downloads a
 </Warning>
 
 ```bash
+rm -rf ~/.config/morpheus-app
+# Older builds may have used:
 rm -rf ~/.config/MorpheusUI
 ```
+
+(`morpheus-app` is the Electron package / `userData` folder name; the product name in the UI is **MorpheusUI**.)
 
 See also: [Troubleshooting](/reference/troubleshooting).

@@ -351,7 +351,7 @@ func start() error {
 		if !blockchainapi.IsTeeModel(tags) {
 			continue
 		}
-		attestURL, err := attestation.DeriveBackendAttestationURL(mc.ApiURL)
+		attestURL, err := backendVerifier.ResolveAttestationURL(context.Background(), mc.ApiURL)
 		if err != nil {
 			appLog.Warnf("cannot derive attestation URL for model %s: %s", modelIDs[i].Hex(), err)
 			continue
@@ -386,7 +386,8 @@ func start() error {
 			Bids:         blockchainApi,
 			Models:       blockchainApi,
 			ModelConfigs: modelConfigLoader,
-		}, cfg.Proxy.ModelHealthCheckInterval, cfg.Proxy.ModelHealthCheckTimeout, cfg.Proxy.ModelHealthCheckProbeDelay, appLog)
+			TeeStatus:    backendVerifier,
+		}, cfg.Proxy.ModelHealthCheckInterval, cfg.Proxy.ModelHealthCheckTimeout, cfg.Proxy.ModelHealthCheckProbeDelay, cfg.Proxy.ModelHealthMaxConsecErrors, appLog)
 		modelHealthReporter = modelHealthChecker
 	}
 

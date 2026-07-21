@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/aiengine"
+	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/attestation"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/blockchainapi"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/blockchainapi/structs"
 	gcs "github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/chatstorage/genericchatstorage"
@@ -56,11 +57,28 @@ type ModelConfigProvider interface {
 	GetAll() ([]common.Hash, []config.ModelConfig)
 }
 
+// TeeStatusProvider exposes the backend TEE attestation state and lets the
+// checker re-run attestation on every sweep (implemented by
+// attestation.BackendVerifier). Optional dependency.
+type TeeStatusProvider interface {
+	GetStatus(modelID string) *attestation.BackendAttestationSnapshot
+	// ReattestBackend re-runs full backend attestation for the model;
+	// endpoint is the model's apiUrl used to resolve the attestation URL
+	// when no snapshot exists yet.
+	ReattestBackend(ctx context.Context, modelID string, endpoint string) error
+}
+
+// DefaultMaxConsecutiveErrors is the number of consecutive real-session
+// prompt failures after which a model is flipped to unhealthy without
+// waiting for the next scheduled probe sweep.
+const DefaultMaxConsecutiveErrors = 3
+
 // modelMeta caches the public on-chain facts about a model so each sweep
 // only pays one registry call per previously unseen model.
 type modelMeta struct {
 	name      string
 	modelType structs.ModelType
+	isTee     bool
 }
 
 type Checker struct {
@@ -68,15 +86,26 @@ type Checker struct {
 	interval   time.Duration
 	timeout    time.Duration
 	probeDelay time.Duration
-	log        lib.ILogger
+	// maxConsecutiveErrors is the threshold of consecutive session prompt
+	// failures that dynamically flips a model to unhealthy.
+	maxConsecutiveErrors int
+	log                  lib.ILogger
 
 	mu        sync.RWMutex
 	reports   map[string]system.ModelHealthReport
 	modelMeta map[string]modelMeta
+	// failures counts consecutive real-session prompt failures per model.
+	failures map[string]int
 
 	// triggerCh carries manual re-check requests into the Run loop; buffered
 	// at 1 so triggers queue at most one extra sweep and can never overlap.
 	triggerCh chan struct{}
+
+	// firstTeeSweepDone flips after the first sweep. Backend TEE attestation
+	// already runs at process startup (cmd/main.go), and the first sweep
+	// fires right after it, so that sweep only reads the cached snapshot;
+	// re-attestation starts from the second sweep onward.
+	firstTeeSweepDone bool
 }
 
 // Deps groups the external dependencies of the checker.
@@ -85,18 +114,28 @@ type Deps struct {
 	Bids         BidProvider
 	Models       ModelMetaProvider
 	ModelConfigs ModelConfigProvider
+	// TeeStatus is optional; when set, backend attestation of TEE-tagged
+	// models is re-run on every sweep after the first (pass or fail; the
+	// first sweep relies on the startup attestation), and models whose
+	// attestation does not pass are reported as tee_unverified.
+	TeeStatus TeeStatusProvider
 }
 
-func NewChecker(deps Deps, interval, timeout, probeDelay time.Duration, log lib.ILogger) *Checker {
+func NewChecker(deps Deps, interval, timeout, probeDelay time.Duration, maxConsecutiveErrors int, log lib.ILogger) *Checker {
+	if maxConsecutiveErrors <= 0 {
+		maxConsecutiveErrors = DefaultMaxConsecutiveErrors
+	}
 	return &Checker{
-		deps:       deps,
-		interval:   interval,
-		timeout:    timeout,
-		probeDelay: probeDelay,
-		log:        log.Named("MODEL_HEALTH"),
-		reports:    make(map[string]system.ModelHealthReport),
-		modelMeta:  make(map[string]modelMeta),
-		triggerCh:  make(chan struct{}, 1),
+		deps:                 deps,
+		interval:             interval,
+		timeout:              timeout,
+		probeDelay:           probeDelay,
+		maxConsecutiveErrors: maxConsecutiveErrors,
+		log:                  log.Named("MODEL_HEALTH"),
+		reports:              make(map[string]system.ModelHealthReport),
+		modelMeta:            make(map[string]modelMeta),
+		failures:             make(map[string]int),
+		triggerCh:            make(chan struct{}, 1),
 	}
 }
 
@@ -156,7 +195,7 @@ func (c *Checker) GetReports() []system.ModelHealthReport {
 // missing from models-config.json (reported as no_model_configured — the
 // provider is selling capacity it cannot serve).
 func (c *Checker) checkAll(ctx context.Context, walletAddr common.Address) {
-	modelIDs, _ := c.deps.ModelConfigs.GetAll()
+	modelIDs, modelCfgs := c.deps.ModelConfigs.GetAll()
 
 	bidsByModel, err := c.activeBidModels(ctx, walletAddr)
 	if err != nil {
@@ -166,8 +205,15 @@ func (c *Checker) checkAll(ctx context.Context, walletAddr common.Address) {
 
 	seen := make(map[string]bool, len(modelIDs)+len(bidsByModel))
 
+	// Skip TEE re-attestation on the very first sweep: it runs right after
+	// the startup attestation in cmd/main.go and would just duplicate it.
+	c.mu.Lock()
+	reattestTee := c.firstTeeSweepDone
+	c.firstTeeSweepDone = true
+	c.mu.Unlock()
+
 	probed := false
-	for _, modelID := range modelIDs {
+	for i, modelID := range modelIDs {
 		select {
 		case <-ctx.Done():
 			return
@@ -181,7 +227,7 @@ func (c *Checker) checkAll(ctx context.Context, walletAddr common.Address) {
 		if hasBid && probed && !c.sleep(ctx, c.probeDelay) {
 			return
 		}
-		c.checkModel(ctx, modelID, bidID, hasBid)
+		c.checkModel(ctx, modelID, bidID, hasBid, modelCfgs[i].ApiURL, reattestTee)
 		if hasBid {
 			probed = true
 		}
@@ -286,7 +332,7 @@ func (c *Checker) activeBidModels(ctx context.Context, walletAddr common.Address
 	return byModel, nil
 }
 
-func (c *Checker) checkModel(ctx context.Context, modelID common.Hash, bidID common.Hash, hasBid bool) {
+func (c *Checker) checkModel(ctx context.Context, modelID common.Hash, bidID common.Hash, hasBid bool, apiURL string, reattestTee bool) {
 	report := system.ModelHealthReport{
 		ModelID:      modelID.Hex(),
 		HasActiveBid: hasBid,
@@ -317,6 +363,33 @@ func (c *Checker) checkModel(ctx context.Context, modelID common.Hash, bidID com
 	}
 	report.ModelName = meta.name
 	report.ModelType = string(meta.modelType)
+
+	// Re-run backend attestation for TEE-tagged models on every sweep after
+	// the first (the first sweep relies on the startup attestation),
+	// regardless of the current snapshot status: a transient failure at
+	// startup self-heals here instead of sticking until a restart, and a
+	// stale pass is re-proven against the live backend. A model whose
+	// attestation does not pass cannot serve sessions (session requests are
+	// rejected by the receiver), so it is reported as tee_unverified and the
+	// backend probe is skipped.
+	if meta.isTee && c.deps.TeeStatus != nil {
+		if reattestTee {
+			attestCtx, cancel := context.WithTimeout(ctx, c.timeout)
+			if err := c.deps.TeeStatus.ReattestBackend(attestCtx, modelID.Hex(), apiURL); err != nil {
+				c.log.Warnf("model %s: backend TEE re-attestation failed: %s", lib.Short(modelID), err)
+			}
+			cancel()
+		}
+
+		snapshot := c.deps.TeeStatus.GetStatus(modelID.Hex())
+		if snapshot == nil || snapshot.Status != attestation.StatusPassed {
+			c.log.Warnf("model %s: backend TEE attestation is not passed, reporting tee_unverified", lib.Short(modelID))
+			report.Status = system.ModelHealthStatusTeeUnverified
+			report.ErrorKind = system.ModelHealthErrorTeeAttestation
+			c.setReport(report)
+			return
+		}
+	}
 
 	var probe func(ctx context.Context, adapter aiengine.AIEngineStream, report *system.ModelHealthReport) error
 	switch meta.modelType {
@@ -360,6 +433,9 @@ func (c *Checker) checkModel(ctx context.Context, modelID common.Hash, bidID com
 	} else {
 		report.Status = system.ModelHealthStatusHealthy
 		report.LastHealthy = time.Now().Unix()
+		// A passing probe is direct evidence the backend works again, so the
+		// consecutive session-failure streak (if any) is over.
+		c.resetFailures(modelID)
 	}
 
 	c.setReport(report)
@@ -449,7 +525,7 @@ func (c *Checker) modelMetaFor(ctx context.Context, modelID common.Hash) (modelM
 		return modelMeta{}, err
 	}
 
-	meta := modelMeta{name: name, modelType: blockchainapi.DetectModelType(tags)}
+	meta := modelMeta{name: name, modelType: blockchainapi.DetectModelType(tags), isTee: blockchainapi.IsTeeModel(tags)}
 
 	c.mu.Lock()
 	c.modelMeta[modelID.Hex()] = meta
@@ -468,6 +544,93 @@ func (c *Checker) setReport(report system.ModelHealthReport) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reports[report.ModelID] = report
+}
+
+// ReportPromptFailure records a failed real-session prompt for the model.
+// After maxConsecutiveErrors failures in a row the model's health report is
+// flipped to unhealthy immediately, without waiting for the next scheduled
+// probe sweep, so consumers pinging before session open skip this provider.
+func (c *Checker) ReportPromptFailure(modelID common.Hash) {
+	id := modelID.Hex()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.failures[id]++
+	count := c.failures[id]
+	if count < c.maxConsecutiveErrors {
+		c.log.Warnf("model %s: session prompt failed (%d/%d consecutive)", lib.Short(modelID), count, c.maxConsecutiveErrors)
+		return
+	}
+
+	report, ok := c.reports[id]
+	if !ok {
+		// A session prompt implies the model has (or had) an active bid even
+		// if no sweep has reported on it yet.
+		report = system.ModelHealthReport{ModelID: id, HasActiveBid: true}
+	}
+	if report.Status != system.ModelHealthStatusUnhealthy {
+		c.log.Warnf("model %s: %d consecutive session prompt failures, marking unhealthy", lib.Short(modelID), count)
+	}
+	report.Status = system.ModelHealthStatusUnhealthy
+	report.ErrorKind = system.ModelHealthErrorSessionErrors
+	report.LastChecked = time.Now().Unix()
+	c.reports[id] = report
+}
+
+// ReportPromptSuccess records a successful real-session prompt: the failure
+// streak resets and, if the model was flipped to unhealthy by session errors,
+// it is healed right away (a real prompt succeeding is stronger evidence than
+// a probe).
+func (c *Checker) ReportPromptSuccess(modelID common.Hash) {
+	id := modelID.Hex()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	delete(c.failures, id)
+
+	report, ok := c.reports[id]
+	if !ok {
+		return
+	}
+	if report.Status == system.ModelHealthStatusUnhealthy && report.ErrorKind == system.ModelHealthErrorSessionErrors {
+		report.Status = system.ModelHealthStatusHealthy
+		report.ErrorKind = ""
+		report.LastChecked = time.Now().Unix()
+	}
+	report.LastHealthy = time.Now().Unix()
+	c.reports[id] = report
+}
+
+// ReportTeeFailure immediately marks the model as tee_unverified after a
+// failed backend TEE self-verification, without waiting for the next
+// scheduled probe sweep. The status heals on a later sweep once the backend
+// attestation passes again.
+func (c *Checker) ReportTeeFailure(modelID common.Hash) {
+	id := modelID.Hex()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	report, ok := c.reports[id]
+	if !ok {
+		report = system.ModelHealthReport{ModelID: id, HasActiveBid: true}
+	}
+	if report.Status != system.ModelHealthStatusTeeUnverified {
+		c.log.Warnf("model %s: backend TEE self-verification failed, marking tee_unverified", lib.Short(modelID))
+	}
+	report.Status = system.ModelHealthStatusTeeUnverified
+	report.ErrorKind = system.ModelHealthErrorTeeAttestation
+	report.LastChecked = time.Now().Unix()
+	c.reports[id] = report
+}
+
+// resetFailures clears the consecutive session-failure counter for a model.
+func (c *Checker) resetFailures(modelID common.Hash) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.failures, modelID.Hex())
 }
 
 // generateArithmeticPrompt returns two random small numbers and a prompt
