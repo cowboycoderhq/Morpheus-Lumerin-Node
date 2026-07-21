@@ -19,11 +19,10 @@ The site is structured around **role-based journeys** (consumer / prosumer / pro
 
 ## What's in this repo
 
-- Local `Llama.cpp` and tinyllama model to run locally for demonstration purposes only.
 - Lumerin `proxy-router` — background process that monitors blockchain contract events, manages secure sessions between consumers and providers, and routes prompts and responses between them.
-- Lumerin `MorpheusUI` — the Electron front end UI to interact with LLMs and the Morpheus network as a consumer.
-- Lumerin `cli` — CLI client to interact with LLMs and the Morpheus network as a consumer.
-- Kubo `ipfs` — IPFS client to store and retrieve model/agent files.
+- `ui-desktop/` (**MorpheusUI**) — Electron desktop app for consumers. Release assets are `*-morpheus-app-*` installers (`.dmg` / `.AppImage` / portable `.exe`); on first launch the app downloads the proxy-router, a local `llama.cpp` + tinyllama demo model, and an IPFS (kubo) node. There is no zip / `mor-launch` package in current releases.
+- `cli/` — CLI client (`*-morpheus-cli-*` release binaries; local builds produce `mor-cli`).
+- Standalone `*-morpheus-router-*` release binaries for headless / provider deployments.
 
 ## End-to-end picture
 

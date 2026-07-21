@@ -32,7 +32,7 @@ LLM-friendly definitions — short, opinionated, and consistent across the rest 
 | **Allowance** | Standard ERC-20 approval the consumer / provider grants to the Diamond contract so it can move MOR on their behalf. |
 | **proxy-router** | The Go service in this repo. Same binary serves consumer and provider roles; configuration differs. |
 | **MorpheusUI** | The Electron desktop UI in this repo. |
-| **mor-cli** | The Go CLI client in this repo. |
+| **mor-cli** | The Go CLI client in this repo. Local builds produce `./mor-cli`; GitHub release assets are named `*-morpheus-cli-<version>`. |
 | **`local` model** | The tinyllama demo model, downloaded and started automatically by the MorpheusUI desktop app (its "AI Runtime" service). Not a Morpheus marketplace model. |
 | **`tee` tag** | Tag added to a model on chain to engage the two-hop attestation chain (Phase 1 + Phase 2). |
 | **`-tee` image** | The hardened proxy-router image (`ghcr.io/morpheusais/morpheus-lumerin-node-tee`) with config baked at build time. |

@@ -3,7 +3,7 @@ title: "Consumer quickstart"
 description: "Install the MorpheusUI desktop app, let it fetch its services (proxy-router, local llama.cpp, IPFS), fund a wallet, and chat."
 audience: ["consumer"]
 product: ["proxy-router", "ui-desktop"]
-last_verified: "v7.5.0"
+last_verified: "v7.6.0"
 source: "docs/04-consumer-setup.md"
 ---
 
@@ -92,23 +92,30 @@ If you need to reset to a fresh state (different release, broken state):
 **Save your wallet mnemonic / private key first.** Cleanup deletes the local key store.
 </Warning>
 
-The app keeps everything — downloaded services, proxy-router data, and the wallet store — in its per-user application data directory:
+The app keeps everything — downloaded services, proxy-router data, and the wallet store — in Electron's `userData` directory. The package name is `morpheus-app` (that is the folder name on disk; the product name shown in the UI is **MorpheusUI**):
 
 <Tabs>
   <Tab title="macOS">
     ```bash
+    # Packaged .app often uses the product name:
     rm -rf ~/Library/Application\ Support/MorpheusUI
     rm -rf ~/Library/Logs/MorpheusUI
+    # Electron package name (also used on some builds / when running from source):
+    rm -rf ~/Library/Application\ Support/morpheus-app
+    rm -rf ~/Library/Logs/morpheus-app
     ```
   </Tab>
   <Tab title="Linux">
     ```bash
+    rm -rf ~/.config/morpheus-app
+    # Older builds may have used:
     rm -rf ~/.config/MorpheusUI
     ```
   </Tab>
   <Tab title="Windows">
     ```cmd
-    rmdir /s /q %APPDATA%\MorpheusUI
+    rmdir /s /q %APPDATA%\morpheus-app
+    rmdir /s /q %LOCALAPPDATA%\morpheus-app
     ```
   </Tab>
 </Tabs>
