@@ -51,7 +51,7 @@ Prefer conventional prefixes so history stays scannable:
 | Path | Purpose |
 |------|---------|
 | `proxy-router/` | Go service (consumer/provider router, HTTP API, TEE attestation) |
-| `MorpheusUI/` | Electron consumer GUI |
+| `ui-desktop/` | Electron consumer GUI (product name **MorpheusUI**) |
 | `cli/` | Go CLI client |
 | `docs/` | Mintlify site → [nodedocs.mor.org](https://nodedocs.mor.org) |
 | `AGENTS.md` | Rules for AI coding assistants working in this repo |
