@@ -3,17 +3,18 @@ title: "Introduction"
 description: "What the Morpheus Lumerin Node is, how the moving parts fit together, and which path to follow next."
 audience: ["consumer", "prosumer", "provider-resale", "provider-full", "developer"]
 product: ["proxy-router", "ui-desktop", "cli"]
-last_verified: "v7.0.0"
+last_verified: "v7.6.0"
 ---
 <Note>
   **In a hurry? Pick the fastest path.**
 
-  - **Just want to use it (~5 min):** download the desktop app from the
-    [latest release](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/releases) and run it —
-    wallet, chat, and proxy-router are bundled. See the [Consumer quickstart](/consumers/quickstart).
-  - **Try it free — no wallet, no tokens:** the desktop app bundles a local `llama.cpp` model for
-    demos, so you can chat immediately without staking MOR. Look for the local model option after
-    install.
+  - **Just want to use it (~5 min):** download the **Desktop Application** asset for your OS from the
+    [latest release](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/releases)
+    (`*-morpheus-app-*.dmg` / `.AppImage` / `.exe` — not a zip archive) and run it.
+    On first launch the app downloads the proxy-router and related services. See the
+    [Consumer quickstart](/consumers/quickstart).
+  - **Try it free — no wallet, no tokens:** after install, the app also downloads a local `llama.cpp`
+    demo model so you can chat without staking MOR. Look for **Local Model** in Chat.
   - **Building on the marketplace?** jump to the [Hosted Inference API](/inference-api/overview).
 
   New to Morpheus? Read on for how the pieces fit together.
@@ -38,7 +39,7 @@ For the conceptual picture (decentralization rationale, Compute Node contracts, 
     Command-line client that talks to the proxy-router HTTP API.
   </Card>
   <Card title="llama.cpp + tinyllama" icon="microchip">
-    A throw-away local model bundled for demos so you can try the stack without paying MOR.
+    A throw-away local demo model the desktop app downloads on first launch so you can try the stack without paying MOR.
   </Card>
 </CardGroup>
 

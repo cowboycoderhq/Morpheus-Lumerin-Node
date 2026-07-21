@@ -3,7 +3,7 @@ title: "Windows install"
 description: "Run the MorpheusUI desktop app (portable exe) on Windows."
 audience: ["consumer"]
 product: ["proxy-router", "ui-desktop"]
-last_verified: "v7.5.0"
+last_verified: "v7.6.0"
 ---
 
 The Windows release is a single **portable executable**. On first launch, the app downloads and manages its own services — proxy-router, `llama.cpp` AI runtime with the `tinyllama` demo model, and an IPFS node. For source builds, see [macOS install](/consumers/install/macos) and adapt the toolchain.
@@ -35,7 +35,10 @@ The Windows release is a single **portable executable**. On first launch, the ap
 </Warning>
 
 ```cmd
-rmdir /s /q %APPDATA%\MorpheusUI
+rmdir /s /q %APPDATA%\morpheus-app
+rmdir /s /q %LOCALAPPDATA%\morpheus-app
 ```
+
+(`morpheus-app` is the Electron package / `userData` folder name; the product name in the UI is **MorpheusUI**.)
 
 See also: [Troubleshooting](/reference/troubleshooting).
