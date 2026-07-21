@@ -71,13 +71,17 @@ export class ManagedProcess implements Process {
         this.setState('starting', null)
         this.log.info('process starting')
 
-        try {
-          // Check if file exists and is executable
-          await fs.access(this.command, fs.constants.X_OK)
-        } catch (err) {
-          // If not executable, change permissions
-          this.log.info(`Setting executable permissions for ${this.command}`)
-          await fs.chmod(this.command, 0o755) // rwxr-xr-x
+        // Unix: ensure +x. Windows: X_OK/chmod are meaningless for .exe and can
+        // throw on some NTFS/ACL setups, so only verify the file exists there.
+        if (process.platform === 'win32') {
+          await fs.access(this.command, fs.constants.F_OK)
+        } else {
+          try {
+            await fs.access(this.command, fs.constants.X_OK)
+          } catch {
+            this.log.info(`Setting executable permissions for ${this.command}`)
+            await fs.chmod(this.command, 0o755)
+          }
         }
 
         const child = spawn(this.command, this.args, { stdio: 'pipe', cwd })

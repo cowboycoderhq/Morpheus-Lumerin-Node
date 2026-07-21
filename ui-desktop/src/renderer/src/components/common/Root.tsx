@@ -92,19 +92,31 @@ class Root extends React.Component<RootProps> {
           proxyUrl: this.props.config.chain.localProxyRouterUrl,
           ...data,
         })
-        .then((error) => {
-          if (error) {
-            this.context.toast('error', error);
+        .then((result) => {
+          if (result?.error) {
+            const err = result.error;
+            const detail =
+              err?.inner || err?.message || (typeof err === 'string' ? err : null);
+            this.context.toast(
+              'error',
+              detail
+                ? `Failed to finish onboarding: ${detail}`
+                : 'Failed to finish onboarding. Please wait a few minutes and try again',
+            );
             return;
           }
           this.setState({ onboardingComplete: true });
           this.props.dispatch({ type: 'session-started' });
         })
         // eslint-disable-next-line no-console
-        .catch((_e) => {
+        .catch((e) => {
+          console.error('onboarding failed', e);
+          const detail = e?.inner || e?.message || (typeof e === 'string' ? e : null);
           this.context.toast(
             'error',
-            'Failed to finish onboarding. Please wait a few minutes and try again',
+            detail
+              ? `Failed to finish onboarding: ${detail}`
+              : 'Failed to finish onboarding. Please wait a few minutes and try again',
           );
         })
     );

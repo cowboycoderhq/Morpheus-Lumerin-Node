@@ -16,7 +16,11 @@ const configMacArm = {
       MOR_TOKEN_ADDRESS: process.env.TOKEN_ADDRESS,
       BLOCKSCOUT_API_URL: process.env.BLOCKSCOUT_API_URL,
       ETH_NODE_CHAIN_ID: String(process.env.CHAIN_ID),
-      ENVIRONMENT: process.env.NODE_ENV,
+      // Always a real proxy-router env value. process.env.NODE_ENV can be
+      // undefined in packaged Electron builds, which previously wrote
+      // ENVIRONMENT=undefined and broke cookie-path resolution heuristics.
+      ENVIRONMENT:
+        process.env.NODE_ENV === 'development' ? 'development' : 'production',
       AUTH_CONFIG_FILE_PATH: './proxy.conf',
       COOKIE_FILE_PATH: './.cookie',
       PROXY_ADDRESS: `0.0.0.0:${process.env.SERVICE_PROXY_PORT}`,

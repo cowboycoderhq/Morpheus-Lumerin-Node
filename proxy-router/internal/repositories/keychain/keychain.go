@@ -2,6 +2,7 @@ package keychain
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/zalando/go-keyring"
 )
@@ -36,7 +37,16 @@ func (k *Keychain) Delete(key string) error {
 
 func (k *Keychain) DeleteIfExists(key string) error {
 	err := k.Delete(key)
-	if errors.Is(err, keyring.ErrNotFound) {
+	if err == nil || errors.Is(err, keyring.ErrNotFound) {
+		return nil
+	}
+	// Windows Credential Manager / wincred sometimes surfaces "not found" as a
+	// plain error string rather than keyring.ErrNotFound. Treat those as success
+	// so SetMnemonic/SetPrivateKey are not blocked during onboarding (#811).
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "cannot find") ||
+		strings.Contains(msg, "element not found") {
 		return nil
 	}
 	return err

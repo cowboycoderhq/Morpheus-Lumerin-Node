@@ -132,14 +132,32 @@ export const getAuthHeaders = async () => {
   try {
     const path = `${config.chain.localProxyRouterUrl}/auth/cookie/path`
     const response = await fetch(path)
+    if (!response.ok) {
+      throw new Error(`Failed to resolve cookie path (HTTP ${response.status})`)
+    }
     const body = await response.json()
     let cookieFilePath = body.path
+    if (!cookieFilePath) {
+      throw new Error('Proxy-router returned an empty cookie path')
+    }
 
     const isWindows = os.platform() === 'win32'
     cookieFilePath = isWindows ? cookieFilePath.replace(/\//g, '\\') : cookieFilePath
 
+    // Guard against the historical Windows double-join bug
+    // (`…\services\C:\…\services\.cookie`). Prefer the absolute segment.
+    if (isWindows) {
+      const driveIdx = cookieFilePath.search(/[A-Za-z]:\\/)
+      if (driveIdx > 0) {
+        cookieFilePath = cookieFilePath.slice(driveIdx)
+      }
+    }
+
     const cookieFile = fs.readFileSync(cookieFilePath, 'utf8').trim()
     const [username, password] = cookieFile.split(':')
+    if (!username || !password) {
+      throw new Error(`Invalid cookie file at ${cookieFilePath}`)
+    }
     authentication = {
       Authorization: `Basic ${Buffer.from(`${username}:${password}`, 'utf-8').toString('base64')}`
     }
@@ -676,11 +694,16 @@ export const onboardingCompleted = async (data, core: Core) => {
   try {
     const { proxyUrl } = data
 
+    const jsonHeaders = {
+      ...(await getAuthHeaders()),
+      'Content-Type': 'application/json'
+    }
+
     if (data.ethNode) {
       const ethNodeResult = await fetch(`${proxyUrl}/config/ethNode`, {
         method: 'POST',
         body: JSON.stringify({ urls: [data.ethNode] }),
-        headers: await getAuthHeaders()
+        headers: jsonHeaders
       })
 
       const dataResponse = await ethNodeResult.json()
@@ -691,14 +714,20 @@ export const onboardingCompleted = async (data, core: Core) => {
 
     await auth.setPassword(data.password)
 
+    // UI passes a derivation *index* (0, 1, …); proxy-router expects a full path.
+    const derivationIndex = String(data.derivationPath ?? '0')
+    const derivationPath = derivationIndex.startsWith('m/')
+      ? derivationIndex
+      : `m/44'/60'/0'/0/${derivationIndex || '0'}`
+
     if (data.mnemonic) {
       const mnemonicRes = await fetch(`${proxyUrl}/wallet/mnemonic`, {
         method: 'POST',
         body: JSON.stringify({
           mnemonic: data.mnemonic,
-          derivationPath: String(data.derivationPath || 0)
+          derivationPath
         }),
-        headers: await getAuthHeaders()
+        headers: jsonHeaders
       })
       if (!mnemonicRes.ok) {
         throw new Error(await mnemonicRes.text())
@@ -709,7 +738,7 @@ export const onboardingCompleted = async (data, core: Core) => {
       const pKeyResp = await fetch(`${proxyUrl}/wallet/privateKey`, {
         method: 'POST',
         body: JSON.stringify({ privateKey: String(data.privateKey) }),
-        headers: await getAuthHeaders()
+        headers: jsonHeaders
       })
       if (!pKeyResp.ok) {
         throw new Error(await pKeyResp.text())

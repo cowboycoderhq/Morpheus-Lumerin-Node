@@ -106,7 +106,9 @@ const createClient = function (createStore) {
       'refresh-all-contracts',
       120000,
     ),
-    onOnboardingCompleted: utils.forwardToMainProcess('onboarding-completed'),
+    // Wallet + keychain + proxy-router round-trips can exceed the default 10s
+    // IPC timeout on Windows (cold Credential Manager / first cookie read).
+    onOnboardingCompleted: utils.forwardToMainProcess('onboarding-completed', 120000),
     suggestAddresses: utils.forwardToMainProcess('suggest-addresses'),
     getTokenGasLimit: utils.forwardToMainProcess('get-token-gas-limit'),
     validatePassword: utils.forwardToMainProcess('validate-password'),

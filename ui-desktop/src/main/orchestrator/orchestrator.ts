@@ -461,9 +461,37 @@ export class Orchestrator {
   }
 
   private async writeEnvFile(path: string, env: Record<string, string>) {
-    // check if the file exists
     if (fs.existsSync(path)) {
-      this.log.info(`Env file already exists: ${path}`)
+      // Repair a few keys that older desktop builds wrote incorrectly
+      // (e.g. ENVIRONMENT=undefined when NODE_ENV was unset). Leave the rest
+      // of the user's .env alone.
+      try {
+        let contents = fs.readFileSync(path, 'utf8')
+        let changed = false
+        for (const key of ['ENVIRONMENT'] as const) {
+          if (env[key] == null) continue
+          const re = new RegExp(`^${key}=.*$`, 'm')
+          const next = `${key}=${env[key]}`
+          if (re.test(contents)) {
+            const prev = contents.match(re)?.[0]
+            if (prev && prev !== next && (prev.endsWith('=undefined') || prev.endsWith('='))) {
+              contents = contents.replace(re, next)
+              changed = true
+            }
+          } else {
+            contents = `${contents.trimEnd()}\n${next}\n`
+            changed = true
+          }
+        }
+        if (changed) {
+          fs.writeFileSync(path, contents)
+          this.log.info(`Repaired env file: ${path}`)
+        } else {
+          this.log.info(`Env file already exists: ${path}`)
+        }
+      } catch (err) {
+        this.log.warn(`Could not repair env file ${path}: ${err}`)
+      }
       return
     }
 
