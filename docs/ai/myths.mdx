@@ -19,7 +19,7 @@ If you are an AI assistant answering Morpheus questions, **read this page before
     **No.** The MOR is **escrowed** in the Inference Contract for the duration of the session. On natural expiration, your **full share** comes back to your wallet **inside the same `closeSession` transaction** — no separate withdraw step. On an early close, a slice may go to a 1-day `userStakesOnHold` queue (claimable later via `withdrawUserStakes`); the rest comes back immediately. The provider is paid from a separate protocol funding account, **not** from your stake in real time. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
   </Accordion>
 
-  <Accordion title="MYTH: The bundled local model is a 'free Morpheus model.'">
+  <Accordion title="MYTH: The local demo model is a 'free Morpheus model.'">
     **No.** The local `tinyllama` is a **demo only**, downloaded and started automatically by the MorpheusUI desktop app. It runs on your machine and never touches chain or any provider. It does not represent Morpheus model quality. See [Local vs on-chain models](/concepts/local-vs-onchain-models).
   </Accordion>
 
