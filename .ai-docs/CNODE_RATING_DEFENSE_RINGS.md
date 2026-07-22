@@ -31,6 +31,8 @@ HA clients that omit a bad provider on mid-prompt failure remain useful, but the
 
 **Ask:** Review/approve this design, then implement behind defaults that preserve today’s behavior (`permissive`, empty deny/allow, local experience off or neutral).
 
+**Also in this doc:** exact survivor scoring math + deepseek-v4-flash old/new rank worked example (§2.3); HA-client follow-ups that complement but do not replace the C-Node fix — cold-open omit from known-bad health, 429 backoff (not early-close), expensive tier on **max** bid price for 20 vs 70 min (§9).
+
 ![Consumer Node Bid Selection — Defense Rings](./assets/cnode-bid-selection-defense-rings.png)
 
 ---
@@ -146,28 +148,81 @@ Document in config as `healthPolicySingleBid: "permissive"` (fixed or default).
 **Qwen under `strict`:** only if mordiem reports `healthy`; if mordiem is `degraded`, sole remaining path should still open via single-bid leniency **or** operator accepts outage — prefer leniency when it is the only bid.  
 **deepseek under `preferred`/`strict`:** healthy pack remains; degraded peer skipped only in `strict`.
 
-### 2.3 Scoring survivors (on-chain + local)
+### 2.3 Scoring survivors — exact math
 
-**Remove / zero:**
+Grain stays **`(provider, modelId)`** (same as `getProviderModelStats` today). Hats (`tpŝ`, `ttft̂`, …) keep today’s peer z-score → clip to \([-3,3]\) → map to \([0,1]\) (see `proxy-router/internal/rating/common.go`).
 
-- **Stake** — new contract world: stake no longer means “invested cap on earnings”; do not use in score.  
-- **Duration-as-volume** — stop treating cumulative `totalDuration` as stability.
+![Survivor scoring math — old vs proposed](./assets/cnode-survivor-scoring-math.png)
 
-**Keep / reshape:**
+#### Today (`algorithm: default`)
 
-- Bayesian success: `(successCount + a) / (totalCount + a + b)`  
-- TPS / TTFT vs model peers (existing z-score style)  
-- **Dampened price:** `score = quality / price^α` with configurable `α` (default `1.0` = today; prod suggestion `< 1`)  
-- **Newcomer prior:** low `totalCount` → mild exploration boost so new reliable cheap entrants can climb; unreliable newcomers stay down via local EWMA + success  
+```text
+sucĉ     = (successCount / totalCount)²          # 0 if totalCount = 0
+tpŝ      = normRange( z(providerTps, modelTpsSD) )
+ttft̂     = normRange( -z(providerTtft, modelTtftSD) )
+dur̂      = normRange( z(providerTotalDuration, modelDurationSD) )
+stakê    = normMinMax(providerStake, minStake, 10×minStake)
 
-**Local EWMA (Badger), per `(provider, modelId)`:**
+quality   = w_tps·tpŝ + w_ttft·ttft̂ + w_dur·dur̂ + w_succ·sucĉ + w_stake·stakê
+score     = quality / pricePerSecond             # price in MOR/sec (wei/1e18)
+```
 
-- Configurable half-life / window (e.g. 1 day fails, 1 week successes — knobs in rating-config)  
-- If pair unused for the window → influence → 0 (no permanent scarring)  
-- Soft multiplier on score; optional **cooldown** (“don’t try first for N minutes”) after hard ping/open fail  
-- **Must not** write into deny/allow lists  
+Prd weights today (`rating-config`): `tps=0.24`, `ttft=0.08`, `duration=0.24`, `success=0.32`, `stake=0.12`.
 
-Wiping Badger (corruption recovery / fresh volume) = cold start; impact acceptable.
+#### Proposed (survivors after deny/allow)
+
+```text
+bayes     = (successCount + a) / (totalCount + a + b)     # default a=b=1
+sucĉ     = bayes²
+tpŝ,ttft̂ = same z-score normalization as today
+# dur̂ and stakê REMOVED (weights forced 0 / ignored)
+
+quality   = w_tps·tpŝ + w_ttft·ttft̂ + w_succ·sucĉ
+if totalCount < newcomer.maxSampleCount:
+    quality *= (1 + newcomer.scoreBoost · (1 − totalCount/maxSampleCount))
+
+score     = quality / pricePerSecond^α                   # α = priceExponent
+score'    = score · (1 + clamp(localEWMA, −maxPenalty, +maxBoost))
+```
+
+| Symbol | Meaning |
+|--------|---------|
+| `α` / `priceExponent` | `1.0` = today’s linear price; prod suggestion `~0.6–0.7` so a ~10× underbid cannot 10× the score |
+| `localEWMA` | Per-node Badger signal for this provider×model; → 0 if unused past half-life |
+| cooldown | Optional: skip this pair on the first try-loop pass while `cooldownUntil` is in the future |
+
+**Remove / zero:** stake; cumulative `totalDuration` as a positive “stability” term.  
+**Keep / reshape:** TPS, TTFT, Bayesian success, dampened price, soft newcomer prior, local EWMA.
+
+Wiping Badger = cold start; impact acceptable.
+
+### 2.3.1 Worked example — `deepseek-v4-flash` (5 providers)
+
+**Inputs (illustrative reconstruction, 2026-07-22):** bid prices from `active.mor.org` `bidDetail`; TPS / TTFT / success / volume proxies from 14d `chain_closes` for that model (not a live LibSD dump from the Diamond — numbers will drift; the **ranking shape** is what matters). Stake held at mid-scale (`0.5`) in the “old” column so it doesn’t invent differences.
+
+| Provider | Health | MOR/hr | pps (MOR/s) | ~TPS | ~TTFT ms | useful/total | Σ duration |
+|----------|--------|-------:|------------:|-----:|---------:|-------------:|-----------:|
+| `0x249f…` | healthy | 0.1276 | 3.55e-5 | 62.3 | 5966 | 328/374 | high |
+| `0x5a37…` | healthy | 0.1414 | 3.93e-5 | 38.5 | 7181 | 498/544 | highest |
+| `0x0102…` | healthy | 0.1344 | 3.73e-5 | 34.2 | 6730 | 203/214 | med |
+| `0xb399…` | healthy | 0.1667 | 4.63e-5 | 10.3 | 2774 | 309/360 | high |
+| `0xe94e…` | healthy* | 0.2160 | 6.00e-5 | 8.0 | 2139 | 2/49 | tiny |
+
+\*Earlier snapshots showed pnode2 **degraded**; under `strict` it would be skipped regardless of score.
+
+![deepseek-v4-flash old vs new ranks](./assets/cnode-deepseek-scoring-example.png)
+
+| Rank | OLD `q/price` (prd weights) | NEW `q/price^0.65` (no stake/dur) | NEW + local fail on `0x249` (−0.40) |
+|-----:|-----------------------------|-------------------------------|-------------------------------------|
+| 1 | **`0x249`** ~18.2k | **`0x249`** | **`0x5a37`** (local +0.15) |
+| 2 | `0x5a37` ~16.7k | `0x0102` ↑ (strong bayes success) | `0x0102` |
+| 3 | `0x0102` ~16.4k | `0x5a37` | `0xb399` |
+| 4 | `0xb399` ~12.3k | `0xb399` | **`0x249`** (penalized) |
+| 5 | `0xe94e` ~4.3k | `0xe94e` | `0xe94e` |
+
+**How to read this:** for deepseek, today’s scorer already picks a **healthy cheap high-TPS** #1 — scoring reform alone is not the crisis fix. The proposed math still helps: duration-volume no longer props up high-n peers, Bayesian success lifts thin-but-reliable peers (`0x0102`), and **local EWMA** is what stops mid-session death from being re-selected on the next cold open.  
+
+**Contrast — Qwen 2.5 7B:** even with `α=0.65` and zero duration/stake, the ~9.6× price gap still leaves `0x5A42` #1 in a pure score race. Cold-open fix there is **`healthPolicy: preferred`** (skip `unknown` when a reported peer exists), not weight tuning.
 
 ### 2.4 Age on network
 
@@ -316,3 +371,42 @@ Deliver a small PR series to origin/dev if possible:
 ## 8. Decision ask
 
 Approve this design for implementation on `dev` (proxy-router). Phase 1 is the C-Node selection algorithm + Badger local experience; HA mid-prompt omit stays as today.
+
+---
+
+## 9. Follow-up — HA client (APIGW) enhancements
+
+These are **not** required for the C-Node root fix above. Keep them as a complementary backlog for the hosted HA consumer that opens many sessions against a shared wallet. Implement after (or in parallel with) proxy-router defense rings if product still sees gaps.
+
+### 9.1 Cold-open omit from known-bad health (existing single `omitProvider`)
+
+**Problem:** C-Node does not read `active.mor.org`. A bid can be `unknown` / unhealthy in the gateway’s health feed and still win cold open on price + lifetime stats (Qwen `0x5A42` pattern).
+
+**Change:** On session open (idle claim or on-chain open), if the HA client already knows a provider×model is `unknown` or `unhealthy` from `active_models` / `bidDetail`, pass today’s single `omitProvider` for the worst offender when a healthier alternate exists.
+
+**Scope:** Uses existing transmit path — no proxy-router API change. Limited to **one** omit per open until/unless multi-omit is added later (out of scope here).
+
+**Acceptance:** Qwen cold open never selects `0x5A42` while `0x5A37` reports `healthy`/`degraded`.
+
+### 9.2 Treat 429 as capacity, not hard death (backoff; don’t early-close)
+
+**Problem:** HA currently treats many upstream failures similarly. A **429** on an otherwise good peer (e.g. mordiem on Qwen) triggers invalidate → early `closeSession` → new open → MOR escrow churn, even though the session might have recovered.
+
+**Change:**
+
+- Classify **429 / rate_limited** separately from hard death (dial fail, 5xx HTML, no-TTFT open fail, stream reset).
+- On 429: **exponential backoff + retry** against the **same** session/provider for a short window (e.g. 1s → 2s → 4s, cap ~15–30s, small max attempts); surface 429 to the end user if still limited.
+- **Do not** early-close + failover solely for 429 when the peer is the last remaining bid (or when policy says “capacity ≠ dead”).
+- Hard death still uses existing omit + reopen.
+
+**Acceptance:** 429 storms no longer dominate early-close stake for multi-bid models; last-bid 429 returns to client with session left OPEN when appropriate.
+
+### 9.3 Expensive-model tier: classify on **highest** bid price (20 vs 70 min)
+
+**Problem:** Today `_get_model_min_price_per_second` / `_is_expensive_model` uses the model’s **lowest** rated bid vs `SESSION_EXPENSIVE_CUTOFF_MOR_PER_SECOND`. Prd opens expensive models at **1200s (20 min)** vs global **4200s (70 min)**. If a model looks “cheap” because an underbidder exists, it gets the **70 min** stake — then HA failover can land on a much more expensive peer and escrow a large stipend anyway.
+
+**Change:** Classify expensive tier from the model’s **maximum** (highest) rated-bid `PricePerSecond`, not the minimum. Optionally document as `max(bid.price) >= cutoff`. Keep expensive duration/idle grace as today (1200s / ≥duration idle grace so idle rides to natural expiry).
+
+**Code touchpoints:** `Morpheus-Marketplace-API` `session_routing_service.py` (`_get_model_min_price_per_second` → max variant), unit tests in `tests/unit/test_session_expensive_tier.py`, prd tfvars comments in `Morpheus-Infra` `session_expensive_tier`.
+
+**Acceptance:** A model with any premium-tier bid opens at the expensive (20 min) duration even if a cheap underbid exists; wallet stake for that model is bounded under HA failover to the pricey peer.
