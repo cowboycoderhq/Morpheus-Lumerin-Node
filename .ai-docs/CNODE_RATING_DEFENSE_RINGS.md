@@ -16,16 +16,18 @@
 
 ## TL;DR — Exec summary
 
-**Problem:** Consumer nodes pick bids with `score = quality / price` over **lifetime** on-chain `(provider, model)` stats. Cheap underbidders with high historical “success” (valid closeout receipts) win even when they are `unknown`/broken for live prompts. There is no denylist, no durable local memory of “this pair just failed *me*,” and the pre-open health ping is too lenient (`unknown` proceeds). Result: open → instant fail → (for HA clients) early-close / reopen churn and locked MOR — bad for Node Neo, DIY consumers, and the API Gateway’s dedicated C-Node alike.
+**Problem (root cause):** The consumer C-Node bid selection algorithm is flawed. It ranks with `score = quality / price` over **lifetime** on-chain `(provider, model)` stats. Cheap underbidders with high historical “success” (valid closeout receipts) win even when they are `unknown`/broken for live prompts. There is no denylist, no durable local memory of “this pair just failed *me*,” and the pre-open health ping is too lenient (`unknown` proceeds).
 
-**Proposal:** Keep selection **inside the consumer proxy-router** (network-wide, not APIGW-specific). Four rings:
+**Evidence (production HA consumer, 2026-07-21 → 07-22):** On **Qwen 2.5 7B**, the cheap `unknown` provider (`0x5A42…`) repeatedly won cold opens on price + lifetime reputation, failed instantly (p50 ≈ **4s** on Jul 22, **100%** early close, **0** TTFT), HA failover briefly used the serviceable peer (`0x5A37…`), then the next cold open **forgot** and returned to the cheap peer — ping-pong that escrowed MOR into open→fail→early-close churn and stressed the consumer wallet. See §1.2.
+
+**Proposal:** Fix selection **inside the consumer proxy-router** (every C-Node on the network). Four rings:
 
 1. **Hard deny / allow** in `rating-config.json`
 2. **Smarter scoring** of survivors (dampened price, drop stake & volume-duration, Bayesian success, soft newcomer prior, **local EWMA experience**)
 3. **Configurable health strictness** on the existing ping (`permissive` | `preferred` | `strict`), with a **single-bid leniency** caveat
 4. **Persistent local experience in Badger** — soft score bumps / short cooldowns, **not** an auto deny list
 
-**APIGW:** No new omit/active_models dependency for cold opens. Mid-prompt failure still uses today’s single `omitProvider` failover; the C-Node’s local experience then self-protects on subsequent opens.
+HA clients that omit a bad provider on mid-prompt failure remain useful, but they are **not** the root fix: without better C-Node ranking + local memory, cold opens keep re-selecting the same bad provider×model pair.
 
 **Ask:** Review/approve this design, then implement behind defaults that preserve today’s behavior (`permissive`, empty deny/allow, local experience off or neutral).
 
@@ -51,20 +53,40 @@ score = (w_tps·tpŝ + w_ttft·ttft̂ + w_dur·dur̂ + w_succ·succ² + w_stake
 - `providerAllowlist` exists; **no denylist**.
 - Pre-open ping skips only `unhealthy` | `tee_unverified` | `no_model`. **`unknown` / missing report proceeds.**
 
-### 1.2 Real-world failure pattern (Qwen 2.5 7B)
+### 1.2 Incident evidence — Qwen 2.5 7B (2026-07-21 / 07-22)
 
-Two on-chain bids (marketplace snapshot + Insights closes 2026-07-22 after housekeeping):
+Production HA consumer closes on Base (`segment` = gateway consumer wallet), model **Qwen 2.5 7B**. Two competing providers; the cheap peer wins ranking and fails open; HA briefly switches; cold open forgets.
 
-| Provider | Health (UI / self-report) | MOR/hr | On-chain-ish rank | Observed APIGW/C-Node behavior |
-|----------|---------------------------|--------|-------------------|--------------------------------|
-| `0x5A42…` (cheap IP) | **unknown** | ~0.00119 | **#1** (~2M score) | **114** early closes, **p50 ≈ 4s**, **0** TTFT |
-| `0x5A37…` (mordiem) | healthy / degraded (429) | ~0.0114 | #2 (~235k) | Worked for minutes, then capacity/429; early closes after real use |
+| Day (UTC) | Provider | Health (self-report / UI) | Closes | Early closes | p50 duration | TTFT |
+|-----------|----------|---------------------------|--------|--------------|--------------|------|
+| 2026-07-21 | `0x5A42…` (cheap) | **unknown** | 84 | **84 (100%)** | 75s | **0** samples with TTFT |
+| 2026-07-21 | `0x5A37…` (mordiem) | healthy / degraded (429) | 78 | 76 | **726s** | 65 with TTFT (avg ~2.1s) |
+| 2026-07-22 | `0x5A42…` (cheap) | **unknown** | 165 | **165 (100%)** | **4s** | **0** TTFT |
+| 2026-07-22 | `0x5A37…` (mordiem) | healthy / degraded (429) | 45 | 45 | **494s** | 27 with TTFT (avg ~2.9s) |
 
-Weight retunes alone **cannot** flip #1: price ratio ~9.6×; success ≈ 99.9% vs 100%; duration volume favors the cheap peer.
+**Two-day totals (same model, same consumer):**
 
-Ping-pong: cold open → cheap unknown → fail → (HA) omit once → mordiem → later fail → next cold open **forgets** → cheap again. **No durable self-defense.**
+| Provider | Closes | Early % | p50 duration | Pattern |
+|----------|--------|---------|--------------|---------|
+| `0x5A42…` | **249** | **100%** | **6s** | Wins cold open on **price + lifetime reputation**; never produces TTFT for this consumer |
+| `0x5A37…` | 123 | ~98% early* | **690s** | Actually serves for minutes; later capacity/429; HA early-closes after real use |
 
-### 1.3 Comparator (deepseek-v4-flash, 5 bids)
+\*Early-close rate on the serviceable peer is high because HA closes/reopens under load and policy — but duration/TTFT show it was **usable**, unlike `0x5A42…`.
+
+**Why the cheap peer stays #1:** marketplace score is dominated by linear price (~9–10× cheaper) plus lifetime success/duration volume. Weight retunes alone cannot flip the order.
+
+**Ping-pong (the MOR-lock pattern):**
+
+```text
+cold open → cheap unknown (#1) → fail in seconds (no TTFT)
+     → HA omit once → open serviceable peer → works / later 429
+     → next cold open has no durable memory → cheap unknown again
+     → escrowed MOR cycles through open → fail → early-close
+```
+
+That churn is what locked/stressed the HA consumer’s MOR balance. **HA omit is a band-aid; the selection algorithm is the root cause.**
+
+### 1.3 Comparator (deepseek-v4-flash, multi-bid)
 
 Healthy cheap high-TPS peer is already #1; degraded expensive peer is last. Cold-open ranking is mostly fine. Pain is **sticky memory after mid-session failure**, not “unknown underbidder always wins.” Same defense rings still help; they don’t invert a true quality leader.
 
@@ -72,10 +94,10 @@ Healthy cheap high-TPS peer is already #1; degraded expensive peer is last. Cold
 
 | In scope (this design) | Out of scope |
 |------------------------|--------------|
-| All consumer C-Nodes (Node Neo, DIY, APIGW’s router) | APIGW reading `active.mor.org` for cold opens |
+| Consumer proxy-router bid selection for **all** C-Nodes | Client-only denylists outside `rating-config` |
 | `rating-config` + Badger local experience | Multi-`omitProviders[]` (optional later) |
 | Using existing ping / model health report | On-chain “recent stats” contract upgrade |
-| Soft local EWMA (not shared gossip) | Replacing gateway failover |
+| Soft local EWMA (not shared gossip) | Replacing HA failover omit (keep as-is for mid-prompt) |
 
 ---
 
@@ -120,9 +142,9 @@ If after hard filters **only one bid** remains (or only one peer for the model):
 
 Document in config as `healthPolicySingleBid: "permissive"` (fixed or default).
 
-**Qwen under `preferred`:** 5A42 unknown skipped → mordiem tried.  
+**Qwen under `preferred`:** `0x5A42` unknown skipped → `0x5A37` tried.  
 **Qwen under `strict`:** only if mordiem reports `healthy`; if mordiem is `degraded`, sole remaining path should still open via single-bid leniency **or** operator accepts outage — prefer leniency when it is the only bid.  
-**deepseek under `preferred`/`strict`:** healthy pack remains; degraded p2 skipped only in `strict`.
+**deepseek under `preferred`/`strict`:** healthy pack remains; degraded peer skipped only in `strict`.
 
 ### 2.3 Scoring survivors (on-chain + local)
 
@@ -151,13 +173,9 @@ Wiping Badger (corruption recovery / fresh volume) = cold start; impact acceptab
 
 Soft only: young provider / new bid with thin samples gets a **small** boost so they can be tried and, if reliable, climb quickly. Not a permanent handicap for incumbents with good local+chain signal; not “bully new entrants away.”
 
-### 2.5 APIGW interaction
+### 2.5 HA clients and mid-prompt failure
 
-If the C-Node implements the above well:
-
-- **Cold opens:** APIGW does not need active.mor.org bid filtering or multi-omit.  
-- **Mid-prompt failure:** APIGW keeps today’s failover + single `omitProvider` for that reopen; C-Node records local fail on the omitted provider×model and self-protects afterward.  
-- Optional later: multi-omit — only if product still needs it.
+Keep existing single-`omitProvider` (or equivalent) for mid-prompt failover. After omit, the C-Node should record local fail on that provider×model so the **next cold open** does not immediately re-pick the same bad pair. Phase 1 does **not** require client-side bid filtering against external health UIs — the C-Node makes the smart decision.
 
 ---
 
@@ -217,7 +235,7 @@ Update `rating-config-schema.json`, `docs/reference/rating-config.mdx`, and unit
 
 ## 5. Validation scenarios
 
-### 5.1 Qwen 2.5 7B (2 providers)
+### 5.1 Qwen 2.5 7B (2 providers) — matches §1.2 evidence
 
 | Config | Expected cold-open first try |
 |--------|------------------------------|
@@ -225,7 +243,7 @@ Update `rating-config-schema.json`, `docs/reference/rating-config.mdx`, and unit
 | `preferred` + local off | `0x5A37` (skip unknown while degraded/healthy peer exists) |
 | After forced fail on 5A42 with local on | Cooldown / penalty → next opens prefer 5A37 without deny list |
 
-### 5.2 deepseek-v4-flash (5 providers)
+### 5.2 deepseek-v4-flash (multi providers)
 
 | Config | Expected |
 |--------|----------|
@@ -253,7 +271,8 @@ Constraints:
 - Preserve today’s behavior when using default config (permissive health,
   empty deny/allow, priceExponent 1.0, localExperience.enabled false,
   current weight sums = 1).
-- Do NOT add APIGW-only active.mor.org cold-open filtering in this work.
+- Root fix is proxy-router selection — do NOT depend on external HA client
+  bid filtering for cold opens.
 - Do NOT make local experience a permanent deny list — soft EWMA + optional
   cooldown only; persist in existing Badger (PROXY_STORAGE_PATH).
 - Drop stake from scoring influence (weight 0 / ignore); stop using
@@ -266,13 +285,16 @@ Constraints:
 - Add focused tests for: Qwen-like unknown+healthy/degraded pair under
   preferred; single-bid unknown still opens; local cooldown deprioritizes
   without removing from allow set.
+- Use §1.2 evidence as the acceptance narrative: cheap unknown must not
+  win cold open under preferred when a reported peer exists; after fail,
+  Badger experience must prevent immediate re-pick.
 
 Validate:
 - go test ./internal/rating/... and relevant blockchainapi tests
 - Manual or integration: with preferred policy, unknown peer skipped when
   a reported peer exists; after simulated fail, Badger key appears and
   ranking shifts until half-life/cooldown elapses
-- Confirm APIGW failover omit path still works unchanged
+- Confirm existing mid-prompt omit/failover path still works unchanged
 
 Deliver a small PR series to origin/dev if possible:
   (1) schema + denylist + healthPolicy gating
@@ -284,7 +306,7 @@ Deliver a small PR series to origin/dev if possible:
 
 ## 7. Open questions (non-blocking)
 
-1. Exact default half-lives for prod vs Node Neo presets.  
+1. Exact default half-lives for prod presets.  
 2. Whether first-token / prompt failure inside proxy-router should update EWMA (stronger self-defense) or only open/ping failures in v1.  
 3. Future: on-chain windowed stats (contract) — complementary, not required for this design.  
 4. Future: `omitProviders[]` — only if single omit + local EWMA proves insufficient for HA clients.
@@ -293,4 +315,4 @@ Deliver a small PR series to origin/dev if possible:
 
 ## 8. Decision ask
 
-Approve this design for implementation on `dev` (proxy-router). No APIGW changes required for phase 1 beyond existing failover `omitProvider`.
+Approve this design for implementation on `dev` (proxy-router). Phase 1 is the C-Node selection algorithm + Badger local experience; HA mid-prompt omit stays as today.
