@@ -67,6 +67,7 @@ type Config struct {
 		ModelsConfigPath           string        `env:"MODELS_CONFIG_PATH" flag:"models-config-path" validate:"omitempty"`
 		ModelsConfigContent        string        `env:"MODELS_CONFIG_CONTENT" flag:"models-config-content" validate:"omitempty" desc:"content of the models config file"`
 		RatingConfigPath           string        `env:"RATING_CONFIG_PATH" flag:"rating-config-path" validate:"omitempty" desc:"path to the rating config file"`
+		RatingConfigContent        string        `env:"RATING_CONFIG_CONTENT" flag:"rating-config-content" validate:"omitempty" desc:"content of the rating config file"`
 		CookieFilePath             string        `env:"COOKIE_FILE_PATH" flag:"cookie-file-path" validate:"omitempty" desc:"path to the cookie file"`
 		CookieContent              string        `env:"COOKIE_CONTENT" flag:"cookie-content" validate:"omitempty" desc:"content of the cookie file"`
 		AuthConfigFilePath         string        `env:"AUTH_CONFIG_FILE_PATH" flag:"auth-config-file-path" validate:"omitempty"`

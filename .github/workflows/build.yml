@@ -206,8 +206,9 @@ jobs:
       tee_image_name: ${{ steps.gen_tag_name.outputs.tee_image_name }}
       artifacts_base_url: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.gen_tag_name.outputs.tag_name }}
       # Proxy-router "anchor" the desktop app downloads its bundled router from.
-      # On main this is always vX.Y.0 (the minor's proxy baseline); on test/dev
-      # it is the current self build (router executables are always built there).
+      # On main this is always vX.Y.0 (the minor's proxy baseline). On test,
+      # full (proxy-changed) builds self-anchor; UI-only builds reuse the last
+      # known good -test release that published router binaries.
       anchor_vfull: ${{ steps.gen_tag_name.outputs.anchor_vfull }}
       anchor_tag: ${{ steps.gen_tag_name.outputs.anchor_tag }}
       anchor_artifacts_base_url: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.gen_tag_name.outputs.anchor_tag }}
@@ -223,6 +224,7 @@ jobs:
         shell: bash
         env:
           PROXY_CHANGED: ${{ needs.changes.outputs.proxy }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           IMAGE_NAME="ghcr.io/morpheusais/morpheus-lumerin-node"
           VMAJ_NEW=7
@@ -280,10 +282,32 @@ jobs:
               [ "$GITHUB_EVENT_NAME" = "pull_request" ] && RNAME=pr${GITHUB_REF_NAME%/merge}
               VTAG=v${VFULL}-${RNAME}
               BUMP="prerelease"
-              # test/dev always build their own router executables, so the app
-              # anchors to this same prerelease build (self-contained).
-              ANCHOR_VFULL=${VFULL}
-              ANCHOR_TAG=${VTAG}
+              if [ "${PROXY_CHANGED}" = "true" ] || [ "$GITHUB_REF_NAME" != "test" ]; then
+                  # Full prerelease / non-test branches build their own router
+                  # executables and self-anchor.
+                  ANCHOR_VFULL=${VFULL}
+                  ANCHOR_TAG=${VTAG}
+              else
+                  # UI-only on test: same idea as main's vX.Y.0 — do not rebuild
+                  # router/docker/TEE; point the desktop app at the last known
+                  # good -test release that published router binaries.
+                  ANCHOR_TAG=""
+                  while read -r cand; do
+                      has_router=$(gh release view "$cand" --json assets \
+                        --jq '[.assets[].name | select(contains("morpheus-router"))] | length' 2>/dev/null || echo 0)
+                      if [ "${has_router:-0}" -gt 0 ]; then
+                          ANCHOR_TAG=$cand
+                          break
+                      fi
+                  done < <(git tag -l "v[0-9]*-test" | sort -V -r)
+
+                  if [ -z "$ANCHOR_TAG" ]; then
+                      echo "❌ UI-only test release needs a last-known-good -test release with router binaries" >&2
+                      exit 1
+                  fi
+                  ANCHOR_VFULL=$(echo "$ANCHOR_TAG" | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+                  BUMP="prerelease (UI-only, proxy anchored to ${ANCHOR_TAG})"
+              fi
           fi
 
           # Output variables for use in subsequent jobs environment
@@ -304,7 +328,7 @@ jobs:
     name: Test Proxy Router Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test' || github.ref == 'refs/heads/dev')) ||
         (github.event_name == 'workflow_dispatch') 
@@ -351,7 +375,7 @@ jobs:
     name: Build & Push Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/')|| github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
@@ -453,7 +477,7 @@ jobs:
     name: Build & Push TEE Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/')|| github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
@@ -1193,7 +1217,7 @@ jobs:
     name: Build Service Executables
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
@@ -3296,16 +3320,16 @@ jobs:
         id: mode
         run: |
           # "full" = router/docker/TEE/executables were built in this run and are
-          # attached to THIS release. "ui-only" = a UI/CLI patch on main where the
-          # router stays at the anchor (vX.Y.0) and is NOT re-attached here.
-          if [ "${{ github.ref }}" != "refs/heads/main" ] || \
-             [ "${{ needs.changes.outputs.proxy }}" = "true" ] || \
-             [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "full=true" >> "$GITHUB_OUTPUT"
-            echo "Release mode: FULL"
-          else
+          # attached to THIS release. "ui-only" = a UI/CLI patch on main or test
+          # where the router stays at the anchor and is NOT re-attached here.
+          if { [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/test" ]; } && \
+             [ "${{ needs.changes.outputs.proxy }}" != "true" ] && \
+             [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
             echo "full=false" >> "$GITHUB_OUTPUT"
             echo "Release mode: UI-ONLY (router anchored to ${{ needs.Generate-Tag.outputs.anchor_tag }})"
+          else
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "Release mode: FULL"
           fi
 
       - name: Generate release notes
