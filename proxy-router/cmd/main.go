@@ -274,7 +274,7 @@ func start() error {
 		appLog.Infof("using polling for blockchain events")
 	}
 
-	scorer, err := config.LoadRating(cfg.Proxy.RatingConfigPath, appLog)
+	scorer, err := config.LoadRating(cfg.Proxy.RatingConfigPath, cfg.Proxy.RatingConfigContent, appLog)
 	if err != nil {
 		return err
 	}
