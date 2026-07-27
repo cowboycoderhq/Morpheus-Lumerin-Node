@@ -206,8 +206,9 @@ jobs:
       tee_image_name: ${{ steps.gen_tag_name.outputs.tee_image_name }}
       artifacts_base_url: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.gen_tag_name.outputs.tag_name }}
       # Proxy-router "anchor" the desktop app downloads its bundled router from.
-      # On main this is always vX.Y.0 (the minor's proxy baseline); on test/dev
-      # it is the current self build (router executables are always built there).
+      # On main this is always vX.Y.0 (the minor's proxy baseline). On test,
+      # full (proxy-changed) builds self-anchor; UI-only builds reuse the last
+      # known good -test release that published router binaries.
       anchor_vfull: ${{ steps.gen_tag_name.outputs.anchor_vfull }}
       anchor_tag: ${{ steps.gen_tag_name.outputs.anchor_tag }}
       anchor_artifacts_base_url: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.gen_tag_name.outputs.anchor_tag }}
@@ -223,6 +224,7 @@ jobs:
         shell: bash
         env:
           PROXY_CHANGED: ${{ needs.changes.outputs.proxy }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           IMAGE_NAME="ghcr.io/morpheusais/morpheus-lumerin-node"
           VMAJ_NEW=7
@@ -280,10 +282,32 @@ jobs:
               [ "$GITHUB_EVENT_NAME" = "pull_request" ] && RNAME=pr${GITHUB_REF_NAME%/merge}
               VTAG=v${VFULL}-${RNAME}
               BUMP="prerelease"
-              # test/dev always build their own router executables, so the app
-              # anchors to this same prerelease build (self-contained).
-              ANCHOR_VFULL=${VFULL}
-              ANCHOR_TAG=${VTAG}
+              if [ "${PROXY_CHANGED}" = "true" ] || [ "$GITHUB_REF_NAME" != "test" ]; then
+                  # Full prerelease / non-test branches build their own router
+                  # executables and self-anchor.
+                  ANCHOR_VFULL=${VFULL}
+                  ANCHOR_TAG=${VTAG}
+              else
+                  # UI-only on test: same idea as main's vX.Y.0 — do not rebuild
+                  # router/docker/TEE; point the desktop app at the last known
+                  # good -test release that published router binaries.
+                  ANCHOR_TAG=""
+                  while read -r cand; do
+                      has_router=$(gh release view "$cand" --json assets \
+                        --jq '[.assets[].name | select(contains("morpheus-router"))] | length' 2>/dev/null || echo 0)
+                      if [ "${has_router:-0}" -gt 0 ]; then
+                          ANCHOR_TAG=$cand
+                          break
+                      fi
+                  done < <(git tag -l "v[0-9]*-test" | sort -V -r)
+
+                  if [ -z "$ANCHOR_TAG" ]; then
+                      echo "❌ UI-only test release needs a last-known-good -test release with router binaries" >&2
+                      exit 1
+                  fi
+                  ANCHOR_VFULL=$(echo "$ANCHOR_TAG" | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+                  BUMP="prerelease (UI-only, proxy anchored to ${ANCHOR_TAG})"
+              fi
           fi
 
           # Output variables for use in subsequent jobs environment
@@ -304,7 +328,7 @@ jobs:
     name: Test Proxy Router Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test' || github.ref == 'refs/heads/dev')) ||
         (github.event_name == 'workflow_dispatch') 
@@ -351,7 +375,7 @@ jobs:
     name: Build & Push Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/')|| github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
@@ -453,7 +477,7 @@ jobs:
     name: Build & Push TEE Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/')|| github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
@@ -1193,7 +1217,7 @@ jobs:
     name: Build Service Executables
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
@@ -2240,21 +2264,51 @@ jobs:
           fi
 
           FUNCTION_NAME="${ENV}-routed-sessions-sweep"
-          # deploy_cutoff mode (default): the Lambda derives cutoff from the C-Node
-          # service deployments[0].updatedAt + rehydration + safety, then closes
-          # OPEN rows older than that. release_tag only annotates error_reason.
+          CLUSTER_NAME="ecs-${ENV}-morpheus-engine"
+          SERVICE_NAME="svc-${ENV}-router"
+          # Must match Lambda DEFAULT_REHYDRATION_SECS / DEFAULT_SAFETY_SECS
+          # (02-morpheus_c_node/.terragrunt/06_routed_sessions_sweep.tf).
+          REHYDRATION_SECS=90
+          SAFETY_SECS=120
+          SKEW_BUFFER_SECS=15
+
+          # deploy_cutoff mode (default): the Lambda derives cutoff from the
+          # C-Node PRIMARY deployment updatedAt + rehydration + safety, then
+          # closes OPEN rows older than that. release_tag only annotates
+          # error_reason.
           PAYLOAD="{\"release_tag\":\"${BUILDTAG}\"}"
 
-          # This job starts seconds after the C-Node deploy settles, but the
-          # Lambda's cutoff = deployments[0].updatedAt + 90s rehydration + 120s
-          # safety (~210s ahead) and it REFUSES a future cutoff. So the first
-          # invoke almost always lands before the cutoff and no-ops with a 400.
-          # Retry with backoff until the cutoff has passed (or the budget is
-          # exhausted) so the sweep actually runs. Budget: 10 * 30s = ~5 min,
-          # comfortably past the ~210s cutoff. Only the future-cutoff case is
-          # retried; any other status (200 / SWEEP_MAX_ROWS / error) is terminal.
-          MAX_ATTEMPTS=10
-          SLEEP_SECS=30
+          # Proactive wait: the Lambda REFUSES a future cutoff (would close
+          # fresh sessions). Invoking immediately after C-Node settle almost
+          # always 400s for ~updatedAt+210s, and the old 10×30s retry budget
+          # was barely enough — leaving zombies OPEN long enough to reopen/
+          # failover-storm MOR. Sleep until the same cutoff the Lambda will
+          # derive, then invoke (small retry loop only for clock skew).
+          echo "🔎 Resolving C-Node PRIMARY updatedAt from ${CLUSTER_NAME}/${SERVICE_NAME}..."
+          UPDATED_AT=$(aws ecs describe-services \
+            --cluster "$CLUSTER_NAME" \
+            --services "$SERVICE_NAME" \
+            --query 'services[0].deployments[?status==`PRIMARY`]|[0].updatedAt' \
+            --output text)
+          if [ -z "$UPDATED_AT" ] || [ "$UPDATED_AT" = "None" ]; then
+            echo "⚠️ Could not resolve PRIMARY updatedAt; falling back to fixed ${REHYDRATION_SECS}+${SAFETY_SECS}s wait."
+            sleep $((REHYDRATION_SECS + SAFETY_SECS + SKEW_BUFFER_SECS))
+          else
+            echo "📌 PRIMARY updatedAt: ${UPDATED_AT}"
+            UPDATED_EPOCH=$(date -d "$UPDATED_AT" +%s)
+            CUTOFF_EPOCH=$((UPDATED_EPOCH + REHYDRATION_SECS + SAFETY_SECS + SKEW_BUFFER_SECS))
+            NOW_EPOCH=$(date +%s)
+            WAIT_SECS=$((CUTOFF_EPOCH - NOW_EPOCH))
+            if [ "$WAIT_SECS" -gt 0 ]; then
+              echo "⏳ Waiting ${WAIT_SECS}s for sweep cutoff (updatedAt + ${REHYDRATION_SECS}s + ${SAFETY_SECS}s + ${SKEW_BUFFER_SECS}s skew)..."
+              sleep "$WAIT_SECS"
+            else
+              echo "✅ Cutoff already in the past (${WAIT_SECS}s); invoking immediately."
+            fi
+          fi
+
+          MAX_ATTEMPTS=5
+          SLEEP_SECS=20
           STATUS=""
           BODY=""
           FUNCTION_ERROR=""
@@ -2290,8 +2344,7 @@ jobs:
               break
             fi
 
-            # Retry ONLY the "future cutoff" 400 — we just deployed and need to
-            # wait for the cutoff to pass. Everything else is a final result.
+            # Retry ONLY residual "future cutoff" 400 (clock skew / ECS lag).
             if [ "$STATUS" = "400" ] && echo "$BODY" | grep -qi "in the future"; then
               if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
                 echo "⏳ Cutoff not reached yet; sleeping ${SLEEP_SECS}s before retry."
@@ -2307,6 +2360,7 @@ jobs:
             echo ""
             echo "- **Function:** \`${FUNCTION_NAME}\`"
             echo "- **Release tag:** \`${BUILDTAG}\`"
+            echo "- **PRIMARY updatedAt:** \`${UPDATED_AT:-unknown}\`"
             echo "- **Handler statusCode:** \`${STATUS:-unknown}\`"
             if [ -n "$BODY" ]; then
               echo ""
@@ -3266,16 +3320,16 @@ jobs:
         id: mode
         run: |
           # "full" = router/docker/TEE/executables were built in this run and are
-          # attached to THIS release. "ui-only" = a UI/CLI patch on main where the
-          # router stays at the anchor (vX.Y.0) and is NOT re-attached here.
-          if [ "${{ github.ref }}" != "refs/heads/main" ] || \
-             [ "${{ needs.changes.outputs.proxy }}" = "true" ] || \
-             [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "full=true" >> "$GITHUB_OUTPUT"
-            echo "Release mode: FULL"
-          else
+          # attached to THIS release. "ui-only" = a UI/CLI patch on main or test
+          # where the router stays at the anchor and is NOT re-attached here.
+          if { [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/test" ]; } && \
+             [ "${{ needs.changes.outputs.proxy }}" != "true" ] && \
+             [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
             echo "full=false" >> "$GITHUB_OUTPUT"
             echo "Release mode: UI-ONLY (router anchored to ${{ needs.Generate-Tag.outputs.anchor_tag }})"
+          else
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "Release mode: FULL"
           fi
 
       - name: Generate release notes
