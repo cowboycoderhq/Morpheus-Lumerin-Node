@@ -94,7 +94,41 @@ Custody guarantees, enforced on-chain:
 - Draws debit funders **first-in, first-out**, with the hot wallet's own self-escrow
   (if any) always debited last.
 
-On the node, the funding source is a config switch:
+### How to back a node (cold wallet owners)
+
+Three transactions, signed by your cold wallet **directly against the Diamond contract**
+(Basescan *Write as Proxy*, a hardware-wallet UI, or a script). The proxy-router is never
+involved and your keys never touch the node. Take the Diamond and MOR token addresses from
+[Networks & tokens](/get-started/networks-and-tokens) — never from a chat or a DM.
+
+1. **Approve** the Diamond to pull your MOR (standard ERC-20):
+   `MOR.approve(diamond, amount)`.
+2. **Grant** the allowance: `grantStakingAllowance(hot, cap, expiry)` — `hot` is the
+   node's wallet address, `cap` is the most you will ever fund, `expiry` is a timestamp
+   after which new draws stop (`0` = no expiry). Calling it again updates the cap/expiry.
+3. **Fund** it: `fundStakingAllowance(hot, amount)` — moves the MOR into the pool
+   (a minimum principal applies to keep dust out).
+
+That's it — the daily lock/unlock cycle needs nothing further from you. To check on your
+money: `getStakingAllowance(you, hot)` shows your grant, `getPendingWithdrawal(you, hot)`
+anything queued to come back.
+
+To exit, again cold-signed, any time:
+
+- `revokeStakingAllowance(hot)` — stops new draws **immediately**; your funds stay
+  withdrawable.
+- `withdrawStakingAllowance(hot, amount)` — paid instantly from the pool's free balance;
+  any slice currently locked in an open session or unmatured day-lock is queued and paid
+  out automatically as sessions close. `claimPendingWithdrawals(hot, n)` is a
+  permissionless nudge if you'd rather not wait for the pool's next operation.
+
+### How to use the pool (consumer node operators)
+
+On the node, the funding source is one environment variable:
+
+```bash
+STAKING_FUND_SOURCE=pool
+```
 
 | `STAKING_FUND_SOURCE` | Behavior |
 |-----------------------|----------|
@@ -102,9 +136,30 @@ On the node, the funding source is a config switch:
 | `pool` | Always stake from the delegated pool. |
 | `auto` | Use the wallet while its balance covers the stake, fall back to the pool. |
 
-Operators can watch the pool through the proxy-router API: `GET /blockchain/pool` returns
-the amount available to stake right now, free/locked balances, pending funder withdrawals,
-and the funder and day-lock bucket counts.
+No other change is needed: the router picks `openSessionFromPool` automatically and the
+hot wallet needs MOR only for gas (ETH), not for stake. `STAKE_AUTO_CLAIM` is only
+relevant in `wallet`/`auto` modes — pool stake recycles by itself.
+
+To check what's in the pool, ask the router (HTTP Basic Auth, on the private `:8082`
+admin port):
+
+```bash
+curl -u admin:yourpassword http://localhost:8082/blockchain/pool
+```
+
+```json
+{
+  "availableToStake": "...",      // can the node fund its next session right now?
+  "freeBalance": "...",           // pool MOR not locked anywhere
+  "lockedBalance": "...",         // in open sessions + maturing day-locks
+  "pendingWithdrawalsTotal": "...", // funder exits queued for payout
+  "funderCount": "5",
+  "holdCount": "1"                // day-lock buckets not yet recycled
+}
+```
+
+`availableToStake` is the number to alert on: it already counts matured day-locks, so it
+answers "can I open the next session?" directly.
 
 ### Worked example: five wallets backing one node
 
