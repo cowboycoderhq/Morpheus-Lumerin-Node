@@ -217,6 +217,7 @@ func NewSDK(cfg Config) (*SDK, error) {
 		log, rpcLog,
 		false,
 		teeVerifier,
+		blockchainapi.FundSourceWallet,
 	)
 
 	proxySender.SetSessionService(blockchainSvc)

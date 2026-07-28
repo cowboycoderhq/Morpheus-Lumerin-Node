@@ -40,6 +40,10 @@ func (c *BlockchainController) RegisterRoutes(r interfaces.Router) {
 	r.POST("/blockchain/send/eth", c.authConf.CheckAuth("send_eth"), c.sendETH)
 	r.POST("/blockchain/send/mor", c.authConf.CheckAuth("send_mor"), c.sendMOR)
 
+	// consumer stake recovery (issue #827)
+	r.GET("/blockchain/stakes/onhold", c.authConf.CheckAuth("get_stakes_on_hold"), c.getStakesOnHold)
+	r.POST("/blockchain/stakes/withdraw", c.authConf.CheckAuth("withdraw_stakes"), c.withdrawStakes)
+
 	// providers
 	r.GET("/blockchain/providers", c.authConf.CheckAuth("get_providers"), c.getAllProviders)
 	r.POST("/blockchain/providers", c.authConf.CheckAuth("create_provider"), c.createProvider)
@@ -244,6 +248,59 @@ func (c *BlockchainController) sendMOR(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, structs.TxRes{Tx: txhash})
 	return
+}
+
+// GetStakesOnHold godoc
+//
+//	@Summary		Get User Stakes On Hold
+//	@Description	Get the releasable and still time-locked user stake held by the diamond for the router's wallet
+//	@Tags			transactions
+//	@Produce		json
+//	@Success		200	{object}	structs.StakesOnHoldRes
+//	@Security		BasicAuth
+//	@Router			/blockchain/stakes/onhold [get]
+func (c *BlockchainController) getStakesOnHold(ctx *gin.Context) {
+	available, hold, err := c.service.GetUserStakesOnHold(ctx)
+	if err != nil {
+		c.log.Error(err)
+		ctx.JSON(http.StatusInternalServerError, structs.ErrRes{Error: err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, structs.StakesOnHoldRes{
+		Available: &lib.BigInt{Int: *available},
+		Hold:      &lib.BigInt{Int: *hold},
+	})
+}
+
+// WithdrawStakes godoc
+//
+//	@Summary		Withdraw User Stakes On Hold
+//	@Description	Withdraw releasable time-locked user stake from the diamond back to the router's wallet
+//	@Tags			transactions
+//	@Produce		json
+//	@Param			iterations	query		int	false	"Max on-hold entries to process (default 255)"
+//	@Success		200			{object}	structs.TxRes
+//	@Security		BasicAuth
+//	@Router			/blockchain/stakes/withdraw [post]
+func (c *BlockchainController) withdrawStakes(ctx *gin.Context) {
+	var query struct {
+		Iterations uint8 `form:"iterations"`
+	}
+	if err := ctx.ShouldBindQuery(&query); err != nil {
+		c.log.Error(err)
+		ctx.JSON(http.StatusBadRequest, structs.ErrRes{Error: err.Error()})
+		return
+	}
+
+	txHash, err := c.service.WithdrawUserStakes(ctx, query.Iterations)
+	if err != nil {
+		c.log.Error(err)
+		ctx.JSON(http.StatusBadRequest, structs.ErrRes{Error: err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, structs.TxRes{Tx: txHash})
 }
 
 // GetBidsByProvider godoc

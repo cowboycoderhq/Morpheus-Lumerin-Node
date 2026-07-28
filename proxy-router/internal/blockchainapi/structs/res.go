@@ -58,6 +58,13 @@ type TokenBalanceRes struct {
 	ETH *lib.BigInt `json:"eth" example:"100000000" swaggertype:"integer"`
 }
 
+type StakesOnHoldRes struct {
+	// Available is the releasable (past releaseAt) user stake in the diamond.
+	Available *lib.BigInt `json:"available" example:"100000000" swaggertype:"integer"`
+	// Hold is the user stake still time-locked until its release day.
+	Hold *lib.BigInt `json:"hold" example:"100000000" swaggertype:"integer"`
+}
+
 type TransactionsRes struct {
 	Transactions []MappedTransaction `json:"transactions"`
 }

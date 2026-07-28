@@ -293,8 +293,11 @@ func start() error {
 		teeVerifier = attestation.NewVerifier(cfg.TEE.PortalURL, cfg.TEE.ImageRepo, appLog.Named("TEE"))
 	}
 
-	blockchainApi := blockchainapi.NewBlockchainService(ethClient, multicallBackend, *cfg.Marketplace.DiamondContractAddress, *cfg.Marketplace.MorTokenAddress, explorer, wallet, proxyRouterApi, sessionRepo, scorer, authCfg, appLog, rpcLog, cfg.Blockchain.EthLegacyTx, teeVerifier)
+	blockchainApi := blockchainapi.NewBlockchainService(ethClient, multicallBackend, *cfg.Marketplace.DiamondContractAddress, *cfg.Marketplace.MorTokenAddress, explorer, wallet, proxyRouterApi, sessionRepo, scorer, authCfg, appLog, rpcLog, cfg.Blockchain.EthLegacyTx, teeVerifier, cfg.Marketplace.StakingFundSource)
 	sessionRepo.SetModelTagsProvider(blockchainApi)
+	if cfg.Marketplace.StakeAutoClaim {
+		go blockchainApi.StartStakeAutoClaim(ctx, cfg.Marketplace.StakeAutoClaimInterval)
+	}
 	proxyRouterApi.SetSessionService(blockchainApi)
 	proxyRouterApi.SetAttestationVerifier(teeVerifier)
 	if teeVerifier != nil {

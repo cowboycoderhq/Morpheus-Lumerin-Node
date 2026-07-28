@@ -82,6 +82,36 @@ func (g *SessionRouter) OpenSessionTx(opts *bind.TransactOpts, approval []byte, 
 	return tx, nil
 }
 
+// OpenSessionFromPoolTx builds an OpenSessionFromPool transaction without sending it.
+// The stake is drawn from the wallet's delegated staking pool instead of its
+// ERC-20 balance, so no MOR approval or balance is needed on the hot wallet.
+func (g *SessionRouter) OpenSessionFromPoolTx(opts *bind.TransactOpts, approval []byte, approvalSig []byte, stake *big.Int) (*types.Transaction, error) {
+	tx, err := g.sessionRouter.OpenSessionFromPool(opts, opts.From, stake, approval, approvalSig)
+	if err != nil {
+		return nil, lib.TryConvertGethError(err)
+	}
+	return tx, nil
+}
+
+// GetUserStakesOnHold returns the releasable (past releaseAt) and still
+// time-locked user stake sitting in the diamond for the given wallet.
+func (g *SessionRouter) GetUserStakesOnHold(ctx context.Context, user common.Address, iterations uint8) (available *big.Int, hold *big.Int, err error) {
+	res, err := g.sessionRouter.GetUserStakesOnHold(&bind.CallOpts{Context: ctx}, user, iterations)
+	if err != nil {
+		return nil, nil, lib.TryConvertGethError(err)
+	}
+	return res.Available, res.Hold, nil
+}
+
+// WithdrawUserStakesTx builds a withdrawUserStakes transaction without sending it.
+func (g *SessionRouter) WithdrawUserStakesTx(opts *bind.TransactOpts, user common.Address, iterations uint8) (*types.Transaction, error) {
+	tx, err := g.sessionRouter.WithdrawUserStakes(opts, user, iterations)
+	if err != nil {
+		return nil, lib.TryConvertGethError(err)
+	}
+	return tx, nil
+}
+
 // ParseOpenSessionReceipt parses an OpenSession receipt and extracts session info
 func (g *SessionRouter) ParseOpenSessionReceipt(ctx context.Context, receipt *types.Receipt) (sessionID common.Hash, providerID common.Address, userID common.Address, err error) {
 	sessionID, providerID, userID, _, err = g.parseOpenSessionReceipt(ctx, receipt)

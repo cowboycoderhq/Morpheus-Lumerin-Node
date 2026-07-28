@@ -124,6 +124,9 @@ In the **`-tee` image** this is hard-coded `false` at build time and **cannot be
 | `DIAMOND_CONTRACT_ADDRESS` | mainnet `0x6aBE1d282f72B474E54527D93b979A4f64d3030a`; testnet `0x6e4d0B775E3C3b02683A6F277Ac80240C4aFF930` | Diamond marketplace contract |
 | `MOR_TOKEN_ADDRESS` | mainnet `0x7431aDa8a591C955a994a21710752EF9b882b8e3`; testnet `0x5C80Ddd187054E1E4aBBfFCD750498e81d34FfA3` | MOR ERC-20 token |
 | `WALLET_PRIVATE_KEY` | (unset) | Wallet private key. Falls back to system keychain when unset. See precedence above. |
+| `STAKING_FUND_SOURCE` | `wallet` | Funding source for consumer session stakes: `wallet` (ERC-20 balance, legacy), `pool` (delegated staking pool via `openSessionFromPool`), or `auto` (wallet first, pool when the balance is insufficient). |
+| `STAKE_AUTO_CLAIM` | `false` | Periodically withdraw releasable time-locked user stakes (`userStakesOnHold`) back to the wallet. Only relevant for `wallet`/`auto` funding — pool stakes recycle on-chain automatically. |
+| `STAKE_AUTO_CLAIM_INTERVAL` | `1h` | How often to check for releasable stakes when `STAKE_AUTO_CLAIM` is enabled. |
 
 ## Logging
 

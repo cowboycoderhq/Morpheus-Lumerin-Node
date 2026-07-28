@@ -1027,6 +1027,18 @@ definitions:
           $ref: '#/definitions/structs.Session'
         type: array
     type: object
+  structs.StakesOnHoldRes:
+    properties:
+      available:
+        description: Available is the releasable (past releaseAt) user stake in the
+          diamond.
+        example: 100000000
+        type: integer
+      hold:
+        description: Hold is the user stake still time-locked until its release day.
+        example: 100000000
+        type: integer
+    type: object
   structs.SupplyRes:
     properties:
       supply:
@@ -2118,6 +2130,43 @@ paths:
       summary: Get Sessions for User
       tags:
       - sessions
+  /blockchain/stakes/onhold:
+    get:
+      description: Get the releasable and still time-locked user stake held by the
+        diamond for the router's wallet
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/structs.StakesOnHoldRes'
+      security:
+      - BasicAuth: []
+      summary: Get User Stakes On Hold
+      tags:
+      - transactions
+  /blockchain/stakes/withdraw:
+    post:
+      description: Withdraw releasable time-locked user stake from the diamond back
+        to the router's wallet
+      parameters:
+      - description: Max on-hold entries to process (default 255)
+        in: query
+        name: iterations
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/structs.TxRes'
+      security:
+      - BasicAuth: []
+      summary: Withdraw User Stakes On Hold
+      tags:
+      - transactions
   /blockchain/token/supply:
     get:
       description: Get MOR token supply from blockchain

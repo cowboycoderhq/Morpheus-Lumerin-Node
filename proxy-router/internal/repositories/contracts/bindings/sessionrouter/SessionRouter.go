@@ -97,7 +97,7 @@ type LibSDSD struct {
 
 // SessionRouterMetaData contains all meta data concerning the SessionRouter contract.
 var SessionRouterMetaData = &bind.MetaData{
-	ABI: "[{\"inputs\":[{\"internalType\":\"address\",\"name\":\"delegator\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"delegatee\",\"type\":\"address\"}],\"name\":\"InsufficientRightsForOperation\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"account_\",\"type\":\"address\"}],\"name\":\"OwnableUnauthorizedAccount\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionAlreadyClosed\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionApprovedForAnotherUser\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionBidNotFound\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionDuplicateApproval\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionMaxDurationTooShort\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionNotEndedOrNotExist\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionPoolIndexOutOfBounds\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionProviderNothingToClaimInThisPeriod\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionProviderSignatureMismatch\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionStakeTooLow\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionTooShort\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionUserAmountToWithdrawIsZero\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SesssionApproveExpired\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SesssionApprovedForAnotherChainId\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SesssionReceiptExpired\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SesssionReceiptForAnotherChainId\",\"type\":\"error\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"bytes32\",\"name\":\"storageSlot\",\"type\":\"bytes32\"}],\"name\":\"Initialized\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"bytes32\",\"name\":\"sessionId\",\"type\":\"bytes32\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"providerId\",\"type\":\"address\"}],\"name\":\"SessionClosed\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"bytes32\",\"name\":\"sessionId\",\"type\":\"bytes32\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"providerId\",\"type\":\"address\"}],\"name\":\"SessionOpened\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"}],\"name\":\"UserWithdrawn\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"BIDS_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"COMPUTE_POOL_INDEX\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DELEGATION_RULES_MARKETPLACE\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DELEGATION_RULES_MODEL\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DELEGATION_RULES_PROVIDER\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DELEGATION_RULES_SESSION\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DELEGATION_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DIAMOND_OWNABLE_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"MIN_SESSION_DURATION\",\"outputs\":[{\"internalType\":\"uint32\",\"name\":\"\",\"type\":\"uint32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"PROVIDERS_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"SESSIONS_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"SIGNATURE_TTL\",\"outputs\":[{\"internalType\":\"uint32\",\"name\":\"\",\"type\":\"uint32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"STATS_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"fundingAccount_\",\"type\":\"address\"},{\"internalType\":\"uint128\",\"name\":\"maxSessionDuration_\",\"type\":\"uint128\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"initialReward\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"rewardDecrease\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"payoutStart\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"decreaseInterval\",\"type\":\"uint128\"}],\"internalType\":\"structISessionStorage.Pool[]\",\"name\":\"pools_\",\"type\":\"tuple[]\"}],\"name\":\"__SessionRouter_init\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"sessionId_\",\"type\":\"bytes32\"}],\"name\":\"claimForProvider\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes\",\"name\":\"receiptEncoded_\",\"type\":\"bytes\"},{\"internalType\":\"bytes\",\"name\":\"signature_\",\"type\":\"bytes\"}],\"name\":\"closeSession\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getActiveProviders\",\"outputs\":[{\"internalType\":\"address[]\",\"name\":\"\",\"type\":\"address[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"bidId_\",\"type\":\"bytes32\"}],\"name\":\"getBid\",\"outputs\":[{\"components\":[{\"internalType\":\"address\",\"name\":\"provider\",\"type\":\"address\"},{\"internalType\":\"bytes32\",\"name\":\"modelId\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"pricePerSecond\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"nonce\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"createdAt\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"deletedAt\",\"type\":\"uint128\"}],\"internalType\":\"structIBidStorage.Bid\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"getComputeBalance\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getFundingAccount\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"}],\"name\":\"getIsProviderActive\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes\",\"name\":\"approval_\",\"type\":\"bytes\"}],\"name\":\"getIsProviderApprovalUsed\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getMaxSessionDuration\",\"outputs\":[{\"internalType\":\"uint128\",\"name\":\"\",\"type\":\"uint128\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getModelActiveBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getModelBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getModelSessions\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"}],\"name\":\"getModelStats\",\"outputs\":[{\"components\":[{\"components\":[{\"internalType\":\"int64\",\"name\":\"mean\",\"type\":\"int64\"},{\"internalType\":\"int64\",\"name\":\"sqSum\",\"type\":\"int64\"}],\"internalType\":\"structLibSD.SD\",\"name\":\"tpsScaled1000\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"int64\",\"name\":\"mean\",\"type\":\"int64\"},{\"internalType\":\"int64\",\"name\":\"sqSum\",\"type\":\"int64\"}],\"internalType\":\"structLibSD.SD\",\"name\":\"ttftMs\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"int64\",\"name\":\"mean\",\"type\":\"int64\"},{\"internalType\":\"int64\",\"name\":\"sqSum\",\"type\":\"int64\"}],\"internalType\":\"structLibSD.SD\",\"name\":\"totalDuration\",\"type\":\"tuple\"},{\"internalType\":\"uint32\",\"name\":\"count\",\"type\":\"uint32\"}],\"internalType\":\"structIStatsStorage.ModelStats\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"index_\",\"type\":\"uint256\"}],\"name\":\"getPool\",\"outputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"initialReward\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"rewardDecrease\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"payoutStart\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"decreaseInterval\",\"type\":\"uint128\"}],\"internalType\":\"structISessionStorage.Pool\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getPools\",\"outputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"initialReward\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"rewardDecrease\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"payoutStart\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"decreaseInterval\",\"type\":\"uint128\"}],\"internalType\":\"structISessionStorage.Pool[]\",\"name\":\"\",\"type\":\"tuple[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"}],\"name\":\"getProvider\",\"outputs\":[{\"components\":[{\"internalType\":\"string\",\"name\":\"endpoint\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"stake\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"createdAt\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"limitPeriodEnd\",\"type\":\"uint128\"},{\"internalType\":\"uint256\",\"name\":\"limitPeriodEarned\",\"type\":\"uint256\"},{\"internalType\":\"bool\",\"name\":\"isDeleted\",\"type\":\"bool\"}],\"internalType\":\"structIProviderStorage.Provider\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getProviderActiveBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getProviderBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getProviderMinimumStake\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"}],\"name\":\"getProviderModelStats\",\"outputs\":[{\"components\":[{\"components\":[{\"internalType\":\"int64\",\"name\":\"mean\",\"type\":\"int64\"},{\"internalType\":\"int64\",\"name\":\"sqSum\",\"type\":\"int64\"}],\"internalType\":\"structLibSD.SD\",\"name\":\"tpsScaled1000\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"int64\",\"name\":\"mean\",\"type\":\"int64\"},{\"internalType\":\"int64\",\"name\":\"sqSum\",\"type\":\"int64\"}],\"internalType\":\"structLibSD.SD\",\"name\":\"ttftMs\",\"type\":\"tuple\"},{\"internalType\":\"uint32\",\"name\":\"totalDuration\",\"type\":\"uint32\"},{\"internalType\":\"uint32\",\"name\":\"successCount\",\"type\":\"uint32\"},{\"internalType\":\"uint32\",\"name\":\"totalCount\",\"type\":\"uint32\"}],\"internalType\":\"structIStatsStorage.ProviderModelStats\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getProviderSessions\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getProvidersTotalClaimed\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getRegistry\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"sessionId_\",\"type\":\"bytes32\"}],\"name\":\"getSession\",\"outputs\":[{\"components\":[{\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"},{\"internalType\":\"bytes32\",\"name\":\"bidId\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"stake\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"closeoutReceipt\",\"type\":\"bytes\"},{\"internalType\":\"uint256\",\"name\":\"closeoutType\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"providerWithdrawnAmount\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"openedAt\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"endsAt\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"closedAt\",\"type\":\"uint128\"},{\"internalType\":\"bool\",\"name\":\"isActive\",\"type\":\"bool\"},{\"internalType\":\"bool\",\"name\":\"isDirectPaymentFromUser\",\"type\":\"bool\"}],\"internalType\":\"structISessionStorage.Session\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"pricePerSecond_\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"openedAt_\",\"type\":\"uint128\"}],\"name\":\"getSessionEnd\",\"outputs\":[{\"internalType\":\"uint128\",\"name\":\"\",\"type\":\"uint128\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user_\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"bytes32\",\"name\":\"bidId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"sessionNonce_\",\"type\":\"uint256\"}],\"name\":\"getSessionId\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"getTodaysBudget\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getToken\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"}],\"name\":\"getTotalSessions\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getUserSessions\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user_\",\"type\":\"address\"},{\"internalType\":\"uint8\",\"name\":\"iterations_\",\"type\":\"uint8\"}],\"name\":\"getUserStakesOnHold\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"available_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"hold_\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"bidId_\",\"type\":\"bytes32\"}],\"name\":\"isBidActive\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"delegatee_\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"delegator_\",\"type\":\"address\"},{\"internalType\":\"bytes32\",\"name\":\"rights_\",\"type\":\"bytes32\"}],\"name\":\"isRightsDelegated\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"},{\"internalType\":\"bool\",\"name\":\"isDirectPaymentFromUser_\",\"type\":\"bool\"},{\"internalType\":\"bytes\",\"name\":\"approvalEncoded_\",\"type\":\"bytes\"},{\"internalType\":\"bytes\",\"name\":\"signature_\",\"type\":\"bytes\"}],\"name\":\"openSession\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"owner\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint128\",\"name\":\"maxSessionDuration_\",\"type\":\"uint128\"}],\"name\":\"setMaxSessionDuration\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"index_\",\"type\":\"uint256\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"initialReward\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"rewardDecrease\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"payoutStart\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"decreaseInterval\",\"type\":\"uint128\"}],\"internalType\":\"structISessionStorage.Pool\",\"name\":\"pool_\",\"type\":\"tuple\"}],\"name\":\"setPoolConfig\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"stakeToStipend\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"startOfTheDay\",\"outputs\":[{\"internalType\":\"uint128\",\"name\":\"\",\"type\":\"uint128\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"stipend_\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"stipendToStake\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"totalMORSupply\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user_\",\"type\":\"address\"},{\"internalType\":\"uint8\",\"name\":\"iterations_\",\"type\":\"uint8\"}],\"name\":\"withdrawUserStakes\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]",
+	ABI: "[{\"inputs\":[],\"name\":\"DelegateStakingFundingBelowMinimum\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingFundingExceedsMaxAmount\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingGrantExpired\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingGrantNotFound\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingGrantRevoked\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"available\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"requested\",\"type\":\"uint256\"}],\"name\":\"DelegateStakingInsufficientPoolBalance\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingInvalidExpiry\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingMaxAmountTooLow\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingNothingToClaim\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingNothingToRelease\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingNothingToWithdraw\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingWithdrawalLeavesDust\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingZeroAddressProvided\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingZeroAmountProvided\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"delegator\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"delegatee\",\"type\":\"address\"}],\"name\":\"InsufficientRightsForOperation\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"account_\",\"type\":\"address\"}],\"name\":\"OwnableUnauthorizedAccount\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionAlreadyClosed\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionApproveExpired\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionApprovedForAnotherChainId\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionApprovedForAnotherUser\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionBidNotFound\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionDuplicateApproval\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionMaxDurationTooShort\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionNotEndedOrNotExist\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionPoolIndexOutOfBounds\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionProviderNothingToClaimInThisPeriod\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionProviderSignatureMismatch\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionReceiptExpired\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionReceiptForAnotherChainId\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionStakeTooLow\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionTooShort\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"SessionUserAmountToWithdrawIsZero\",\"type\":\"error\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"indexed\":true,\"internalType\":\"bytes32\",\"name\":\"sessionId\",\"type\":\"bytes32\"}],\"name\":\"AllowanceDebited\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint128\",\"name\":\"releaseAt\",\"type\":\"uint128\"}],\"name\":\"AllowanceHoldCreated\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"AllowanceReleased\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"AllowanceWithdrawQueued\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"AllowanceWithdrawn\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"bytes32\",\"name\":\"storageSlot\",\"type\":\"bytes32\"}],\"name\":\"Initialized\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"PendingWithdrawalPaid\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"bytes32\",\"name\":\"sessionId\",\"type\":\"bytes32\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"providerId\",\"type\":\"address\"}],\"name\":\"SessionClosed\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"bytes32\",\"name\":\"sessionId\",\"type\":\"bytes32\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"providerId\",\"type\":\"address\"}],\"name\":\"SessionOpened\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"StakingAllowanceFunded\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"maxAmount\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint128\",\"name\":\"expiry\",\"type\":\"uint128\"}],\"name\":\"StakingAllowanceGranted\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"}],\"name\":\"StakingAllowanceRevoked\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"}],\"name\":\"UserWithdrawn\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"BIDS_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"COMPUTE_POOL_INDEX\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DELEGATION_RULES_MARKETPLACE\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DELEGATION_RULES_MODEL\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DELEGATION_RULES_PROVIDER\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DELEGATION_RULES_SESSION\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DELEGATION_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DIAMOND_OWNABLE_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"MIN_SESSION_DURATION\",\"outputs\":[{\"internalType\":\"uint32\",\"name\":\"\",\"type\":\"uint32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"PROVIDERS_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"SESSIONS_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"SIGNATURE_TTL\",\"outputs\":[{\"internalType\":\"uint32\",\"name\":\"\",\"type\":\"uint32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"STATS_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"fundingAccount_\",\"type\":\"address\"},{\"internalType\":\"uint128\",\"name\":\"maxSessionDuration_\",\"type\":\"uint128\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"initialReward\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"rewardDecrease\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"payoutStart\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"decreaseInterval\",\"type\":\"uint128\"}],\"internalType\":\"structISessionStorage.Pool[]\",\"name\":\"pools_\",\"type\":\"tuple[]\"}],\"name\":\"__SessionRouter_init\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"sessionId_\",\"type\":\"bytes32\"}],\"name\":\"claimForProvider\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes\",\"name\":\"receiptEncoded_\",\"type\":\"bytes\"},{\"internalType\":\"bytes\",\"name\":\"signature_\",\"type\":\"bytes\"}],\"name\":\"closeSession\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getActiveProviders\",\"outputs\":[{\"internalType\":\"address[]\",\"name\":\"\",\"type\":\"address[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"bidId_\",\"type\":\"bytes32\"}],\"name\":\"getBid\",\"outputs\":[{\"components\":[{\"internalType\":\"address\",\"name\":\"provider\",\"type\":\"address\"},{\"internalType\":\"bytes32\",\"name\":\"modelId\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"pricePerSecond\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"nonce\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"createdAt\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"deletedAt\",\"type\":\"uint128\"}],\"internalType\":\"structIBidStorage.Bid\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"getComputeBalance\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getFundingAccount\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"}],\"name\":\"getIsProviderActive\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes\",\"name\":\"approval_\",\"type\":\"bytes\"}],\"name\":\"getIsProviderApprovalUsed\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getMaxSessionDuration\",\"outputs\":[{\"internalType\":\"uint128\",\"name\":\"\",\"type\":\"uint128\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getModelActiveBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getModelBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getModelSessions\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"}],\"name\":\"getModelStats\",\"outputs\":[{\"components\":[{\"components\":[{\"internalType\":\"int64\",\"name\":\"mean\",\"type\":\"int64\"},{\"internalType\":\"int64\",\"name\":\"sqSum\",\"type\":\"int64\"}],\"internalType\":\"structLibSD.SD\",\"name\":\"tpsScaled1000\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"int64\",\"name\":\"mean\",\"type\":\"int64\"},{\"internalType\":\"int64\",\"name\":\"sqSum\",\"type\":\"int64\"}],\"internalType\":\"structLibSD.SD\",\"name\":\"ttftMs\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"int64\",\"name\":\"mean\",\"type\":\"int64\"},{\"internalType\":\"int64\",\"name\":\"sqSum\",\"type\":\"int64\"}],\"internalType\":\"structLibSD.SD\",\"name\":\"totalDuration\",\"type\":\"tuple\"},{\"internalType\":\"uint32\",\"name\":\"count\",\"type\":\"uint32\"}],\"internalType\":\"structIStatsStorage.ModelStats\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"index_\",\"type\":\"uint256\"}],\"name\":\"getPool\",\"outputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"initialReward\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"rewardDecrease\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"payoutStart\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"decreaseInterval\",\"type\":\"uint128\"}],\"internalType\":\"structISessionStorage.Pool\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getPools\",\"outputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"initialReward\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"rewardDecrease\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"payoutStart\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"decreaseInterval\",\"type\":\"uint128\"}],\"internalType\":\"structISessionStorage.Pool[]\",\"name\":\"\",\"type\":\"tuple[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"}],\"name\":\"getProvider\",\"outputs\":[{\"components\":[{\"internalType\":\"string\",\"name\":\"endpoint\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"stake\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"createdAt\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"limitPeriodEnd\",\"type\":\"uint128\"},{\"internalType\":\"uint256\",\"name\":\"limitPeriodEarned\",\"type\":\"uint256\"},{\"internalType\":\"bool\",\"name\":\"isDeleted\",\"type\":\"bool\"}],\"internalType\":\"structIProviderStorage.Provider\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getProviderActiveBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getProviderBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getProviderMinimumStake\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"}],\"name\":\"getProviderModelStats\",\"outputs\":[{\"components\":[{\"components\":[{\"internalType\":\"int64\",\"name\":\"mean\",\"type\":\"int64\"},{\"internalType\":\"int64\",\"name\":\"sqSum\",\"type\":\"int64\"}],\"internalType\":\"structLibSD.SD\",\"name\":\"tpsScaled1000\",\"type\":\"tuple\"},{\"components\":[{\"internalType\":\"int64\",\"name\":\"mean\",\"type\":\"int64\"},{\"internalType\":\"int64\",\"name\":\"sqSum\",\"type\":\"int64\"}],\"internalType\":\"structLibSD.SD\",\"name\":\"ttftMs\",\"type\":\"tuple\"},{\"internalType\":\"uint32\",\"name\":\"totalDuration\",\"type\":\"uint32\"},{\"internalType\":\"uint32\",\"name\":\"successCount\",\"type\":\"uint32\"},{\"internalType\":\"uint32\",\"name\":\"totalCount\",\"type\":\"uint32\"}],\"internalType\":\"structIStatsStorage.ProviderModelStats\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getProviderSessions\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getProvidersTotalClaimed\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getRegistry\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"sessionId_\",\"type\":\"bytes32\"}],\"name\":\"getSession\",\"outputs\":[{\"components\":[{\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"},{\"internalType\":\"bytes32\",\"name\":\"bidId\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"stake\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"closeoutReceipt\",\"type\":\"bytes\"},{\"internalType\":\"uint256\",\"name\":\"closeoutType\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"providerWithdrawnAmount\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"openedAt\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"endsAt\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"closedAt\",\"type\":\"uint128\"},{\"internalType\":\"bool\",\"name\":\"isActive\",\"type\":\"bool\"},{\"internalType\":\"bool\",\"name\":\"isDirectPaymentFromUser\",\"type\":\"bool\"}],\"internalType\":\"structISessionStorage.Session\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"pricePerSecond_\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"openedAt_\",\"type\":\"uint128\"}],\"name\":\"getSessionEnd\",\"outputs\":[{\"internalType\":\"uint128\",\"name\":\"\",\"type\":\"uint128\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user_\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"bytes32\",\"name\":\"bidId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"sessionNonce_\",\"type\":\"uint256\"}],\"name\":\"getSessionId\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"getTodaysBudget\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getToken\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"}],\"name\":\"getTotalSessions\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getUserSessions\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user_\",\"type\":\"address\"},{\"internalType\":\"uint8\",\"name\":\"iterations_\",\"type\":\"uint8\"}],\"name\":\"getUserStakesOnHold\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"available_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"hold_\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"bidId_\",\"type\":\"bytes32\"}],\"name\":\"isBidActive\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"delegatee_\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"delegator_\",\"type\":\"address\"},{\"internalType\":\"bytes32\",\"name\":\"rights_\",\"type\":\"bytes32\"}],\"name\":\"isRightsDelegated\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"},{\"internalType\":\"bool\",\"name\":\"isDirectPaymentFromUser_\",\"type\":\"bool\"},{\"internalType\":\"bytes\",\"name\":\"approvalEncoded_\",\"type\":\"bytes\"},{\"internalType\":\"bytes\",\"name\":\"signature_\",\"type\":\"bytes\"}],\"name\":\"openSession\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"approvalEncoded_\",\"type\":\"bytes\"},{\"internalType\":\"bytes\",\"name\":\"signature_\",\"type\":\"bytes\"}],\"name\":\"openSessionFromPool\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"owner\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint128\",\"name\":\"maxSessionDuration_\",\"type\":\"uint128\"}],\"name\":\"setMaxSessionDuration\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"index_\",\"type\":\"uint256\"},{\"components\":[{\"internalType\":\"uint256\",\"name\":\"initialReward\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"rewardDecrease\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"payoutStart\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"decreaseInterval\",\"type\":\"uint128\"}],\"internalType\":\"structISessionStorage.Pool\",\"name\":\"pool_\",\"type\":\"tuple\"}],\"name\":\"setPoolConfig\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"stakeToStipend\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"startOfTheDay\",\"outputs\":[{\"internalType\":\"uint128\",\"name\":\"\",\"type\":\"uint128\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"stipend_\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"stipendToStake\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint128\",\"name\":\"timestamp_\",\"type\":\"uint128\"}],\"name\":\"totalMORSupply\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user_\",\"type\":\"address\"},{\"internalType\":\"uint8\",\"name\":\"iterations_\",\"type\":\"uint8\"}],\"name\":\"withdrawUserStakes\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]",
 }
 
 // SessionRouterABI is the input ABI used to generate the binding from.
@@ -1871,6 +1871,27 @@ func (_SessionRouter *SessionRouterTransactorSession) OpenSession(user_ common.A
 	return _SessionRouter.Contract.OpenSession(&_SessionRouter.TransactOpts, user_, amount_, isDirectPaymentFromUser_, approvalEncoded_, signature_)
 }
 
+// OpenSessionFromPool is a paid mutator transaction binding the contract method 0x15624cf6.
+//
+// Solidity: function openSessionFromPool(address hot_, uint256 amount_, bytes approvalEncoded_, bytes signature_) returns(bytes32)
+func (_SessionRouter *SessionRouterTransactor) OpenSessionFromPool(opts *bind.TransactOpts, hot_ common.Address, amount_ *big.Int, approvalEncoded_ []byte, signature_ []byte) (*types.Transaction, error) {
+	return _SessionRouter.contract.Transact(opts, "openSessionFromPool", hot_, amount_, approvalEncoded_, signature_)
+}
+
+// OpenSessionFromPool is a paid mutator transaction binding the contract method 0x15624cf6.
+//
+// Solidity: function openSessionFromPool(address hot_, uint256 amount_, bytes approvalEncoded_, bytes signature_) returns(bytes32)
+func (_SessionRouter *SessionRouterSession) OpenSessionFromPool(hot_ common.Address, amount_ *big.Int, approvalEncoded_ []byte, signature_ []byte) (*types.Transaction, error) {
+	return _SessionRouter.Contract.OpenSessionFromPool(&_SessionRouter.TransactOpts, hot_, amount_, approvalEncoded_, signature_)
+}
+
+// OpenSessionFromPool is a paid mutator transaction binding the contract method 0x15624cf6.
+//
+// Solidity: function openSessionFromPool(address hot_, uint256 amount_, bytes approvalEncoded_, bytes signature_) returns(bytes32)
+func (_SessionRouter *SessionRouterTransactorSession) OpenSessionFromPool(hot_ common.Address, amount_ *big.Int, approvalEncoded_ []byte, signature_ []byte) (*types.Transaction, error) {
+	return _SessionRouter.Contract.OpenSessionFromPool(&_SessionRouter.TransactOpts, hot_, amount_, approvalEncoded_, signature_)
+}
+
 // SetMaxSessionDuration is a paid mutator transaction binding the contract method 0xe8664577.
 //
 // Solidity: function setMaxSessionDuration(uint128 maxSessionDuration_) returns()
@@ -1932,6 +1953,788 @@ func (_SessionRouter *SessionRouterSession) WithdrawUserStakes(user_ common.Addr
 // Solidity: function withdrawUserStakes(address user_, uint8 iterations_) returns()
 func (_SessionRouter *SessionRouterTransactorSession) WithdrawUserStakes(user_ common.Address, iterations_ uint8) (*types.Transaction, error) {
 	return _SessionRouter.Contract.WithdrawUserStakes(&_SessionRouter.TransactOpts, user_, iterations_)
+}
+
+// SessionRouterAllowanceDebitedIterator is returned from FilterAllowanceDebited and is used to iterate over the raw logs and unpacked data for AllowanceDebited events raised by the SessionRouter contract.
+type SessionRouterAllowanceDebitedIterator struct {
+	Event *SessionRouterAllowanceDebited // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *SessionRouterAllowanceDebitedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(SessionRouterAllowanceDebited)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(SessionRouterAllowanceDebited)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *SessionRouterAllowanceDebitedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *SessionRouterAllowanceDebitedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// SessionRouterAllowanceDebited represents a AllowanceDebited event raised by the SessionRouter contract.
+type SessionRouterAllowanceDebited struct {
+	Hot       common.Address
+	Funder    common.Address
+	Amount    *big.Int
+	SessionId [32]byte
+	Raw       types.Log // Blockchain specific contextual infos
+}
+
+// FilterAllowanceDebited is a free log retrieval operation binding the contract event 0x005d5f17c7d38039e5043c6d5ee5a520ec9bf8dc6440e8aa14d9a0fc7c5e9989.
+//
+// Solidity: event AllowanceDebited(address indexed hot, address indexed funder, uint256 amount, bytes32 indexed sessionId)
+func (_SessionRouter *SessionRouterFilterer) FilterAllowanceDebited(opts *bind.FilterOpts, hot []common.Address, funder []common.Address, sessionId [][32]byte) (*SessionRouterAllowanceDebitedIterator, error) {
+
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+
+	var sessionIdRule []interface{}
+	for _, sessionIdItem := range sessionId {
+		sessionIdRule = append(sessionIdRule, sessionIdItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.FilterLogs(opts, "AllowanceDebited", hotRule, funderRule, sessionIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return &SessionRouterAllowanceDebitedIterator{contract: _SessionRouter.contract, event: "AllowanceDebited", logs: logs, sub: sub}, nil
+}
+
+// WatchAllowanceDebited is a free log subscription operation binding the contract event 0x005d5f17c7d38039e5043c6d5ee5a520ec9bf8dc6440e8aa14d9a0fc7c5e9989.
+//
+// Solidity: event AllowanceDebited(address indexed hot, address indexed funder, uint256 amount, bytes32 indexed sessionId)
+func (_SessionRouter *SessionRouterFilterer) WatchAllowanceDebited(opts *bind.WatchOpts, sink chan<- *SessionRouterAllowanceDebited, hot []common.Address, funder []common.Address, sessionId [][32]byte) (event.Subscription, error) {
+
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+
+	var sessionIdRule []interface{}
+	for _, sessionIdItem := range sessionId {
+		sessionIdRule = append(sessionIdRule, sessionIdItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.WatchLogs(opts, "AllowanceDebited", hotRule, funderRule, sessionIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(SessionRouterAllowanceDebited)
+				if err := _SessionRouter.contract.UnpackLog(event, "AllowanceDebited", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseAllowanceDebited is a log parse operation binding the contract event 0x005d5f17c7d38039e5043c6d5ee5a520ec9bf8dc6440e8aa14d9a0fc7c5e9989.
+//
+// Solidity: event AllowanceDebited(address indexed hot, address indexed funder, uint256 amount, bytes32 indexed sessionId)
+func (_SessionRouter *SessionRouterFilterer) ParseAllowanceDebited(log types.Log) (*SessionRouterAllowanceDebited, error) {
+	event := new(SessionRouterAllowanceDebited)
+	if err := _SessionRouter.contract.UnpackLog(event, "AllowanceDebited", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// SessionRouterAllowanceHoldCreatedIterator is returned from FilterAllowanceHoldCreated and is used to iterate over the raw logs and unpacked data for AllowanceHoldCreated events raised by the SessionRouter contract.
+type SessionRouterAllowanceHoldCreatedIterator struct {
+	Event *SessionRouterAllowanceHoldCreated // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *SessionRouterAllowanceHoldCreatedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(SessionRouterAllowanceHoldCreated)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(SessionRouterAllowanceHoldCreated)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *SessionRouterAllowanceHoldCreatedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *SessionRouterAllowanceHoldCreatedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// SessionRouterAllowanceHoldCreated represents a AllowanceHoldCreated event raised by the SessionRouter contract.
+type SessionRouterAllowanceHoldCreated struct {
+	Hot       common.Address
+	Funder    common.Address
+	Amount    *big.Int
+	ReleaseAt *big.Int
+	Raw       types.Log // Blockchain specific contextual infos
+}
+
+// FilterAllowanceHoldCreated is a free log retrieval operation binding the contract event 0x616161e42bb5a3abea7a54bfb85592517b4fb7788426131bc8ae6214fbcd4e24.
+//
+// Solidity: event AllowanceHoldCreated(address indexed hot, address indexed funder, uint256 amount, uint128 releaseAt)
+func (_SessionRouter *SessionRouterFilterer) FilterAllowanceHoldCreated(opts *bind.FilterOpts, hot []common.Address, funder []common.Address) (*SessionRouterAllowanceHoldCreatedIterator, error) {
+
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.FilterLogs(opts, "AllowanceHoldCreated", hotRule, funderRule)
+	if err != nil {
+		return nil, err
+	}
+	return &SessionRouterAllowanceHoldCreatedIterator{contract: _SessionRouter.contract, event: "AllowanceHoldCreated", logs: logs, sub: sub}, nil
+}
+
+// WatchAllowanceHoldCreated is a free log subscription operation binding the contract event 0x616161e42bb5a3abea7a54bfb85592517b4fb7788426131bc8ae6214fbcd4e24.
+//
+// Solidity: event AllowanceHoldCreated(address indexed hot, address indexed funder, uint256 amount, uint128 releaseAt)
+func (_SessionRouter *SessionRouterFilterer) WatchAllowanceHoldCreated(opts *bind.WatchOpts, sink chan<- *SessionRouterAllowanceHoldCreated, hot []common.Address, funder []common.Address) (event.Subscription, error) {
+
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.WatchLogs(opts, "AllowanceHoldCreated", hotRule, funderRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(SessionRouterAllowanceHoldCreated)
+				if err := _SessionRouter.contract.UnpackLog(event, "AllowanceHoldCreated", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseAllowanceHoldCreated is a log parse operation binding the contract event 0x616161e42bb5a3abea7a54bfb85592517b4fb7788426131bc8ae6214fbcd4e24.
+//
+// Solidity: event AllowanceHoldCreated(address indexed hot, address indexed funder, uint256 amount, uint128 releaseAt)
+func (_SessionRouter *SessionRouterFilterer) ParseAllowanceHoldCreated(log types.Log) (*SessionRouterAllowanceHoldCreated, error) {
+	event := new(SessionRouterAllowanceHoldCreated)
+	if err := _SessionRouter.contract.UnpackLog(event, "AllowanceHoldCreated", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// SessionRouterAllowanceReleasedIterator is returned from FilterAllowanceReleased and is used to iterate over the raw logs and unpacked data for AllowanceReleased events raised by the SessionRouter contract.
+type SessionRouterAllowanceReleasedIterator struct {
+	Event *SessionRouterAllowanceReleased // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *SessionRouterAllowanceReleasedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(SessionRouterAllowanceReleased)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(SessionRouterAllowanceReleased)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *SessionRouterAllowanceReleasedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *SessionRouterAllowanceReleasedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// SessionRouterAllowanceReleased represents a AllowanceReleased event raised by the SessionRouter contract.
+type SessionRouterAllowanceReleased struct {
+	Hot    common.Address
+	Funder common.Address
+	Amount *big.Int
+	Raw    types.Log // Blockchain specific contextual infos
+}
+
+// FilterAllowanceReleased is a free log retrieval operation binding the contract event 0xf2b1f52a7523559d77812c3cecfde5f41c01f219bd6e128f4a4f6bcea1f3d0d2.
+//
+// Solidity: event AllowanceReleased(address indexed hot, address indexed funder, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) FilterAllowanceReleased(opts *bind.FilterOpts, hot []common.Address, funder []common.Address) (*SessionRouterAllowanceReleasedIterator, error) {
+
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.FilterLogs(opts, "AllowanceReleased", hotRule, funderRule)
+	if err != nil {
+		return nil, err
+	}
+	return &SessionRouterAllowanceReleasedIterator{contract: _SessionRouter.contract, event: "AllowanceReleased", logs: logs, sub: sub}, nil
+}
+
+// WatchAllowanceReleased is a free log subscription operation binding the contract event 0xf2b1f52a7523559d77812c3cecfde5f41c01f219bd6e128f4a4f6bcea1f3d0d2.
+//
+// Solidity: event AllowanceReleased(address indexed hot, address indexed funder, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) WatchAllowanceReleased(opts *bind.WatchOpts, sink chan<- *SessionRouterAllowanceReleased, hot []common.Address, funder []common.Address) (event.Subscription, error) {
+
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.WatchLogs(opts, "AllowanceReleased", hotRule, funderRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(SessionRouterAllowanceReleased)
+				if err := _SessionRouter.contract.UnpackLog(event, "AllowanceReleased", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseAllowanceReleased is a log parse operation binding the contract event 0xf2b1f52a7523559d77812c3cecfde5f41c01f219bd6e128f4a4f6bcea1f3d0d2.
+//
+// Solidity: event AllowanceReleased(address indexed hot, address indexed funder, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) ParseAllowanceReleased(log types.Log) (*SessionRouterAllowanceReleased, error) {
+	event := new(SessionRouterAllowanceReleased)
+	if err := _SessionRouter.contract.UnpackLog(event, "AllowanceReleased", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// SessionRouterAllowanceWithdrawQueuedIterator is returned from FilterAllowanceWithdrawQueued and is used to iterate over the raw logs and unpacked data for AllowanceWithdrawQueued events raised by the SessionRouter contract.
+type SessionRouterAllowanceWithdrawQueuedIterator struct {
+	Event *SessionRouterAllowanceWithdrawQueued // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *SessionRouterAllowanceWithdrawQueuedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(SessionRouterAllowanceWithdrawQueued)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(SessionRouterAllowanceWithdrawQueued)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *SessionRouterAllowanceWithdrawQueuedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *SessionRouterAllowanceWithdrawQueuedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// SessionRouterAllowanceWithdrawQueued represents a AllowanceWithdrawQueued event raised by the SessionRouter contract.
+type SessionRouterAllowanceWithdrawQueued struct {
+	Funder common.Address
+	Hot    common.Address
+	Amount *big.Int
+	Raw    types.Log // Blockchain specific contextual infos
+}
+
+// FilterAllowanceWithdrawQueued is a free log retrieval operation binding the contract event 0x602b71210b359c76b6ebf4855f4e06e0a51e170b5468ff033182c9e3524c404b.
+//
+// Solidity: event AllowanceWithdrawQueued(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) FilterAllowanceWithdrawQueued(opts *bind.FilterOpts, funder []common.Address, hot []common.Address) (*SessionRouterAllowanceWithdrawQueuedIterator, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.FilterLogs(opts, "AllowanceWithdrawQueued", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return &SessionRouterAllowanceWithdrawQueuedIterator{contract: _SessionRouter.contract, event: "AllowanceWithdrawQueued", logs: logs, sub: sub}, nil
+}
+
+// WatchAllowanceWithdrawQueued is a free log subscription operation binding the contract event 0x602b71210b359c76b6ebf4855f4e06e0a51e170b5468ff033182c9e3524c404b.
+//
+// Solidity: event AllowanceWithdrawQueued(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) WatchAllowanceWithdrawQueued(opts *bind.WatchOpts, sink chan<- *SessionRouterAllowanceWithdrawQueued, funder []common.Address, hot []common.Address) (event.Subscription, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.WatchLogs(opts, "AllowanceWithdrawQueued", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(SessionRouterAllowanceWithdrawQueued)
+				if err := _SessionRouter.contract.UnpackLog(event, "AllowanceWithdrawQueued", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseAllowanceWithdrawQueued is a log parse operation binding the contract event 0x602b71210b359c76b6ebf4855f4e06e0a51e170b5468ff033182c9e3524c404b.
+//
+// Solidity: event AllowanceWithdrawQueued(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) ParseAllowanceWithdrawQueued(log types.Log) (*SessionRouterAllowanceWithdrawQueued, error) {
+	event := new(SessionRouterAllowanceWithdrawQueued)
+	if err := _SessionRouter.contract.UnpackLog(event, "AllowanceWithdrawQueued", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// SessionRouterAllowanceWithdrawnIterator is returned from FilterAllowanceWithdrawn and is used to iterate over the raw logs and unpacked data for AllowanceWithdrawn events raised by the SessionRouter contract.
+type SessionRouterAllowanceWithdrawnIterator struct {
+	Event *SessionRouterAllowanceWithdrawn // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *SessionRouterAllowanceWithdrawnIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(SessionRouterAllowanceWithdrawn)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(SessionRouterAllowanceWithdrawn)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *SessionRouterAllowanceWithdrawnIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *SessionRouterAllowanceWithdrawnIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// SessionRouterAllowanceWithdrawn represents a AllowanceWithdrawn event raised by the SessionRouter contract.
+type SessionRouterAllowanceWithdrawn struct {
+	Funder common.Address
+	Hot    common.Address
+	Amount *big.Int
+	Raw    types.Log // Blockchain specific contextual infos
+}
+
+// FilterAllowanceWithdrawn is a free log retrieval operation binding the contract event 0xca13d6a604110950505d5d76ef25e820785641edd459ef25b69a3d69ca648db3.
+//
+// Solidity: event AllowanceWithdrawn(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) FilterAllowanceWithdrawn(opts *bind.FilterOpts, funder []common.Address, hot []common.Address) (*SessionRouterAllowanceWithdrawnIterator, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.FilterLogs(opts, "AllowanceWithdrawn", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return &SessionRouterAllowanceWithdrawnIterator{contract: _SessionRouter.contract, event: "AllowanceWithdrawn", logs: logs, sub: sub}, nil
+}
+
+// WatchAllowanceWithdrawn is a free log subscription operation binding the contract event 0xca13d6a604110950505d5d76ef25e820785641edd459ef25b69a3d69ca648db3.
+//
+// Solidity: event AllowanceWithdrawn(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) WatchAllowanceWithdrawn(opts *bind.WatchOpts, sink chan<- *SessionRouterAllowanceWithdrawn, funder []common.Address, hot []common.Address) (event.Subscription, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.WatchLogs(opts, "AllowanceWithdrawn", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(SessionRouterAllowanceWithdrawn)
+				if err := _SessionRouter.contract.UnpackLog(event, "AllowanceWithdrawn", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseAllowanceWithdrawn is a log parse operation binding the contract event 0xca13d6a604110950505d5d76ef25e820785641edd459ef25b69a3d69ca648db3.
+//
+// Solidity: event AllowanceWithdrawn(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) ParseAllowanceWithdrawn(log types.Log) (*SessionRouterAllowanceWithdrawn, error) {
+	event := new(SessionRouterAllowanceWithdrawn)
+	if err := _SessionRouter.contract.UnpackLog(event, "AllowanceWithdrawn", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
 }
 
 // SessionRouterInitializedIterator is returned from FilterInitialized and is used to iterate over the raw logs and unpacked data for Initialized events raised by the SessionRouter contract.
@@ -2062,6 +2865,160 @@ func (_SessionRouter *SessionRouterFilterer) WatchInitialized(opts *bind.WatchOp
 func (_SessionRouter *SessionRouterFilterer) ParseInitialized(log types.Log) (*SessionRouterInitialized, error) {
 	event := new(SessionRouterInitialized)
 	if err := _SessionRouter.contract.UnpackLog(event, "Initialized", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// SessionRouterPendingWithdrawalPaidIterator is returned from FilterPendingWithdrawalPaid and is used to iterate over the raw logs and unpacked data for PendingWithdrawalPaid events raised by the SessionRouter contract.
+type SessionRouterPendingWithdrawalPaidIterator struct {
+	Event *SessionRouterPendingWithdrawalPaid // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *SessionRouterPendingWithdrawalPaidIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(SessionRouterPendingWithdrawalPaid)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(SessionRouterPendingWithdrawalPaid)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *SessionRouterPendingWithdrawalPaidIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *SessionRouterPendingWithdrawalPaidIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// SessionRouterPendingWithdrawalPaid represents a PendingWithdrawalPaid event raised by the SessionRouter contract.
+type SessionRouterPendingWithdrawalPaid struct {
+	Funder common.Address
+	Hot    common.Address
+	Amount *big.Int
+	Raw    types.Log // Blockchain specific contextual infos
+}
+
+// FilterPendingWithdrawalPaid is a free log retrieval operation binding the contract event 0xe6aad6052eabed5692a880d6df2cfb242532fdbc7caa99a818138a6dd8b3ce66.
+//
+// Solidity: event PendingWithdrawalPaid(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) FilterPendingWithdrawalPaid(opts *bind.FilterOpts, funder []common.Address, hot []common.Address) (*SessionRouterPendingWithdrawalPaidIterator, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.FilterLogs(opts, "PendingWithdrawalPaid", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return &SessionRouterPendingWithdrawalPaidIterator{contract: _SessionRouter.contract, event: "PendingWithdrawalPaid", logs: logs, sub: sub}, nil
+}
+
+// WatchPendingWithdrawalPaid is a free log subscription operation binding the contract event 0xe6aad6052eabed5692a880d6df2cfb242532fdbc7caa99a818138a6dd8b3ce66.
+//
+// Solidity: event PendingWithdrawalPaid(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) WatchPendingWithdrawalPaid(opts *bind.WatchOpts, sink chan<- *SessionRouterPendingWithdrawalPaid, funder []common.Address, hot []common.Address) (event.Subscription, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.WatchLogs(opts, "PendingWithdrawalPaid", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(SessionRouterPendingWithdrawalPaid)
+				if err := _SessionRouter.contract.UnpackLog(event, "PendingWithdrawalPaid", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParsePendingWithdrawalPaid is a log parse operation binding the contract event 0xe6aad6052eabed5692a880d6df2cfb242532fdbc7caa99a818138a6dd8b3ce66.
+//
+// Solidity: event PendingWithdrawalPaid(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) ParsePendingWithdrawalPaid(log types.Log) (*SessionRouterPendingWithdrawalPaid, error) {
+	event := new(SessionRouterPendingWithdrawalPaid)
+	if err := _SessionRouter.contract.UnpackLog(event, "PendingWithdrawalPaid", log); err != nil {
 		return nil, err
 	}
 	event.Raw = log
@@ -2386,6 +3343,468 @@ func (_SessionRouter *SessionRouterFilterer) WatchSessionOpened(opts *bind.Watch
 func (_SessionRouter *SessionRouterFilterer) ParseSessionOpened(log types.Log) (*SessionRouterSessionOpened, error) {
 	event := new(SessionRouterSessionOpened)
 	if err := _SessionRouter.contract.UnpackLog(event, "SessionOpened", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// SessionRouterStakingAllowanceFundedIterator is returned from FilterStakingAllowanceFunded and is used to iterate over the raw logs and unpacked data for StakingAllowanceFunded events raised by the SessionRouter contract.
+type SessionRouterStakingAllowanceFundedIterator struct {
+	Event *SessionRouterStakingAllowanceFunded // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *SessionRouterStakingAllowanceFundedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(SessionRouterStakingAllowanceFunded)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(SessionRouterStakingAllowanceFunded)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *SessionRouterStakingAllowanceFundedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *SessionRouterStakingAllowanceFundedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// SessionRouterStakingAllowanceFunded represents a StakingAllowanceFunded event raised by the SessionRouter contract.
+type SessionRouterStakingAllowanceFunded struct {
+	Funder common.Address
+	Hot    common.Address
+	Amount *big.Int
+	Raw    types.Log // Blockchain specific contextual infos
+}
+
+// FilterStakingAllowanceFunded is a free log retrieval operation binding the contract event 0x9961efb9eb5578cb5221db6ab9b32e0fa0c228a1c48a099a9cb0e1bbc0ffb9cf.
+//
+// Solidity: event StakingAllowanceFunded(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) FilterStakingAllowanceFunded(opts *bind.FilterOpts, funder []common.Address, hot []common.Address) (*SessionRouterStakingAllowanceFundedIterator, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.FilterLogs(opts, "StakingAllowanceFunded", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return &SessionRouterStakingAllowanceFundedIterator{contract: _SessionRouter.contract, event: "StakingAllowanceFunded", logs: logs, sub: sub}, nil
+}
+
+// WatchStakingAllowanceFunded is a free log subscription operation binding the contract event 0x9961efb9eb5578cb5221db6ab9b32e0fa0c228a1c48a099a9cb0e1bbc0ffb9cf.
+//
+// Solidity: event StakingAllowanceFunded(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) WatchStakingAllowanceFunded(opts *bind.WatchOpts, sink chan<- *SessionRouterStakingAllowanceFunded, funder []common.Address, hot []common.Address) (event.Subscription, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.WatchLogs(opts, "StakingAllowanceFunded", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(SessionRouterStakingAllowanceFunded)
+				if err := _SessionRouter.contract.UnpackLog(event, "StakingAllowanceFunded", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseStakingAllowanceFunded is a log parse operation binding the contract event 0x9961efb9eb5578cb5221db6ab9b32e0fa0c228a1c48a099a9cb0e1bbc0ffb9cf.
+//
+// Solidity: event StakingAllowanceFunded(address indexed funder, address indexed hot, uint256 amount)
+func (_SessionRouter *SessionRouterFilterer) ParseStakingAllowanceFunded(log types.Log) (*SessionRouterStakingAllowanceFunded, error) {
+	event := new(SessionRouterStakingAllowanceFunded)
+	if err := _SessionRouter.contract.UnpackLog(event, "StakingAllowanceFunded", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// SessionRouterStakingAllowanceGrantedIterator is returned from FilterStakingAllowanceGranted and is used to iterate over the raw logs and unpacked data for StakingAllowanceGranted events raised by the SessionRouter contract.
+type SessionRouterStakingAllowanceGrantedIterator struct {
+	Event *SessionRouterStakingAllowanceGranted // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *SessionRouterStakingAllowanceGrantedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(SessionRouterStakingAllowanceGranted)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(SessionRouterStakingAllowanceGranted)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *SessionRouterStakingAllowanceGrantedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *SessionRouterStakingAllowanceGrantedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// SessionRouterStakingAllowanceGranted represents a StakingAllowanceGranted event raised by the SessionRouter contract.
+type SessionRouterStakingAllowanceGranted struct {
+	Funder    common.Address
+	Hot       common.Address
+	MaxAmount *big.Int
+	Expiry    *big.Int
+	Raw       types.Log // Blockchain specific contextual infos
+}
+
+// FilterStakingAllowanceGranted is a free log retrieval operation binding the contract event 0x3aa047f40a56a8f90a0363fd2daede670681c2a6c746b0abd8ceb822e7aa2ba9.
+//
+// Solidity: event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 maxAmount, uint128 expiry)
+func (_SessionRouter *SessionRouterFilterer) FilterStakingAllowanceGranted(opts *bind.FilterOpts, funder []common.Address, hot []common.Address) (*SessionRouterStakingAllowanceGrantedIterator, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.FilterLogs(opts, "StakingAllowanceGranted", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return &SessionRouterStakingAllowanceGrantedIterator{contract: _SessionRouter.contract, event: "StakingAllowanceGranted", logs: logs, sub: sub}, nil
+}
+
+// WatchStakingAllowanceGranted is a free log subscription operation binding the contract event 0x3aa047f40a56a8f90a0363fd2daede670681c2a6c746b0abd8ceb822e7aa2ba9.
+//
+// Solidity: event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 maxAmount, uint128 expiry)
+func (_SessionRouter *SessionRouterFilterer) WatchStakingAllowanceGranted(opts *bind.WatchOpts, sink chan<- *SessionRouterStakingAllowanceGranted, funder []common.Address, hot []common.Address) (event.Subscription, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.WatchLogs(opts, "StakingAllowanceGranted", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(SessionRouterStakingAllowanceGranted)
+				if err := _SessionRouter.contract.UnpackLog(event, "StakingAllowanceGranted", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseStakingAllowanceGranted is a log parse operation binding the contract event 0x3aa047f40a56a8f90a0363fd2daede670681c2a6c746b0abd8ceb822e7aa2ba9.
+//
+// Solidity: event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 maxAmount, uint128 expiry)
+func (_SessionRouter *SessionRouterFilterer) ParseStakingAllowanceGranted(log types.Log) (*SessionRouterStakingAllowanceGranted, error) {
+	event := new(SessionRouterStakingAllowanceGranted)
+	if err := _SessionRouter.contract.UnpackLog(event, "StakingAllowanceGranted", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// SessionRouterStakingAllowanceRevokedIterator is returned from FilterStakingAllowanceRevoked and is used to iterate over the raw logs and unpacked data for StakingAllowanceRevoked events raised by the SessionRouter contract.
+type SessionRouterStakingAllowanceRevokedIterator struct {
+	Event *SessionRouterStakingAllowanceRevoked // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *SessionRouterStakingAllowanceRevokedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(SessionRouterStakingAllowanceRevoked)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(SessionRouterStakingAllowanceRevoked)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *SessionRouterStakingAllowanceRevokedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *SessionRouterStakingAllowanceRevokedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// SessionRouterStakingAllowanceRevoked represents a StakingAllowanceRevoked event raised by the SessionRouter contract.
+type SessionRouterStakingAllowanceRevoked struct {
+	Funder common.Address
+	Hot    common.Address
+	Raw    types.Log // Blockchain specific contextual infos
+}
+
+// FilterStakingAllowanceRevoked is a free log retrieval operation binding the contract event 0x76fc8da59fc7b37da99fae44440bf809557bb38547617a33fcddc3c7721696c0.
+//
+// Solidity: event StakingAllowanceRevoked(address indexed funder, address indexed hot)
+func (_SessionRouter *SessionRouterFilterer) FilterStakingAllowanceRevoked(opts *bind.FilterOpts, funder []common.Address, hot []common.Address) (*SessionRouterStakingAllowanceRevokedIterator, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.FilterLogs(opts, "StakingAllowanceRevoked", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return &SessionRouterStakingAllowanceRevokedIterator{contract: _SessionRouter.contract, event: "StakingAllowanceRevoked", logs: logs, sub: sub}, nil
+}
+
+// WatchStakingAllowanceRevoked is a free log subscription operation binding the contract event 0x76fc8da59fc7b37da99fae44440bf809557bb38547617a33fcddc3c7721696c0.
+//
+// Solidity: event StakingAllowanceRevoked(address indexed funder, address indexed hot)
+func (_SessionRouter *SessionRouterFilterer) WatchStakingAllowanceRevoked(opts *bind.WatchOpts, sink chan<- *SessionRouterStakingAllowanceRevoked, funder []common.Address, hot []common.Address) (event.Subscription, error) {
+
+	var funderRule []interface{}
+	for _, funderItem := range funder {
+		funderRule = append(funderRule, funderItem)
+	}
+	var hotRule []interface{}
+	for _, hotItem := range hot {
+		hotRule = append(hotRule, hotItem)
+	}
+
+	logs, sub, err := _SessionRouter.contract.WatchLogs(opts, "StakingAllowanceRevoked", funderRule, hotRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(SessionRouterStakingAllowanceRevoked)
+				if err := _SessionRouter.contract.UnpackLog(event, "StakingAllowanceRevoked", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseStakingAllowanceRevoked is a log parse operation binding the contract event 0x76fc8da59fc7b37da99fae44440bf809557bb38547617a33fcddc3c7721696c0.
+//
+// Solidity: event StakingAllowanceRevoked(address indexed funder, address indexed hot)
+func (_SessionRouter *SessionRouterFilterer) ParseStakingAllowanceRevoked(log types.Log) (*SessionRouterStakingAllowanceRevoked, error) {
+	event := new(SessionRouterStakingAllowanceRevoked)
+	if err := _SessionRouter.contract.UnpackLog(event, "StakingAllowanceRevoked", log); err != nil {
 		return nil, err
 	}
 	event.Raw = log

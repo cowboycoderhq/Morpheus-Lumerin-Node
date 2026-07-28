@@ -46,6 +46,9 @@ type Config struct {
 		DiamondContractAddress *common.Address `env:"DIAMOND_CONTRACT_ADDRESS" flag:"diamond-address"   validate:"omitempty,eth_addr"`
 		MorTokenAddress        *common.Address `env:"MOR_TOKEN_ADDRESS"        flag:"mor-token-address" validate:"omitempty,eth_addr"`
 		WalletPrivateKey       *lib.HexString  `env:"WALLET_PRIVATE_KEY"       flag:"wallet-private-key"     desc:"if set, will use this private key to sign transactions, otherwise it will be retrieved from the system keychain"`
+		StakingFundSource      string          `env:"STAKING_FUND_SOURCE"      flag:"staking-fund-source"    validate:"omitempty,oneof=wallet auto pool" desc:"funding source for session stakes: wallet = ERC-20 balance (default), pool = delegated staking pool (openSessionFromPool), auto = wallet first, pool when the wallet balance is insufficient"`
+		StakeAutoClaim         bool            `env:"STAKE_AUTO_CLAIM"         flag:"stake-auto-claim"       desc:"periodically withdraw releasable time-locked user stakes (userStakesOnHold) back to the wallet"`
+		StakeAutoClaimInterval time.Duration   `env:"STAKE_AUTO_CLAIM_INTERVAL" flag:"stake-auto-claim-interval" validate:"omitempty,duration" desc:"how often to check for releasable user stakes when stake-auto-claim is enabled"`
 	}
 	Log struct {
 		Color        bool   `env:"LOG_COLOR"            flag:"log-color"`
@@ -123,6 +126,14 @@ func (cfg *Config) SetDefaults() {
 	}
 	if cfg.Blockchain.ExplorerMaxRetries == 0 {
 		cfg.Blockchain.ExplorerMaxRetries = 5
+	}
+
+	// Marketplace
+	if cfg.Marketplace.StakingFundSource == "" {
+		cfg.Marketplace.StakingFundSource = "wallet"
+	}
+	if cfg.Marketplace.StakeAutoClaimInterval == 0 {
+		cfg.Marketplace.StakeAutoClaimInterval = 1 * time.Hour
 	}
 
 	// Log
@@ -282,6 +293,9 @@ func (cfg *Config) GetSanitized() interface{} {
 
 	publicCfg.Marketplace.DiamondContractAddress = cfg.Marketplace.DiamondContractAddress
 	publicCfg.Marketplace.MorTokenAddress = cfg.Marketplace.MorTokenAddress
+	publicCfg.Marketplace.StakingFundSource = cfg.Marketplace.StakingFundSource
+	publicCfg.Marketplace.StakeAutoClaim = cfg.Marketplace.StakeAutoClaim
+	publicCfg.Marketplace.StakeAutoClaimInterval = cfg.Marketplace.StakeAutoClaimInterval
 
 	publicCfg.Log.Color = cfg.Log.Color
 	publicCfg.Log.FolderPath = cfg.Log.FolderPath

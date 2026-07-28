@@ -53,7 +53,26 @@ const supplyBudgetCacheTTL = 55 * time.Second
 // propagated across RPC nodes.
 const sessionTxMaxRetries = 3
 
+// stakeWithdrawIterations is the default iterations argument for
+// withdrawUserStakes / getUserStakesOnHold (max on-hold entries per scan).
+const stakeWithdrawIterations = uint8(255)
+
+// stakeAutoClaimMaxRounds caps withdrawUserStakes transactions per auto-claim
+// run, bounding gas spend when a large on-hold backlog has accumulated.
+const stakeAutoClaimMaxRounds = 20
+
 var maxUint256 = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
+
+// Session stake funding sources (STAKING_FUND_SOURCE).
+const (
+	// FundSourceWallet stakes from the wallet's ERC-20 MOR balance (legacy behavior).
+	FundSourceWallet = "wallet"
+	// FundSourcePool stakes from the delegated staking pool (openSessionFromPool).
+	FundSourcePool = "pool"
+	// FundSourceAuto stakes from the wallet when its balance covers the stake,
+	// falling back to the delegated pool otherwise.
+	FundSourceAuto = "auto"
+)
 
 type BlockchainService struct {
 	ethClient           i.EthClient
@@ -61,6 +80,8 @@ type BlockchainService struct {
 	modelRegistry       *r.ModelRegistry
 	marketplace         *r.Marketplace
 	sessionRouter       *r.SessionRouter
+	delegateStaking     *r.DelegateStaking
+	stakingFundSource   string
 	morToken            *r.MorToken
 	morTokenAddr        common.Address
 	explorerClient      ExplorerClientInterface
@@ -133,12 +154,18 @@ func NewBlockchainService(
 	logEthRpc lib.ILogger,
 	legacyTx bool,
 	attestationVerifier *attestation.Verifier,
+	stakingFundSource string,
 ) *BlockchainService {
 	providerRegistry := r.NewProviderRegistry(diamonContractAddr, ethClient, mc, logEthRpc)
 	modelRegistry := r.NewModelRegistry(diamonContractAddr, ethClient, mc, logEthRpc)
 	marketplace := r.NewMarketplace(diamonContractAddr, ethClient, mc, logEthRpc)
 	sessionRouter := r.NewSessionRouter(diamonContractAddr, ethClient, mc, logEthRpc)
+	delegateStaking := r.NewDelegateStaking(diamonContractAddr, ethClient, logEthRpc)
 	morToken := r.NewMorToken(morTokenAddr, ethClient, logEthRpc)
+
+	if stakingFundSource == "" {
+		stakingFundSource = FundSourceWallet
+	}
 
 	txEscalator := lib.NewTransactionEscalator(ethClient, log, lib.DefaultEscalationConfig())
 
@@ -148,6 +175,8 @@ func NewBlockchainService(
 		modelRegistry:       modelRegistry,
 		marketplace:         marketplace,
 		sessionRouter:       sessionRouter,
+		delegateStaking:     delegateStaking,
+		stakingFundSource:   stakingFundSource,
 		legacyTx:            legacyTx,
 		privateKey:          privateKey,
 		morToken:            morToken,
@@ -367,19 +396,30 @@ func (s *BlockchainService) OpenSession(ctx context.Context, approval, approvalS
 		return common.Hash{}, err
 	}
 
-	// Step 1: Approve MOR tokens with escalation (skip if allowance is already sufficient)
-	currentAllowance, err := s.morToken.GetAllowance(ctx, addr, s.diamonContractAddr)
+	// Decide the funding source for this session's stake.
+	usePool, err := s.shouldFundFromPool(ctx, addr, stake, directPayment, log)
 	if err != nil {
-		return common.Hash{}, fmt.Errorf("failed to get current MOR allowance: %w", err)
+		return common.Hash{}, err
 	}
 
-	stakeReserve := new(big.Int).Mul(stake, big.NewInt(allowanceReserveMultiplier))
-	needsApproval := currentAllowance.Cmp(stakeReserve) < 0
-	wouldOverflow := new(big.Int).Sub(maxUint256, currentAllowance).Cmp(stake) < 0
+	// Step 1: Approve MOR tokens with escalation (skip if allowance is already
+	// sufficient). Pool-funded sessions skip this entirely: the stake never
+	// leaves the diamond, so no ERC-20 allowance is involved.
+	needsApproval := false
+	if !usePool {
+		currentAllowance, err := s.morToken.GetAllowance(ctx, addr, s.diamonContractAddr)
+		if err != nil {
+			return common.Hash{}, fmt.Errorf("failed to get current MOR allowance: %w", err)
+		}
 
-	if wouldOverflow {
-		log.Warnf("skipping increaseAllowance: current allowance %s + stake %s would overflow uint256", currentAllowance.String(), stake.String())
-		needsApproval = false
+		stakeReserve := new(big.Int).Mul(stake, big.NewInt(allowanceReserveMultiplier))
+		needsApproval = currentAllowance.Cmp(stakeReserve) < 0
+		wouldOverflow := new(big.Int).Sub(maxUint256, currentAllowance).Cmp(stake) < 0
+
+		if wouldOverflow {
+			log.Warnf("skipping increaseAllowance: current allowance %s + stake %s would overflow uint256", currentAllowance.String(), stake.String())
+			needsApproval = false
+		}
 	}
 
 	if needsApproval {
@@ -438,6 +478,9 @@ func (s *BlockchainService) OpenSession(ctx context.Context, approval, approvalS
 			ctx,
 			sessionBaseOpts,
 			func(opts *bind.TransactOpts) (*types.Transaction, error) {
+				if usePool {
+					return s.sessionRouter.OpenSessionFromPoolTx(opts, approval, approvalSig, stake)
+				}
 				return s.sessionRouter.OpenSessionTx(opts, approval, approvalSig, stake, directPayment)
 			},
 			s.legacyTx,
@@ -500,6 +543,152 @@ func (s *BlockchainService) OpenSession(ctx context.Context, approval, approvalS
 	}
 
 	return sessionID, err
+}
+
+// shouldFundFromPool decides whether a session's stake is drawn from the
+// delegated staking pool instead of the wallet's ERC-20 balance, according
+// to STAKING_FUND_SOURCE (wallet | auto | pool).
+func (s *BlockchainService) shouldFundFromPool(ctx context.Context, addr common.Address, stake *big.Int, directPayment bool, log lib.ILogger) (bool, error) {
+	switch s.stakingFundSource {
+	case FundSourcePool:
+		if directPayment {
+			// The pool only ever pays funds back to their funder, so a session that
+			// pays the provider from the user stake cannot be pool-funded.
+			return false, fmt.Errorf("direct payment sessions cannot be funded from the delegated staking pool (STAKING_FUND_SOURCE=pool)")
+		}
+		return true, nil
+	case FundSourceAuto:
+		if directPayment {
+			return false, nil
+		}
+		balance, err := s.morToken.GetBalance(ctx, addr)
+		if err != nil {
+			return false, fmt.Errorf("failed to get MOR balance: %w", err)
+		}
+		if balance.Cmp(stake) >= 0 {
+			return false, nil
+		}
+		poolAvailable, err := s.delegateStaking.GetAvailableToStake(ctx, addr)
+		if err != nil {
+			log.Warnf("wallet balance %s below stake %s and delegated pool read failed (%s), attempting wallet anyway", balance, stake, err)
+			return false, nil
+		}
+		if poolAvailable.Cmp(stake) >= 0 {
+			log.Infof("wallet balance %s below stake %s, funding session from delegated pool (available %s)", balance, stake, poolAvailable)
+			return true, nil
+		}
+		log.Warnf("wallet balance %s and delegated pool available %s are both below stake %s, attempting wallet anyway", balance, poolAvailable, stake)
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
+// GetUserStakesOnHold returns the releasable and still time-locked user stake
+// held by the diamond for the router's wallet (issue #827).
+func (s *BlockchainService) GetUserStakesOnHold(ctx context.Context) (available *big.Int, hold *big.Int, err error) {
+	prKey, err := s.privateKey.GetPrivateKey()
+	if err != nil {
+		return nil, nil, lib.WrapError(ErrPrKey, err)
+	}
+
+	addr, err := lib.PrivKeyBytesToAddr(prKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return s.sessionRouter.GetUserStakesOnHold(ctx, addr, stakeWithdrawIterations)
+}
+
+// WithdrawUserStakes moves releasable time-locked user stake from the diamond
+// back to the router's wallet (issue #827).
+func (s *BlockchainService) WithdrawUserStakes(ctx context.Context, iterations uint8) (common.Hash, error) {
+	if iterations == 0 {
+		iterations = stakeWithdrawIterations
+	}
+
+	prKey, err := s.privateKey.GetPrivateKey()
+	if err != nil {
+		return common.Hash{}, lib.WrapError(ErrPrKey, err)
+	}
+
+	addr, err := lib.PrivKeyBytesToAddr(prKey)
+	if err != nil {
+		return common.Hash{}, err
+	}
+
+	baseOpts, err := s.getTransactOpts(ctx, prKey)
+	if err != nil {
+		return common.Hash{}, lib.WrapError(ErrTxOpts, err)
+	}
+
+	receipt, err := s.txEscalator.SendWithEscalation(
+		ctx,
+		baseOpts,
+		func(opts *bind.TransactOpts) (*types.Transaction, error) {
+			return s.sessionRouter.WithdrawUserStakesTx(opts, addr, iterations)
+		},
+		s.legacyTx,
+	)
+	if err != nil {
+		s.handleTxError(ctx, addr, err)
+		return common.Hash{}, lib.WrapError(ErrSendTx, err)
+	}
+	if receipt.Status != 1 {
+		return receipt.TxHash, fmt.Errorf("withdrawUserStakes tx failed with status %d", receipt.Status)
+	}
+
+	return receipt.TxHash, nil
+}
+
+// StartStakeAutoClaim periodically withdraws releasable time-locked user
+// stakes back to the wallet (STAKE_AUTO_CLAIM, issue #827). Blocks until the
+// context is cancelled; run it as a goroutine.
+func (s *BlockchainService) StartStakeAutoClaim(ctx context.Context, interval time.Duration) {
+	s.log.Infof("stake auto-claim enabled, checking every %s", interval)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.claimReleasableStakes(ctx); err != nil {
+				s.log.Warnf("stake auto-claim: %s", err)
+			}
+		}
+	}
+}
+
+// claimReleasableStakes drains releasable on-hold stake. The loop is driven by
+// transaction success rather than re-reading the view between rounds, because
+// a load-balanced RPC can serve stale post-tx state. The contract's
+// SessionUserAmountToWithdrawIsZero revert is the benign terminator.
+func (s *BlockchainService) claimReleasableStakes(ctx context.Context) error {
+	available, _, err := s.GetUserStakesOnHold(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to read stakes on hold: %w", err)
+	}
+	if available.Sign() == 0 {
+		return nil
+	}
+
+	s.log.Infof("stake auto-claim: %s MOR(wei) releasable, withdrawing", available.String())
+
+	for round := 0; round < stakeAutoClaimMaxRounds; round++ {
+		txHash, err := s.WithdrawUserStakes(ctx, stakeWithdrawIterations)
+		if err != nil {
+			if strings.Contains(err.Error(), "SessionUserAmountToWithdrawIsZero") {
+				return nil
+			}
+			return err
+		}
+		s.log.Infof("stake auto-claim: withdraw tx %s mined (round %d)", txHash.Hex(), round+1)
+	}
+
+	return nil
 }
 
 func (s *BlockchainService) CreateNewProvider(ctx context.Context, stake *lib.BigInt, endpoint string) (*structs.Provider, error) {

@@ -1491,6 +1491,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/blockchain/stakes/onhold": {
+            "get": {
+                "security": [
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "Get the releasable and still time-locked user stake held by the diamond for the router's wallet",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "transactions"
+                ],
+                "summary": "Get User Stakes On Hold",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/structs.StakesOnHoldRes"
+                        }
+                    }
+                }
+            }
+        },
+        "/blockchain/stakes/withdraw": {
+            "post": {
+                "security": [
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "Withdraw releasable time-locked user stake from the diamond back to the router's wallet",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "transactions"
+                ],
+                "summary": "Withdraw User Stakes On Hold",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Max on-hold entries to process (default 255)",
+                        "name": "iterations",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/structs.TxRes"
+                        }
+                    }
+                }
+            }
+        },
         "/blockchain/token/supply": {
             "get": {
                 "security": [
@@ -4690,6 +4748,21 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/structs.Session"
                     }
+                }
+            }
+        },
+        "structs.StakesOnHoldRes": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "description": "Available is the releasable (past releaseAt) user stake in the diamond.",
+                    "type": "integer",
+                    "example": 100000000
+                },
+                "hold": {
+                    "description": "Hold is the user stake still time-locked until its release day.",
+                    "type": "integer",
+                    "example": 100000000
                 }
             }
         },
