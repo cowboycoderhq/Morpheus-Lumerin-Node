@@ -636,6 +636,24 @@ describe('SessionRouter', () => {
       await sessionRouter.getProviderModelStats(modelId, PROVIDER);
       await sessionRouter.getModelStats(modelId);
     });
+    it('should day-lock the used stipend when closing late on the same day the session ended (#830)', async () => {
+      const { sessionId } = await _createSession();
+      const session = await sessionRouter.getSession(sessionId);
+
+      const userBalBefore = await token.balanceOf(SECOND);
+
+      // late close, but still inside the stipend epoch (same calendar day as endsAt)
+      await setTime(Number(session.endsAt) + 100);
+      const { msg: receiptMsg, signature: receiptSig } = await getReceipt(PROVIDER, sessionId, 0, 0);
+      await sessionRouter.connect(SECOND).closeSession(receiptMsg, receiptSig);
+
+      const stakesOnHold = await sessionRouter.getUserStakesOnHold(SECOND, 20);
+      expect(stakesOnHold[0]).to.eq(0);
+      expect(stakesOnHold[1]).to.greaterThan(0);
+
+      const userBalAfter = await token.balanceOf(SECOND);
+      expect(userBalAfter - userBalBefore).to.eq(wei(50) - stakesOnHold[1]);
+    });
     it('should claim provider rewards and close session, late closure', async () => {
       const { sessionId, openedAt } = await _createSession(true);
 

@@ -378,7 +378,8 @@ describe('DelegateStaking', () => {
 
       const hotBalBefore = await token.balanceOf(HOT);
 
-      await setTime(Number(session.endsAt) + 1);
+      // close after the end-day boundary: the stipend epoch is over, nothing to day-lock (#830)
+      await setTime(Number(session.endsAt) + DAY);
       await _closeSession(sessionId);
 
       const [freeBalance, lockedBalance, , , holdCount] = await delegateStaking.getStakingPool(HOT);
@@ -399,7 +400,7 @@ describe('DelegateStaking', () => {
       const sessionId = await _openPoolSession(wei(50));
       const session = await sessionRouter.getSession(sessionId);
 
-      await setTime(Number(session.endsAt) + 1);
+      await setTime(Number(session.endsAt) + DAY);
       await _closeSession(sessionId);
 
       const sessionId2 = await _openPoolSession(wei(100), 1);
@@ -442,6 +443,49 @@ describe('DelegateStaking', () => {
       const [freeAfter, lockedAfter, , , holdsAfter] = await delegateStaking.getStakingPool(HOT);
       expect([freeAfter, lockedAfter, holdsAfter]).to.deep.eq([wei(100), 0n, 0n]);
       expect((await delegateStaking.getStakingAllowance(COLD_A, HOT)).locked).to.eq(0);
+    });
+    it('should day-lock the used stipend when closing late on the same day the session ended (#830)', async () => {
+      await setTime(payoutStart + 10 * DAY);
+      const sessionId = await _openPoolSession(wei(50));
+      const session = await sessionRouter.getSession(sessionId);
+
+      // late close, but still inside the stipend epoch (same calendar day as endsAt)
+      await setTime(Number(session.endsAt) + 1);
+      await _closeSession(sessionId);
+
+      const [releasable, held] = await delegateStaking.getPoolStakesOnHold(HOT);
+      expect(releasable).to.eq(0n);
+      expect(held).to.be.greaterThan(0n);
+
+      const [, lockedBalance, , , holdCount] = await delegateStaking.getStakingPool(HOT);
+      expect(lockedBalance).to.eq(held);
+      expect(holdCount).to.eq(1n);
+    });
+    it('should auto-recycle matured day-locks on the next pool draw, no housekeeping needed (AC-COLDC-6)', async () => {
+      const secondsToDayEnd = 600;
+      const openedAt = payoutStart + (payoutStart % DAY) + 10 * DAY - secondsToDayEnd - 1;
+      await setTime(openedAt);
+      const sessionId = await _openPoolSession(wei(50));
+
+      await setTime(openedAt + 300);
+      await _closeSession(sessionId);
+
+      const [, held] = await delegateStaking.getPoolStakesOnHold(HOT);
+      expect(held).to.be.greaterThan(0n);
+      expect(await delegateStaking.getAvailableToStake(HOT)).to.eq(wei(100) - held);
+
+      // after midnight the full capacity is reported without any transaction
+      await setTime(openedAt + secondsToDayEnd + 100);
+      expect(await delegateStaking.getAvailableToStake(HOT)).to.eq(wei(100));
+      const [releasableAfter, heldAfter] = await delegateStaking.getPoolStakesOnHold(HOT);
+      expect([releasableAfter, heldAfter]).to.deep.eq([held, 0n]);
+
+      // and the next draw recycles the hold inside the same transaction
+      const sessionId2 = await _openPoolSession(wei(100), 1);
+      expect((await sessionRouter.getSession(sessionId2)).stake).to.eq(wei(100));
+
+      const [freeBalance, lockedBalance, , , holdCount] = await delegateStaking.getStakingPool(HOT);
+      expect([freeBalance, lockedBalance, holdCount]).to.deep.eq([0n, wei(100), 0n]);
     });
     it('should only allow the opening hot wallet or its delegatee to close the session (AC-COLDC-6)', async () => {
       await setTime(payoutStart + 10 * DAY);
@@ -493,7 +537,7 @@ describe('DelegateStaking', () => {
 
       // pending withdrawals are paid automatically when the session closes
       const session = await sessionRouter.getSession(sessionId);
-      await setTime(Number(session.endsAt) + 1);
+      await setTime(Number(session.endsAt) + DAY);
       const { msg, signature } = await getReceipt(PROVIDER, sessionId, 0, 0);
       await expect(sessionRouter.connect(HOT).closeSession(msg, signature))
         .to.emit(sessionRouter, 'PendingWithdrawalPaid')
@@ -504,6 +548,26 @@ describe('DelegateStaking', () => {
 
       const [freeBalance, lockedBalance, pendingTotal] = await delegateStaking.getStakingPool(HOT);
       expect([freeBalance, lockedBalance, pendingTotal]).to.deep.eq([wei(40), 0n, 0n]);
+    });
+    it('should pay a withdrawal from matured day-locks in the same transaction (AC-COLDC-7)', async () => {
+      const secondsToDayEnd = 600;
+      const openedAt = payoutStart + (payoutStart % DAY) + 10 * DAY - secondsToDayEnd - 1;
+      await setTime(openedAt);
+      const sessionId = await _openPoolSession(wei(80));
+
+      await setTime(openedAt + 300);
+      await _closeSession(sessionId);
+
+      const [, held] = await delegateStaking.getPoolStakesOnHold(HOT);
+      expect(held).to.be.greaterThan(0n);
+
+      // after midnight the funder withdraws everything at once: matured locks release inline
+      await setTime(openedAt + secondsToDayEnd + 100);
+      const coldBalBefore = await token.balanceOf(COLD_A);
+      await expect(delegateStaking.connect(COLD_A).withdrawStakingAllowance(HOT, wei(100)))
+        .to.emit(delegateStaking, 'AllowanceWithdrawn')
+        .withArgs(COLD_A, HOT, wei(100));
+      expect((await token.balanceOf(COLD_A)) - coldBalBefore).to.eq(wei(100));
     });
     it('should not let pending withdrawals be re-staked and pay them via claimPendingWithdrawals (AC-COLDC-7)', async () => {
       await setTime(payoutStart + 10 * DAY);
@@ -630,7 +694,7 @@ describe('DelegateStaking', () => {
       expect((await delegateStaking.getStakingAllowance(COLD_B, HOT)).locked).to.eq(wei(20));
 
       const session = await sessionRouter.getSession(sessionId);
-      await setTime(Number(session.endsAt) + 1);
+      await setTime(Number(session.endsAt) + DAY);
       const { msg, signature } = await getReceipt(PROVIDER, sessionId, 0, 0);
       const tx = sessionRouter.connect(HOT).closeSession(msg, signature);
       await expect(tx).to.emit(sessionRouter, 'AllowanceReleased').withArgs(HOT, COLD_A, wei(60));

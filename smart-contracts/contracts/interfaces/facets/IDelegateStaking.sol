@@ -63,8 +63,10 @@ interface IDelegateStaking is IDelegateStakingStorage {
 
     /**
      * The function to recycle matured day-locked holds back into the pool. Permissionless (COLDC-R7).
+     * Optional: every pool draw, withdrawal and close auto-releases matured holds already,
+     * so this is only a fallback for pools that have been idle for a long time.
      * @param hot_ The hot wallet whose holds are released.
-     * @param iterations_ Max hold entries to process.
+     * @param iterations_ Max day buckets to process (one bucket per calendar day with closes).
      */
     function releasePoolHolds(address hot_, uint8 iterations_) external;
 }

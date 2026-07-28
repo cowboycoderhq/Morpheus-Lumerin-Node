@@ -2,16 +2,11 @@
 pragma solidity ^0.8.24;
 
 /**
- * Storage interface for the delegated consumer staking pool (RFP §3.5.1).
- *
- * One or more cold "funder" wallets grant a capped, expiring, revocable and
- * purpose-bound staking allowance to a hot wallet (the consumer-node EOA).
- * Funded MOR forms a single "available to stake" bucket per hot wallet.
- * The hot wallet opens sessions against the bucket (FIFO debit, oldest funder
- * first, hot self-escrow last) and can never move a funder's tokens anywhere
- * except into session stake and back to that funder.
+ * Types, events and errors of the delegated consumer staking pool (RFP §3.5.1).
+ * Split from IDelegateStakingStorage so that facets embedding only the internal
+ * accounting engine (e.g. SessionRouter) do not have to carry the view functions.
  */
-interface IDelegateStakingStorage {
+interface IDelegateStakingCore {
     /**
      * The structure that stores a staking allowance from one funder to one hot wallet.
      * The hot wallet's own self-escrow is a grant where the funder is the hot wallet itself.
@@ -35,18 +30,6 @@ interface IDelegateStakingStorage {
         uint128 expiry;
         bool isRevoked;
         bool isListed;
-    }
-
-    /**
-     * The structure that stores a day-locked slice of pool stake returning from a closed session.
-     * @param funder The funder whose grant carries the lock (FIFO bookkeeping).
-     * @param amount The locked amount.
-     * @param releaseAt The timestamp when the funds recycle back into the pool.
-     */
-    struct PoolHold {
-        address funder;
-        uint256 amount;
-        uint128 releaseAt;
     }
 
     /**
@@ -93,7 +76,19 @@ interface IDelegateStakingStorage {
     error DelegateStakingNothingToClaim();
     error DelegateStakingNothingToRelease();
     error DelegateStakingInsufficientPoolBalance(uint256 available, uint256 requested);
+}
 
+/**
+ * Storage interface for the delegated consumer staking pool (RFP §3.5.1).
+ *
+ * One or more cold "funder" wallets grant a capped, expiring, revocable and
+ * purpose-bound staking allowance to a hot wallet (the consumer-node EOA).
+ * Funded MOR forms a single "available to stake" bucket per hot wallet.
+ * The hot wallet opens sessions against the bucket (FIFO debit, oldest funder
+ * first, hot self-escrow last) and can never move a funder's tokens anywhere
+ * except into session stake and back to that funder.
+ */
+interface IDelegateStakingStorage is IDelegateStakingCore {
     /**
      * The function returns the staking allowance from a funder to a hot wallet.
      * Use funder == hot to read the hot wallet's own self-escrow.
@@ -105,6 +100,8 @@ interface IDelegateStakingStorage {
     /**
      * The function returns the amount the hot wallet can stake right now:
      * the smaller of the pool's unencumbered free balance and the total live grant capacity.
+     * Matured (past-release) day-locks count as available: they are recycled automatically
+     * on the next pool draw, no housekeeping call is required.
      * @param hot_ The hot wallet address.
      */
     function getAvailableToStake(address hot_) external view returns (uint256);
@@ -138,7 +135,7 @@ interface IDelegateStakingStorage {
      * @return lockedBalance_ Funds staked in open sessions plus day-locked holds.
      * @return pendingTotal_ Total queued withdrawals owed to funders.
      * @return funderCount_ Number of listed external funders.
-     * @return holdCount_ Number of outstanding day-locked hold entries.
+     * @return holdCount_ Number of outstanding day-lock buckets (one per release day).
      */
     function getStakingPool(
         address hot_
@@ -155,8 +152,10 @@ interface IDelegateStakingStorage {
 
     /**
      * The function returns the matured (releasable) and still-locked amounts of the pool's day-locked holds.
+     * Matured amounts recycle automatically on the next pool draw or withdrawal;
+     * releasePoolHolds is only an optional explicit trigger.
      * @param hot_ The hot wallet address.
-     * @return releasable_ Amount that releasePoolHolds can recycle now.
+     * @return releasable_ Amount that the next pool operation recycles automatically.
      * @return held_ Amount still locked until its release timestamp.
      */
     function getPoolStakesOnHold(address hot_) external view returns (uint256 releasable_, uint256 held_);

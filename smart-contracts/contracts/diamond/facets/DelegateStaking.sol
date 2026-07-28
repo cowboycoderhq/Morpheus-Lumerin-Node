@@ -23,6 +23,100 @@ contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
     using Math for uint256;
     using SafeERC20 for IERC20;
 
+    /** PUBLIC, GETTERS */
+    function getStakingAllowance(address funder_, address hot_) external view returns (StakingGrant memory) {
+        return _getDelegateStakingStorage().pools[hot_].grants[funder_];
+    }
+
+    function getAvailableToStake(address hot_) external view returns (uint256) {
+        DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
+
+        uint256 capacity_ = 0;
+        address funder_ = pool.firstFunder;
+        while (funder_ != address(0)) {
+            capacity_ += _grantAvailableWithMatured(pool, funder_);
+            funder_ = pool.nextFunder[funder_];
+        }
+        capacity_ += _grantAvailableWithMatured(pool, hot_);
+
+        // Matured day-locks are liquid: the next draw auto-releases them before debiting.
+        uint256 liquid_ = pool.freeBalance + _maturedHoldsTotal(pool);
+        liquid_ = liquid_ > pool.pendingTotal ? liquid_ - pool.pendingTotal : 0;
+
+        return capacity_.min(liquid_);
+    }
+
+    function listFundersOf(
+        address hot_,
+        uint256 offset_,
+        uint256 limit_
+    ) external view returns (address[] memory funders_, uint256 total_) {
+        DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
+
+        total_ = pool.funderCount;
+        if (offset_ >= total_) {
+            return (new address[](0), total_);
+        }
+
+        uint256 count_ = (total_ - offset_).min(limit_);
+        funders_ = new address[](count_);
+
+        address funder_ = pool.firstFunder;
+        for (uint256 i = 0; i < offset_; i++) {
+            funder_ = pool.nextFunder[funder_];
+        }
+        for (uint256 i = 0; i < count_; i++) {
+            funders_[i] = funder_;
+            funder_ = pool.nextFunder[funder_];
+        }
+    }
+
+    function getPendingWithdrawal(address funder_, address hot_) external view returns (uint256) {
+        return _getDelegateStakingStorage().pools[hot_].grants[funder_].pendingOwed;
+    }
+
+    function getStakingPool(
+        address hot_
+    )
+        external
+        view
+        returns (
+            uint256 freeBalance_,
+            uint256 lockedBalance_,
+            uint256 pendingTotal_,
+            uint256 funderCount_,
+            uint256 holdCount_
+        )
+    {
+        DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
+
+        return (
+            pool.freeBalance,
+            pool.lockedBalance,
+            pool.pendingTotal,
+            pool.funderCount,
+            pool.holdDays.length - pool.holdDaysHead
+        );
+    }
+
+    function getPoolStakesOnHold(address hot_) external view returns (uint256 releasable_, uint256 held_) {
+        DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
+
+        for (uint256 i = pool.holdDaysHead; i < pool.holdDays.length; i++) {
+            uint128 releaseAt_ = pool.holdDays[i];
+            if (block.timestamp < releaseAt_) {
+                held_ += pool.dayHolds[releaseAt_].total;
+            } else {
+                releasable_ += pool.dayHolds[releaseAt_].total;
+            }
+        }
+    }
+
+    function getSessionFunding(bytes32 sessionId_) external view returns (PoolDebit[] memory) {
+        return _getDelegateStakingStorage().sessionDebits[sessionId_];
+    }
+
+    /** PUBLIC, MUTATORS */
     function grantStakingAllowance(address hot_, uint256 maxAmount_, uint128 expiry_) external {
         if (hot_ == address(0)) {
             revert DelegateStakingZeroAddressProvided();
@@ -94,6 +188,10 @@ contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
         DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
         StakingGrant storage grant = pool.grants[_msgSender()];
 
+        // Recycle matured day-locks first so the funder is paid from them immediately
+        // instead of being queued behind liquidity that is already releasable.
+        _releaseMaturedHolds(pool, hot_, DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS);
+
         uint256 withdraw_ = amount_.min(grant.principal);
         if (withdraw_ == 0) {
             revert DelegateStakingNothingToWithdraw();
@@ -128,47 +226,61 @@ contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
     function claimPendingWithdrawals(address hot_, uint8 iterations_) external {
         DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
 
+        uint256 pendingBefore_ = pool.pendingTotal;
+
+        // Matured day-locks service the pending queue as they recycle.
+        _releaseMaturedHolds(pool, hot_, DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS);
+
         uint256 paid_ = _servicePendingWithdrawals(pool, hot_, pool.freeBalance, iterations_);
-        if (paid_ == 0) {
+        pool.freeBalance -= paid_;
+
+        if (pool.pendingTotal == pendingBefore_) {
             revert DelegateStakingNothingToClaim();
         }
-
-        pool.freeBalance -= paid_;
     }
 
     function releasePoolHolds(address hot_, uint8 iterations_) external {
         DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
-        PoolHold[] storage holds = pool.holds;
 
-        uint256 released_ = 0;
-        uint256 length_ = holds.length;
-        uint256 processed_ = 0;
-
-        for (uint256 i = length_; i > 0 && processed_ < iterations_; i--) {
-            processed_++;
-
-            PoolHold memory hold_ = holds[i - 1];
-            if (block.timestamp < hold_.releaseAt) {
-                continue;
-            }
-
-            pool.grants[hold_.funder].locked -= hold_.amount;
-            released_ += hold_.amount;
-
-            emit AllowanceReleased(hot_, hold_.funder, hold_.amount);
-
-            _pruneFunder(pool, hot_, hold_.funder);
-
-            holds[i - 1] = holds[length_ - 1];
-            holds.pop();
-            length_--;
-        }
-
+        uint256 released_ = _releaseMaturedHolds(pool, hot_, iterations_);
         if (released_ == 0) {
             revert DelegateStakingNothingToRelease();
         }
+    }
 
-        pool.lockedBalance -= released_;
-        _creditPool(pool, hot_, released_);
+    /** PRIVATE, VIEW HELPERS */
+
+    /**
+     * Grant capacity as it will be after matured day-locks auto-release on the next draw.
+     */
+    function _grantAvailableWithMatured(
+        DelegateStakingPool storage pool,
+        address funder_
+    ) private view returns (uint256) {
+        StakingGrant storage grant = pool.grants[funder_];
+        if (grant.isRevoked || (grant.expiry != 0 && block.timestamp > grant.expiry)) {
+            return 0;
+        }
+
+        uint256 locked_ = grant.locked;
+        for (uint256 i = pool.holdDaysHead; i < pool.holdDays.length; i++) {
+            uint128 releaseAt_ = pool.holdDays[i];
+            if (block.timestamp < releaseAt_) {
+                break;
+            }
+            locked_ -= pool.dayHolds[releaseAt_].amounts[funder_];
+        }
+
+        return grant.principal > locked_ ? grant.principal - locked_ : 0;
+    }
+
+    function _maturedHoldsTotal(DelegateStakingPool storage pool) private view returns (uint256 total_) {
+        for (uint256 i = pool.holdDaysHead; i < pool.holdDays.length; i++) {
+            uint128 releaseAt_ = pool.holdDays[i];
+            if (block.timestamp < releaseAt_) {
+                break;
+            }
+            total_ += pool.dayHolds[releaseAt_].total;
+        }
     }
 }

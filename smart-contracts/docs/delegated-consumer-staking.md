@@ -39,7 +39,7 @@ A purpose escrow bucket per hot wallet, funded by any number of cold wallets:
 | COLDC-R4 hot self-escrow via self-grant | grant with `funder == hot`; always debited last |
 | COLDC-R5 FIFO debit + `AllowanceDebited` per funder | `_drawFromPool` / `_debitGrant` |
 | COLDC-R6 hot-signed open/close/manage only | `openSessionFromPool` + existing `_validateDelegatee` checks |
-| COLDC-R7 recycle on close, no new cold signature | `_recyclePoolStake` (immediate part) + `releasePoolHolds` (day-locked part) |
+| COLDC-R7 recycle on close, no new cold signature | `_recyclePoolStake` (immediate part) + `_releaseMaturedHolds` (day-locked part, auto on every pool draw/withdraw/close) |
 | COLDC-R8 withdrawal: free-balance now, queue the rest, no pro-rata | `withdrawStakingAllowance`, `_servicePendingWithdrawals` (auto on close, bounded), `claimPendingWithdrawals` (permissionless) |
 | COLDC-R9 funds only move to session stake or back to the funder | no code path transfers pool funds to the hot wallet; pool sessions cannot use direct pay; per-session funder attribution stored in `sessionDebits` for the future §3.4.4 REWARD-R6 exclusion |
 | COLDC-R10 read views | `IDelegateStakingStorage` getters |
@@ -68,10 +68,20 @@ backing draws while remaining fully withdrawable.
 - **Staking-only.** `openSessionFromPool` never sets `isDirectPaymentFromUser`. Direct pay
   would transfer a funder's MOR to a provider, which violates the COLDC-R9 invariant, and
   the c-node only uses staking sessions. Direct-pay users keep the regular `openSession`.
-- **Day-lock parity.** On early close, the same stipend-derived lock the legacy path puts
-  in `userStakesOnHold` becomes a `PoolHold` that recycles into the bucket at release
-  (permissionless `releasePoolHolds`). Pool sessions never touch `userStakesOnHold`, so
-  the hot wallet cannot extract the locked slice via `withdrawUserStakes`.
+- **Day-lock parity.** The same stipend-derived lock the legacy path puts in
+  `userStakesOnHold` becomes a pool day-lock that recycles into the bucket at release.
+  Pool sessions never touch `userStakesOnHold`, so the hot wallet cannot extract the
+  locked slice via `withdrawUserStakes`.
+- **Self-recycling day-locks (no housekeeping).** Every lock created on a given day matures
+  at the same next-midnight timestamp, so holds are aggregated into **one bucket per release
+  day** (one entry per funder inside the bucket). Every pool draw, funder withdrawal, close
+  and pending-claim first auto-releases matured buckets (up to
+  `DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS = 8` per call), and `getAvailableToStake` already
+  counts matured buckets as available. The hot wallet therefore regains its staking capacity
+  at midnight with **zero housekeeping transactions** — unlike the legacy
+  `userStakesOnHold` / `withdrawUserStakes` path, which needs a nightly reclaim loop and
+  whose gas grows with the number of on-hold slots. `releasePoolHolds` remains as a
+  permissionless fallback for pools idle for more than 8 days.
 - **Anti-dust / anti-griefing (F5).** Funding must leave a principal of ≥ 1 MOR
   (`DELEGATE_STAKING_MIN_PRINCIPAL`), withdrawals must leave 0 or ≥ 1 MOR, and funders are
   auto-pruned from the FIFO list once principal, locked and pending are all zero. This keeps
@@ -89,16 +99,24 @@ backing draws while remaining fully withdrawable.
 existing sessions, and routes refunds to the bucket only for sessions opened via
 `openSessionFromPool` (which cannot exist before this upgrade).
 
-Known interaction: this change and PR #830 both edit `_rewardUserAfterClose`. The lock
-computation is shared by the legacy and pool paths, so rebasing #830 onto this branch
-means applying its new lock formula (anchor to session end, skip zero-amount holds) in one
-place. SessionRouter deployed bytecode is at ~23.2 KB of the 24.576 KB limit — check size
-again after merging #830.
+**PR #830 is folded into this changeset** (the original PR is closed in favor of this
+unified branch): `_rewardUserAfterClose` now anchors the day-lock to
+`min(closedAt, endsAt)` — the moment the session stopped consuming compute — locks only
+while that day's stipend epoch is still open (`block.timestamp < releaseAt`), and skips
+zero-amount hold entries. The formula is shared by the legacy and pool paths, so a
+late close on the same calendar day the session ended now day-locks the used stipend on
+both paths (this closes the intra-day recycle loophole that motivated the RFP).
+
+SessionRouter deployed bytecode is at ~22.2 KB of the 24.576 KB limit (the
+DelegateStaking view functions live only in the DelegateStaking facet; SessionRouter
+embeds just the internal engine via `DelegateStakingStorage` / `IDelegateStakingCore`).
 
 ## Verification
 
-`test/diamond/facets/DelegateStaking.test.ts` covers AC-COLDC-1 through AC-COLDC-9
-(33 tests), and the full existing suite passes unchanged (206 total).
+`test/diamond/facets/DelegateStaking.test.ts` covers AC-COLDC-1 through AC-COLDC-9 plus
+the #830 lock semantics and the auto-recycle behavior (36 tests);
+`SessionRouter.test.ts` gains a #830 regression test for the legacy path. The full suite
+passes (210 total).
 
 Deployment: `deploy/5_delegate_staking.migration.ts` (upgrade of an existing diamond:
 removes the old SessionRouter facet selectors via the loupe, adds the new SessionRouter and
@@ -110,8 +128,10 @@ DelegateStaking facets). Fresh deploys get the facet via `deploy/1_full_protocol
    `fundStakingAllowance(cnode, amount)` (one-time ERC-20 approve to the diamond first).
 2. The c-node calls `openSessionFromPool` instead of `openSession` (no ERC-20 approval and
    no MOR balance needed on the hot wallet), and closes sessions exactly as today.
-3. After the daily rollover the node (or anyone / a keeper) calls `releasePoolHolds` to
-   recycle matured day-locks, then keeps staking from the bucket.
+3. Nothing else. Day-locked stake recycles automatically: after the daily rollover the
+   next `openSessionFromPool` absorbs matured locks in the same transaction, and
+   `getAvailableToStake` reports them as available immediately after midnight. No nightly
+   reclaim job is needed (contrast with the legacy `withdrawUserStakes` housekeeping).
 4. Treasury monitoring: `getAvailableToStake`, `getStakingPool`, `getPoolStakesOnHold`,
    and the event stream (`StakingAllowanceGranted/Funded/Revoked`, `AllowanceDebited/
    Released/HoldCreated/Withdrawn/WithdrawQueued`, `PendingWithdrawalPaid`).
