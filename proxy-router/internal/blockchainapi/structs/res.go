@@ -65,6 +65,23 @@ type StakesOnHoldRes struct {
 	Hold *lib.BigInt `json:"hold" example:"100000000" swaggertype:"integer"`
 }
 
+type DelegatedPoolRes struct {
+	// AvailableToStake is what the router's wallet can stake from its delegated
+	// pool right now. Matured day-locks count as available: the contract
+	// recycles them automatically on the next pool draw.
+	AvailableToStake *lib.BigInt `json:"availableToStake" example:"100000000" swaggertype:"integer"`
+	// FreeBalance is pool MOR not locked in sessions or day-locks.
+	FreeBalance *lib.BigInt `json:"freeBalance" example:"100000000" swaggertype:"integer"`
+	// LockedBalance is pool MOR locked in open sessions or maturing day-locks.
+	LockedBalance *lib.BigInt `json:"lockedBalance" example:"100000000" swaggertype:"integer"`
+	// PendingWithdrawalsTotal is funder withdrawal volume queued for service.
+	PendingWithdrawalsTotal *lib.BigInt `json:"pendingWithdrawalsTotal" example:"0" swaggertype:"integer"`
+	// FunderCount is the number of cold wallets with an active grant.
+	FunderCount *lib.BigInt `json:"funderCount" example:"5" swaggertype:"integer"`
+	// HoldCount is the number of day-lock buckets not yet recycled.
+	HoldCount *lib.BigInt `json:"holdCount" example:"1" swaggertype:"integer"`
+}
+
 type TransactionsRes struct {
 	Transactions []MappedTransaction `json:"transactions"`
 }

@@ -600,6 +600,39 @@ func (s *BlockchainService) GetUserStakesOnHold(ctx context.Context) (available 
 	return s.sessionRouter.GetUserStakesOnHold(ctx, addr, stakeWithdrawIterations)
 }
 
+// GetDelegatedPool returns the delegated staking pool state for the router's
+// wallet: aggregate balances plus the amount available to stake right now.
+func (s *BlockchainService) GetDelegatedPool(ctx context.Context) (*structs.DelegatedPoolRes, error) {
+	prKey, err := s.privateKey.GetPrivateKey()
+	if err != nil {
+		return nil, lib.WrapError(ErrPrKey, err)
+	}
+
+	addr, err := lib.PrivKeyBytesToAddr(prKey)
+	if err != nil {
+		return nil, err
+	}
+
+	free, locked, pending, funders, holds, err := s.delegateStaking.GetStakingPool(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	available, err := s.delegateStaking.GetAvailableToStake(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	return &structs.DelegatedPoolRes{
+		AvailableToStake:        &lib.BigInt{Int: *available},
+		FreeBalance:             &lib.BigInt{Int: *free},
+		LockedBalance:           &lib.BigInt{Int: *locked},
+		PendingWithdrawalsTotal: &lib.BigInt{Int: *pending},
+		FunderCount:             &lib.BigInt{Int: *funders},
+		HoldCount:               &lib.BigInt{Int: *holds},
+	}, nil
+}
+
 // WithdrawUserStakes moves releasable time-locked user stake from the diamond
 // back to the router's wallet (issue #827).
 func (s *BlockchainService) WithdrawUserStakes(ctx context.Context, iterations uint8) (common.Hash, error) {

@@ -102,6 +102,10 @@ On the node, the funding source is a config switch:
 | `pool` | Always stake from the delegated pool. |
 | `auto` | Use the wallet while its balance covers the stake, fall back to the pool. |
 
+Operators can watch the pool through the proxy-router API: `GET /blockchain/pool` returns
+the amount available to stake right now, free/locked balances, pending funder withdrawals,
+and the funder and day-lock bucket counts.
+
 ### Worked example: five wallets backing one node
 
 ![Five wallets funding one pool, intra-day ratchet and midnight reset](/images/pooled-staking-five-wallets.png)

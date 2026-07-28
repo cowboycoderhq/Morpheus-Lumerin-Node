@@ -869,6 +869,31 @@
                 }
             }
         },
+        "/blockchain/pool": {
+            "get": {
+                "security": [
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "Get the delegated staking pool state for the router's wallet: available to stake, free/locked balances, pending funder withdrawals, funder and day-lock bucket counts",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "transactions"
+                ],
+                "summary": "Get Delegated Staking Pool",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/structs.DelegatedPoolRes"
+                        }
+                    }
+                }
+            }
+        },
         "/blockchain/providers": {
             "get": {
                 "security": [
@@ -4415,6 +4440,41 @@
                 "stake": {
                     "type": "integer",
                     "example": 123000000000
+                }
+            }
+        },
+        "structs.DelegatedPoolRes": {
+            "type": "object",
+            "properties": {
+                "availableToStake": {
+                    "description": "AvailableToStake is what the router's wallet can stake from its delegated\npool right now. Matured day-locks count as available: the contract\nrecycles them automatically on the next pool draw.",
+                    "type": "integer",
+                    "example": 100000000
+                },
+                "freeBalance": {
+                    "description": "FreeBalance is pool MOR not locked in sessions or day-locks.",
+                    "type": "integer",
+                    "example": 100000000
+                },
+                "funderCount": {
+                    "description": "FunderCount is the number of cold wallets with an active grant.",
+                    "type": "integer",
+                    "example": 5
+                },
+                "holdCount": {
+                    "description": "HoldCount is the number of day-lock buckets not yet recycled.",
+                    "type": "integer",
+                    "example": 1
+                },
+                "lockedBalance": {
+                    "description": "LockedBalance is pool MOR locked in open sessions or maturing day-locks.",
+                    "type": "integer",
+                    "example": 100000000
+                },
+                "pendingWithdrawalsTotal": {
+                    "description": "PendingWithdrawalsTotal is funder withdrawal volume queued for service.",
+                    "type": "integer",
+                    "example": 0
                 }
             }
         },

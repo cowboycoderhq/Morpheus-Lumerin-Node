@@ -43,6 +43,7 @@ func (c *BlockchainController) RegisterRoutes(r interfaces.Router) {
 	// consumer stake recovery (issue #827)
 	r.GET("/blockchain/stakes/onhold", c.authConf.CheckAuth("get_stakes_on_hold"), c.getStakesOnHold)
 	r.POST("/blockchain/stakes/withdraw", c.authConf.CheckAuth("withdraw_stakes"), c.withdrawStakes)
+	r.GET("/blockchain/pool", c.authConf.CheckAuth("get_delegated_pool"), c.getDelegatedPool)
 
 	// providers
 	r.GET("/blockchain/providers", c.authConf.CheckAuth("get_providers"), c.getAllProviders)
@@ -301,6 +302,26 @@ func (c *BlockchainController) withdrawStakes(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, structs.TxRes{Tx: txHash})
+}
+
+// GetDelegatedPool godoc
+//
+//	@Summary		Get Delegated Staking Pool
+//	@Description	Get the delegated staking pool state for the router's wallet: available to stake, free/locked balances, pending funder withdrawals, funder and day-lock bucket counts
+//	@Tags			transactions
+//	@Produce		json
+//	@Success		200	{object}	structs.DelegatedPoolRes
+//	@Security		BasicAuth
+//	@Router			/blockchain/pool [get]
+func (c *BlockchainController) getDelegatedPool(ctx *gin.Context) {
+	pool, err := c.service.GetDelegatedPool(ctx)
+	if err != nil {
+		c.log.Error(err)
+		ctx.JSON(http.StatusInternalServerError, structs.ErrRes{Error: err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, pool)
 }
 
 // GetBidsByProvider godoc

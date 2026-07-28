@@ -809,6 +809,38 @@ definitions:
     - endpoint
     - stake
     type: object
+  structs.DelegatedPoolRes:
+    properties:
+      availableToStake:
+        description: |-
+          AvailableToStake is what the router's wallet can stake from its delegated
+          pool right now. Matured day-locks count as available: the contract
+          recycles them automatically on the next pool draw.
+        example: 100000000
+        type: integer
+      freeBalance:
+        description: FreeBalance is pool MOR not locked in sessions or day-locks.
+        example: 100000000
+        type: integer
+      funderCount:
+        description: FunderCount is the number of cold wallets with an active grant.
+        example: 5
+        type: integer
+      holdCount:
+        description: HoldCount is the number of day-lock buckets not yet recycled.
+        example: 1
+        type: integer
+      lockedBalance:
+        description: LockedBalance is pool MOR locked in open sessions or maturing
+          day-locks.
+        example: 100000000
+        type: integer
+      pendingWithdrawalsTotal:
+        description: PendingWithdrawalsTotal is funder withdrawal volume queued for
+          service.
+        example: 0
+        type: integer
+    type: object
   structs.InputEntry:
     properties:
       key:
@@ -1740,6 +1772,23 @@ paths:
       summary: Open Session by ModelID in blockchain
       tags:
       - sessions
+  /blockchain/pool:
+    get:
+      description: 'Get the delegated staking pool state for the router''s wallet:
+        available to stake, free/locked balances, pending funder withdrawals, funder
+        and day-lock bucket counts'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/structs.DelegatedPoolRes'
+      security:
+      - BasicAuth: []
+      summary: Get Delegated Staking Pool
+      tags:
+      - transactions
   /blockchain/providers:
     get:
       description: Get providers list from blokchain
