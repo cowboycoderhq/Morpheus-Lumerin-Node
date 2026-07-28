@@ -63,6 +63,37 @@ Draw capacity is `min(freeBalance − pendingTotal, Σ live-grant (principal −
 queued withdrawals always have priority over new sessions, and expired/revoked grants stop
 backing draws while remaining fully withdrawable.
 
+## Close semantics (shared with the legacy path)
+
+`_rewardUserAfterClose` computes one split for both wallet- and pool-funded sessions, so
+early and normal closes differ only in proportion, not in kind:
+
+- `sessionEnd = min(closedAt, endsAt)` — anchor to when compute stopped, not when the close
+  tx landed (the PR #830 fix).
+- **Unused** stake (`stake − usedStipendStake`) is released immediately: transferred to the
+  user on the legacy path, or recycled into the pool free balance via `_recyclePoolStake` on
+  the pool path.
+- **Used** stipend stake is day-locked with `releaseAt = startOfTheDay(sessionEnd) + 1 day`,
+  but only while `block.timestamp < releaseAt`. A close after that midnight (or a multi-day
+  session whose earlier days' epochs already elapsed while it was open) locks nothing — the
+  epoch is over, so instant release is correct, not a leak.
+- The provider is paid `(sessionEnd − openedAt) × pricePerSecond` from the funding account,
+  independent of the user split; the close is never a path to more than elapsed-time pay.
+
+### Pool draw / recycle FIFO and attribution
+
+- `_drawFromPool` debits live grants **oldest-funder-first**; the hot wallet's self-escrow
+  (funder == hot) is always debited last (COLDC-R5). Each debit is stored in
+  `sessionDebits[sessionId]` for exact per-funder return.
+- `_recyclePoolStake` applies the **unused** portion to that session's debits oldest-first
+  (so the earliest-drawn funders unlock first), which means the **used** day-lock sticks to
+  the session's most-recently-drawn funders. Each day's locks aggregate into one
+  `DayHoldBucket` keyed by `releaseAt`, with a per-funder amount map.
+- `_releaseMaturedHolds` runs first on every draw, withdrawal, close and pending-claim,
+  recycling matured buckets (bounded by `DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS`) back into
+  the free balance and clearing each funder's `locked` — this is what makes capacity
+  self-restoring at midnight with no housekeeping tx.
+
 ## Design decisions
 
 - **Staking-only.** `openSessionFromPool` never sets `isDirectPaymentFromUser`. Direct pay

@@ -34,6 +34,42 @@ in its hot wallet, because today's used stake is not available again until tomor
 For a high-volume node that can be a very large hot-wallet balance — which is exactly
 what pooled staking removes.
 
+### Session close: what you get back, and when
+
+![What a consumer gets back at session close, and when](/images/session-close-behavior.png)
+
+The close math splits your stake at the moment the session **stopped consuming
+compute** (`min(closedAt, endsAt)`), and there is now **no difference in kind** between
+an early end and a normal end — only in proportion:
+
+- **Unused stake** (whatever your stake bought beyond the compute you actually used) is
+  **returned instantly** in the `closeSession` transaction, and you can re-stake it the
+  same day.
+- **Used stake** (the stipend for the compute consumed that day) is **day-locked until the
+  next midnight UTC**.
+
+| Scenario | Returned instantly | Locked until midnight UTC |
+|----------|--------------------|---------------------------|
+| End early (used 1h of a 4h session) | ~3h of stake | ~1h of stake |
+| End normally, closed same UTC day | little or nothing | ~the whole stake |
+| Close **after** the following midnight | everything | nothing (epoch already passed) |
+
+Before this change a normal or late close returned **everything instantly** — that was the
+intra-day recycle loophole. Closing it is the whole point: each day's compute now requires
+that day's MOR. Note the last row is not a workaround — between `endsAt` and midnight the
+stake sits in the still-open session escrow, equally unusable. Midnight UTC is simply the
+earliest your used MOR can become liquid again.
+
+The provider is unaffected by any of this: they are paid only for **actual elapsed time**
+(`min(closedAt, endsAt) − openedAt`), from the protocol funding account, never from the
+slice you get back.
+
+<Note>
+On the legacy **wallet** path the locked slice lands in `userStakesOnHold` and needs a
+`withdrawUserStakes` call once it matures — turn on `STAKE_AUTO_CLAIM` so the node does that
+for you. On the **pool** path there is no claim step at all; see the daily cycle below.
+</Note>
+
 ## 2. Pooled staking (delegated)
 
 Instead of one hot wallet holding everything, any number of **cold wallets** pre-authorize
@@ -65,6 +101,46 @@ On the node, the funding source is a config switch:
 | `wallet` (default) | Classic behavior — stake from the hot wallet's MOR balance. |
 | `pool` | Always stake from the delegated pool. |
 | `auto` | Use the wallet while its balance covers the stake, fall back to the pool. |
+
+### Worked example: five wallets backing one node
+
+![Five wallets funding one pool, intra-day ratchet and midnight reset](/images/pooled-staking-five-wallets.png)
+
+**Setup.** Cold wallets A, B, C, D, E each `grantStakingAllowance(hot, cap, 0)` (no expiry)
+and `fundStakingAllowance(hot, 200)`. The pool is now `freeBalance = 1000`, five funders in
+**FIFO order A→B→C→D→E**, and the node's hot wallet holds **0 MOR**.
+
+**Intra-day.** Each `openSessionFromPool` draws FIFO, oldest funder first (A is drained
+before B, and so on; the hot wallet's own self-escrow, if any, is last). When a session
+closes, the **unused** portion recycles to the pool's free balance instantly (re-stakeable
+immediately) and the **used** portion is attributed to that session's most-recently-drawn
+funders and parked in the day-lock bucket. The visible effect is a ratchet: free balance
+steps down by the cumulative *used* stipend across the day, while unused stake churns
+freely.
+
+| Time | Event | free | day-locked |
+|------|-------|------|------------|
+| 09:00 | open S1 (300) → draws A 200 + B 100 | 700 | 0 |
+| 10:00 | close S1, used 120 | 880 | 120 |
+| 10:05 | open S2 (300) | 580 | 120 |
+| 11:30 | close S2, used 90 | 790 | 210 |
+| …    | more sessions | … | grows toward 1000 |
+
+So a 1000-MOR pool can back an unlimited number of session *opens* per day but only
+**1000 MOR of actually-consumed compute per day** — that ceiling is the intended daily buy
+pressure, now spread across five wallets instead of one hot wallet. Peak concurrent stake
+is likewise bounded by the current free balance.
+
+**Inter-day (no expiry).** At 00:00 UTC the day-lock bucket matures. `getAvailableToStake`
+reports the restored capacity immediately, and the first pool operation of the new day folds
+the matured funds back into the free balance in the same transaction — the pool opens Day 2
+at `free ≈ 1000` again with grants untouched. This repeats indefinitely with no action from
+the cold wallets or the node.
+
+**Exiting.** Any funder can `withdrawStakingAllowance` at any time: paid from free balance
+immediately, with any portion momentarily locked in an open session or unmatured bucket
+queued FIFO and paid automatically as sessions close and buckets mature. One funder leaving
+never disturbs the others, and every wallet only ever gets its own MOR back.
 
 ## 3. The daily unlock cycle (automatic)
 
