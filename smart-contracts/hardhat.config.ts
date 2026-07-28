@@ -55,7 +55,7 @@ const config: HardhatUserConfig = {
       gasMultiplier: 1.1,
     },
     base_sepolia: {
-      url: `https://base-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_KEY}`,
+      url: process.env.BASE_SEPOLIA_RPC ?? `https://base-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_KEY}`,
       accounts: privateKey(),
       gasMultiplier: 1.1,
     },
