@@ -1,0 +1,99 @@
+---
+title: "Consumer staking, pooled staking & the daily unlock"
+description: "How consumer session staking works, how the delegated staking pool lets cold wallets back a hot consumer node without giving up custody, and how the daily midnight-UTC unlock cycle recycles stake automatically."
+audience: ["consumer", "prosumer", "developer"]
+product: ["proxy-router", "smart-contracts"]
+last_verified: "vNext (feat/delegated-consumer-staking, unreleased)"
+---
+
+<Warning>
+This page describes the delegated staking feature on the `feat/delegated-consumer-staking`
+branch. It is **not yet deployed to mainnet** — it will be exercised on BASE Sepolia first.
+Wallet staking (section 1) describes behavior that already exists today.
+</Warning>
+
+![Consumer staking, pooled staking and the daily unlock cycle](/images/consumer-staking-explainer.png)
+
+## 1. Wallet staking (classic)
+
+Every session escrows MOR in the Diamond contract for its duration:
+
+1. The consumer's **hot wallet** holds MOR and calls `openSession`, which pulls the stake
+   into the Diamond (an ERC-20 approval + transfer).
+2. On `closeSession`, the **unused** portion of the stake returns to the wallet immediately.
+3. The **used** portion — the stake that corresponds to the compute actually consumed that
+   day — is **time-locked until the next midnight UTC**. This is by design: staked MOR is
+   not meant to be recycled into new sessions on the same day it was used.
+4. The locked slice lands in `userStakesOnHold` and must be reclaimed with
+   `withdrawUserStakes` once it matures. The proxy-router now does this for you: the
+   `GET /blockchain/stakes/onhold` and `POST /blockchain/stakes/withdraw` routes expose it,
+   and `STAKE_AUTO_CLAIM=true` runs a background claimer so nothing strands in the contract.
+
+The practical consequence: a busy consumer node needs its **full daily staking volume**
+in its hot wallet, because today's used stake is not available again until tomorrow.
+For a high-volume node that can be a very large hot-wallet balance — which is exactly
+what pooled staking removes.
+
+## 2. Pooled staking (delegated)
+
+Instead of one hot wallet holding everything, any number of **cold wallets** pre-authorize
+a hot consumer node to stake from a shared, purpose-bound pool inside the Diamond:
+
+1. Each cold wallet calls `grantStakingAllowance(hot, cap, expiry)` — a capped, expiring,
+   revocable authorization — and then `fundStakingAllowance(hot, amount)` to move MOR into
+   the pool. Both are signed by the cold wallet; this is the only time cold keys are used.
+2. The hot wallet opens sessions with `openSessionFromPool`. It needs **no MOR balance and
+   no ERC-20 approval** — the stake moves from the pool to the session escrow entirely
+   inside the Diamond.
+3. On close, the stake recycles **back into the pool** (never to the hot wallet), ready for
+   the next session.
+
+Custody guarantees, enforced on-chain:
+
+- Pool funds can only ever move to **session stake** or **back to the funder that
+  contributed them** — there is no code path that pays the hot wallet.
+- A funder can **revoke** (stops new draws immediately) and **withdraw** at any time;
+  amounts currently locked in open sessions are queued and paid out automatically as
+  sessions close.
+- Draws debit funders **first-in, first-out**, with the hot wallet's own self-escrow
+  (if any) always debited last.
+
+On the node, the funding source is a config switch:
+
+| `STAKING_FUND_SOURCE` | Behavior |
+|-----------------------|----------|
+| `wallet` (default) | Classic behavior — stake from the hot wallet's MOR balance. |
+| `pool` | Always stake from the delegated pool. |
+| `auto` | Use the wallet while its balance covers the stake, fall back to the pool. |
+
+## 3. The daily unlock cycle (automatic)
+
+The same "used stake locks until midnight UTC" rule applies to pool-funded sessions, but
+the recycling is fully automatic:
+
+- Every session closed on a given day contributes its used-stipend lock to **one
+  day-lock bucket** that matures at the next midnight UTC.
+- At midnight, no transaction is needed: `getAvailableToStake` immediately counts the
+  matured bucket as available, and the **next pool operation** (a new session open, a
+  funder withdrawal, or a close) absorbs it in the same transaction.
+- There is **no nightly housekeeping job** for pool mode. A permissionless
+  `releasePoolHolds` call exists only as a fallback for pools idle longer than 8 days.
+
+This is the key operational difference from wallet staking, where the matured
+`userStakesOnHold` balance sits in the contract until something calls
+`withdrawUserStakes` (hence `STAKE_AUTO_CLAIM` for wallet-mode nodes).
+
+## Monitoring
+
+For treasury / operations visibility:
+
+- `getAvailableToStake(hot)` — what the node can stake right now.
+- `getStakingPool(hot)` — free balance, locked balance, queued withdrawals, funder count,
+  outstanding day-lock buckets.
+- `getPoolStakesOnHold(hot)` — matured (auto-recycling) vs. still-locked amounts.
+- Event stream: `StakingAllowanceGranted/Funded/Revoked`,
+  `AllowanceDebited/Released/HoldCreated/Withdrawn/WithdrawQueued`, `PendingWithdrawalPaid`.
+
+For the full design (requirement mapping, accounting invariants, FIFO semantics), see
+[`smart-contracts/docs/delegated-consumer-staking.md`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/feat/delegated-consumer-staking/smart-contracts/docs/delegated-consumer-staking.md)
+in the repo.
