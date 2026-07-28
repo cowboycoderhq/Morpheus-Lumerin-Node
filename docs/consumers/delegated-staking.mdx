@@ -3,13 +3,13 @@ title: "Consumer staking, pooled staking & the daily unlock"
 description: "How consumer session staking works, how the delegated staking pool lets cold wallets back a hot consumer node without giving up custody, and how the daily midnight-UTC unlock cycle recycles stake automatically."
 audience: ["consumer", "prosumer", "developer"]
 product: ["proxy-router", "smart-contracts"]
-last_verified: "vNext (feat/delegated-consumer-staking, unreleased)"
+last_verified: "v7.9.0"
 ---
 
 <Warning>
-This page describes the delegated staking feature on the `feat/delegated-consumer-staking`
-branch. It is **not yet deployed to mainnet** — it will be exercised on BASE Sepolia first.
-Wallet staking (section 1) describes behavior that already exists today.
+The delegated staking feature (targeted for **v7.9.0**) is **not yet deployed to mainnet** —
+it will be exercised on BASE Sepolia first. Wallet staking (section 1) describes behavior
+that already exists today.
 </Warning>
 
 ![Consumer staking, pooled staking and the daily unlock cycle](/images/consumer-staking-explainer.png)
@@ -171,5 +171,5 @@ For treasury / operations visibility:
   `AllowanceDebited/Released/HoldCreated/Withdrawn/WithdrawQueued`, `PendingWithdrawalPaid`.
 
 For the full design (requirement mapping, accounting invariants, FIFO semantics), see
-[`smart-contracts/docs/delegated-consumer-staking.md`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/feat/delegated-consumer-staking/smart-contracts/docs/delegated-consumer-staking.md)
+[`smart-contracts/docs/delegated-consumer-staking.md`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/dev/smart-contracts/docs/delegated-consumer-staking.md)
 in the repo.
