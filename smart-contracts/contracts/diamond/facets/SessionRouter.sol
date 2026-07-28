@@ -16,6 +16,7 @@ import {StatsStorage} from "../storages/StatsStorage.sol";
 import {SessionStorage} from "../storages/SessionStorage.sol";
 import {ProviderStorage} from "../storages/ProviderStorage.sol";
 import {DelegationStorage} from "../storages/DelegationStorage.sol";
+import {DelegateStakingStorage} from "../storages/DelegateStakingStorage.sol";
 
 import {LibSD} from "../../libs/LibSD.sol";
 
@@ -28,7 +29,8 @@ contract SessionRouter is
     ProviderStorage,
     BidStorage,
     StatsStorage,
-    DelegationStorage
+    DelegationStorage,
+    DelegateStakingStorage
 {
     using Math for *;
     using LibSD for LibSD.SD;
@@ -89,6 +91,44 @@ contract SessionRouter is
     ) external returns (bytes32) {
         _validateDelegatee(_msgSender(), user_, DELEGATION_RULES_SESSION);
 
+        IERC20(_getBidsStorage().token).safeTransferFrom(user_, address(this), amount_);
+
+        return _createSession(user_, amount_, isDirectPaymentFromUser_, approvalEncoded_, signature_);
+    }
+
+    /**
+     * @notice Opens a session staked from the delegated staking pool (RFP §3.5.1).
+     * @dev The stake is drawn FIFO from the hot wallet's purpose escrow bucket instead of
+     * the caller's ERC-20 balance. The hot wallet is the session actor (COLDC-R6); the
+     * returned stake recycles into the bucket on close (COLDC-R7). Pool-funded sessions
+     * are staking-only: direct payment from a funder's escrow is not allowed (COLDC-R9).
+     * @param hot_ The hot wallet whose pool is drawn on; becomes the session user.
+     * @param amount_ The stake amount.
+     * @param approvalEncoded_ Provider approval.
+     * @param signature_ Provider signature.
+     */
+    function openSessionFromPool(
+        address hot_,
+        uint256 amount_,
+        bytes calldata approvalEncoded_,
+        bytes calldata signature_
+    ) external returns (bytes32) {
+        _validateDelegatee(_msgSender(), hot_, DELEGATION_RULES_SESSION);
+
+        bytes32 sessionId_ = _createSession(hot_, amount_, false, approvalEncoded_, signature_);
+
+        _drawFromPool(hot_, amount_, sessionId_);
+
+        return sessionId_;
+    }
+
+    function _createSession(
+        address user_,
+        uint256 amount_,
+        bool isDirectPaymentFromUser_,
+        bytes calldata approvalEncoded_,
+        bytes calldata signature_
+    ) private returns (bytes32) {
         SessionsStorage storage sessionsStorage = _getSessionsStorage();
 
         bytes32 bidId_ = _extractProviderApproval(approvalEncoded_);
@@ -100,8 +140,6 @@ contract SessionRouter is
             sessionsStorage.sessionNonce++
         );
         Session storage session = sessionsStorage.sessions[sessionId_];
-
-        IERC20(_getBidsStorage().token).safeTransferFrom(user_, address(this), amount_);
 
         session.user = user_;
         session.stake = amount_;
@@ -226,7 +264,7 @@ contract SessionRouter is
 
         bool noDispute_ = _isValidProviderReceipt(bid.provider, receiptEncoded_, signature_);
 
-        _rewardUserAfterClose(session, bid);
+        _rewardUserAfterClose(sessionId_, session, bid);
         _rewardProviderAfterClose(noDispute_, session, bid);
         _setStats(noDispute_, ttftMs_, tpsScaled1000_, session, bid);
 
@@ -290,8 +328,9 @@ contract SessionRouter is
         _claimForProvider(session, providerAmountToWithdraw_);
     }
 
-    function _rewardUserAfterClose(Session storage session, Bid storage bid) private {
+    function _rewardUserAfterClose(bytes32 sessionId_, Session storage session, Bid storage bid) private {
         uint128 startOfClosedAt_ = startOfTheDay(session.closedAt);
+        uint128 releaseAt_ = uint128(startOfClosedAt_ + 1 days);
         bool isClosingLate_ = session.closedAt >= session.endsAt;
 
         uint256 userStakeToProvider = session.isDirectPaymentFromUser ? _getProviderRewards(session, bid, false) : 0;
@@ -301,10 +340,17 @@ contract SessionRouter is
             uint256 userDuration_ = session.endsAt.min(session.closedAt) - session.openedAt.max(startOfClosedAt_);
             uint256 userInitialLock_ = userDuration_ * bid.pricePerSecond;
             userStakeToLock_ = userStake.min(stipendToStake(userInitialLock_, startOfClosedAt_));
+        }
 
-            _getSessionsStorage().userStakesOnHold[session.user].push(
-                OnHold(userStakeToLock_, uint128(startOfClosedAt_ + 1 days))
-            );
+        if (_isPoolFundedSession(sessionId_)) {
+            // Pool-funded sessions recycle the stake into the purpose escrow bucket:
+            // the unlocked part immediately, the day-locked part when its hold matures.
+            _recyclePoolStake(session.user, sessionId_, userStake, userStakeToLock_, releaseAt_);
+            return;
+        }
+
+        if (!isClosingLate_) {
+            _getSessionsStorage().userStakesOnHold[session.user].push(OnHold(userStakeToLock_, releaseAt_));
         }
         uint256 userAmountToWithdraw_ = userStake - userStakeToLock_;
         IERC20(_getBidsStorage().token).safeTransfer(session.user, userAmountToWithdraw_);

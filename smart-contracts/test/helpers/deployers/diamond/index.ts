@@ -1,3 +1,4 @@
+export * from './facets/delegate-staking';
 export * from './facets/delegation';
 export * from './facets/model-registry';
 export * from './facets/marketplace';

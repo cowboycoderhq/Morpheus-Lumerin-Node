@@ -71,6 +71,23 @@ interface ISessionRouter is ISessionStorage {
     ) external returns (bytes32);
 
     /**
+     * The function to open a session staked from the delegated staking pool (RFP §3.5.1).
+     * The stake is drawn FIFO from the hot wallet's purpose escrow bucket (funded via the
+     * DelegateStaking facet) instead of the caller's ERC-20 balance, and recycles back into
+     * the bucket when the session closes. Pool-funded sessions are staking-only.
+     * @param hot_ The hot wallet whose pool is drawn on; becomes the session user.
+     * @param amount_ The stake amount.
+     * @param approvalEncoded_ Provider approval.
+     * @param signature_ Provider signature.
+     */
+    function openSessionFromPool(
+        address hot_,
+        uint256 amount_,
+        bytes calldata approvalEncoded_,
+        bytes calldata signature_
+    ) external returns (bytes32);
+
+    /**
      * The function to get session ID/
      * @param user_ The user address.
      * @param provider_ The provider address.

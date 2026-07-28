@@ -4,9 +4,11 @@ import { Fragment } from 'ethers';
 import { parseConfig } from './helpers/config-parser';
 
 import {
+  DelegateStaking__factory,
   Delegation,
   Delegation__factory,
   IBidStorage__factory,
+  IDelegateStaking__factory,
   IDelegation__factory,
   IMarketplace__factory,
   IModelRegistry__factory,
@@ -44,6 +46,7 @@ module.exports = async function (deployer: Deployer) {
     },
   });
   let delegationFacet = await deployer.deploy(Delegation__factory);
+  const delegateStakingFacet = await deployer.deploy(DelegateStaking__factory);
 
   await lumerinDiamond['diamondCut((address,uint8,bytes4[])[])']([
     {
@@ -92,6 +95,13 @@ module.exports = async function (deployer: Deployer) {
       facetAddress: delegationFacet,
       action: FacetAction.Add,
       functionSelectors: IDelegation__factory.createInterface()
+        .fragments.filter(Fragment.isFunction)
+        .map((f) => f.selector),
+    },
+    {
+      facetAddress: delegateStakingFacet,
+      action: FacetAction.Add,
+      functionSelectors: IDelegateStaking__factory.createInterface()
         .fragments.filter(Fragment.isFunction)
         .map((f) => f.selector),
     },
