@@ -27,6 +27,10 @@ import { FacetAction } from '@/test/helpers/deployers';
  *   DIAMOND                   (optional) diamond address; defaults to
  *                             lumerinProtocol from deploy/data/config_base_sepolia.json,
  *                             so it MUST be set explicitly for mainnet.
+ *   REMOVED_SELECTORS_ALLOWLIST (optional) comma-separated selectors the old facet
+ *                             serves that this cut INTENTIONALLY drops. Anything
+ *                             dropped without being listed here aborts the script
+ *                             (review F-15: no silent selector removal).
  *
  * See smart-contracts/docs/delegate-staking-upgrade-runbook.md for the full ceremony.
  */
@@ -98,6 +102,41 @@ async function main() {
     const current = await diamond.facetAddress(selector);
     if (current !== ethers.ZeroAddress && current !== oldSessionRouterFacet) {
       throw new Error(`Selector ${selector} is already served by unrelated facet ${current} — aborting`);
+    }
+  }
+
+  // Guard (review F-15): the cut must not SILENTLY drop anything the old facet
+  // serves. Every dropped selector has to be listed explicitly so it appears in
+  // the owner's review, not in a diff nobody read.
+  const allowedDrops = new Set(
+    (process.env.REMOVED_SELECTORS_ALLOWLIST ?? '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const reAdded = new Set([...sessionRouterSelectors, ...statsSelectors].map((s) => s.toLowerCase()));
+  const dropped = oldSelectors.filter((s) => !reAdded.has(s.toLowerCase()));
+  const unexpectedDrops = dropped.filter((s) => !allowedDrops.has(s.toLowerCase()));
+  if (unexpectedDrops.length > 0) {
+    throw new Error(
+      `This cut would drop ${unexpectedDrops.length} selector(s) the live facet serves: ` +
+        `${unexpectedDrops.join(', ')}. If intentional, list them in REMOVED_SELECTORS_ALLOWLIST.`,
+    );
+  }
+
+  // Guard (forward-only policy, review F-05): never point the cut at a facet that
+  // is already registered on the diamond — re-adding a previously removed router
+  // (which is not pool-aware) would hand pooled stake to the hot wallet on close.
+  const registeredFacets = new Set((await diamond.facetAddresses()).map((a: string) => a.toLowerCase()));
+  for (const [label, addr] of [
+    ['NEW_SESSION_ROUTER_FACET', newSessionRouterFacet],
+    ['DELEGATE_STAKING_FACET', delegateStakingFacet],
+  ] as const) {
+    if (registeredFacets.has(addr.toLowerCase())) {
+      throw new Error(
+        `${label} ${addr} is already a registered facet on this diamond — upgrades are ` +
+          `forward-only (fresh bytecode via migration 6); re-adding an old facet is prohibited.`,
+      );
     }
   }
 

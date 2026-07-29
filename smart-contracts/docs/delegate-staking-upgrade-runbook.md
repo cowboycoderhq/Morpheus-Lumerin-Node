@@ -23,9 +23,10 @@ One `diamondCut` with four entries, executed atomically (no half-upgraded window
 1. **Remove** every selector currently served by the old `SessionRouter` facet
    (read fresh from the loupe at payload-generation time — never from a stale list).
 2. **Add** all `ISessionRouter` selectors → new `SessionRouter` facet
-   (same ABI as before **plus** `openSessionFromPool`).
+   (same ABI as before **plus** `openSessionFromPool` and `settleExpiredSession`).
 3. **Add** all `IStatsStorage` selectors → new `SessionRouter` facet (carried over).
-4. **Add** all `IDelegateStaking` selectors → new `DelegateStaking` facet.
+4. **Add** all `IDelegateStaking` selectors → new `DelegateStaking` facet
+   (includes the owner-only `setDelegateStakingParams`).
 
 Existing selectors keep their ABI and behavior except session close, which now
 day-locks the used stipend (the absorbed #830 fix — intended behavior change).
@@ -86,8 +87,11 @@ The script reads the live loupe, rebuilds the four-entry cut, and prints:
 - the diff: which selectors are carried over vs. brand new,
 - the final transaction: `to` (the diamond), `value: 0`, and the `data` hex.
 
-It refuses to run if a facet address has no code or a selector it wants to add is
-already served by an unrelated facet.
+It refuses to run if a facet address has no code, if a selector it wants to add is
+already served by an unrelated facet, or if the old facet serves any selector that
+the new ABI would silently drop (review F-15). Intentionally dropping a selector
+requires listing it explicitly in `REMOVED_SELECTORS_ALLOWLIST` so it shows up in
+the owner's review, not in a diff nobody read.
 
 > Mainnet note: `deploy/helpers/config-parser.ts` is hard-coded to the Sepolia
 > config, so `DIAMOND=` **must** be passed explicitly on mainnet.
@@ -101,8 +105,8 @@ already served by an unrelated facet.
       shown by the loupe (louper.dev against the diamond, or `facetAddress()` of
       `closeSession`'s selector).
 - [ ] The selector lists in the script output match expectations: everything
-      removed is re-added except nothing; new additions are `openSessionFromPool`
-      plus the `IDelegateStaking` set.
+      removed is re-added except nothing; new additions are `openSessionFromPool`,
+      `settleExpiredSession` and the `IDelegateStaking` set.
 - [ ] Simulate the transaction (Tenderly, or the Safe UI's built-in simulation on
       mainnet) — the cut succeeds and emits `DiamondCut`.
 - [ ] `value` is 0 and `to` is the diamond, nothing else.
@@ -142,14 +146,41 @@ independently, sign until the 5-signature threshold is met, then execute.
    folded back into `availableToStake` with no manual claim.
 5. Cold wallet exit: `withdrawStakingAllowance` returns the remainder.
 
-## Rollback
+On Sepolia, the smoke test is only the beginning: the full corner/edge-case gate is
+`docs/delegate-staking-testnet-validation.md`, and mainnet waits for its sign-off.
 
-The old SessionRouter facet contract remains deployed and untouched — rolling back
-is the inverse cut (remove the new selectors, re-add the old facet's selector set
-to the old address), signed by the same owner. Prepare it with the loupe the same
-way; no redeployment needed. Note the delegated pool storage written in the
-meantime stays in the diamond and would be orphaned until re-enabled, so a
-rollback should be paired with pausing pool funding.
+## Deployment policy: forward-only. There is no rollback.
+
+**This upgrade is a one-way street, on both networks, by policy (review F-05).**
+
+Re-adding the pre-pool SessionRouter facet after pool state exists would be
+actively dangerous: the old `_rewardUserAfterClose` transfers a closing session's
+stake to the hot wallet's own balance, so pool-funded sessions closed under a
+reverted router would hand pooled funder capital to the hot key. The "obvious"
+inverse cut is therefore not a safety net — it is the exploit. It is never
+prepared, never rehearsed, and the cut tooling refuses to target a facet that is
+already registered on the diamond.
+
+What we do instead:
+
+- **On Sepolia:** iterate forward. A bug found during validation
+  (`delegate-staking-testnet-validation.md`) is fixed in source, deployed as a
+  *new* facet via the same migration-6 + calldata ceremony, and cut in over the
+  broken one. The validation run restarts on the affected sections.
+- **On mainnet:** ship only after the full Sepolia validation doc is signed off.
+  If an incident happens post-cut anyway, the response is a **forward hotfix**:
+  a new, pool-aware facet (e.g. one that pauses `openSessionFromPool` while
+  keeping every withdrawal, close, settle and claim path alive) prepared with
+  the same two-step ceremony. Funder exit paths must remain live in any hotfix —
+  that is the non-negotiable review criterion for emergency facets.
+
+## Emergency levers that do NOT need a cut
+
+- `setDelegateStakingParams` (owner-signed) can throttle the system immediately:
+  a prohibitively high `minPrincipal` stops new funding volume in practice, and
+  `maxActiveFunders` at the current count stops new funders entirely.
+- `settleExpiredSession` is permissionless: anyone can drain stranded sessions
+  back to the pool/users once they expire past the grace period.
 
 ## Heads-up for existing testnet users
 

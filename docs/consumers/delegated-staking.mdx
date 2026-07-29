@@ -122,6 +122,28 @@ To exit, again cold-signed, any time:
   out automatically as sessions close. `claimPendingWithdrawals(hot, n)` is a
   permissionless nudge if you'd rather not wait for the pool's next operation.
 
+<Warning>
+**Pooled funds are shared liquidity.** Your MOR is commingled with the other funders'
+inside one bucket — the contract tracks what you own, not *which* tokens are yours. Two
+consequences to understand before funding:
+
+1. **Withdrawal timing depends on the whole pool, not on "your" tokens.** You are paid
+   from whatever is liquid right now; if the pool is heavily staked, your withdrawal
+   queues until sessions close or day-locks mature. If the hot wallet never operated
+   again, the last resort is `settleExpiredSession` — callable **by anyone** once a
+   session has been expired for the grace period — so your exit never depends on the
+   node's key staying alive. Funds cannot be permanently stranded, but they can wait
+   out open sessions plus up to a day of lock.
+2. **Another funder's withdrawal can be paid from liquidity your deposit created**, and
+   vice versa. The accounting always squares up as sessions close (the pool owes every
+   funder exactly their principal), but the *waiting order* is first-come-first-served
+   on liquid funds.
+
+Also note the cap is **lifetime**: `cumulativeFundingCap` limits everything you will ever
+fund into this grant. Withdrawing does not free up cap headroom — set the cap to your
+total intended commitment.
+</Warning>
+
 ### How to use the pool (consumer node operators)
 
 On the node, the funding source is one environment variable:

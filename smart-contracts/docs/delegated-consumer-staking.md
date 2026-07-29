@@ -188,20 +188,39 @@ zero-amount hold entries. The formula is shared by the legacy and pool paths, so
 late close on the same calendar day the session ended now day-locks the used stipend on
 both paths (this closes the intra-day recycle loophole that motivated the RFP).
 
-SessionRouter deployed bytecode is at ~22.2 KB of the 24.576 KB limit (the
+SessionRouter deployed bytecode is at ~22.9 KB of the 24.576 KB limit (the
 DelegateStaking view functions live only in the DelegateStaking facet; SessionRouter
 embeds just the internal engine via `DelegateStakingStorage` / `IDelegateStakingCore`).
 
+## Funder economics — an explicit v1 decision (review F-16)
+
+Funders bear an opportunity cost (day-locks, withdrawal queuing) and receive **no on-chain
+yield** in v1. This is deliberate, not an oversight: the design case is an operator's own
+cold wallets (or affiliated/off-chain-compensated treasuries) backing that operator's
+C-node — splitting custody, not renting capital from strangers. The contract layer
+deliberately does not encode a revenue split; if the ecosystem later wants third-party
+capital, a fee/yield mechanism can be added as a separate additive facet without touching
+the custody paths. Anyone considering funding an unaffiliated node should read the
+shared-liquidity disclosure in `docs/consumers/delegated-staking.mdx` first.
+
 ## Verification
 
-`test/diamond/facets/DelegateStaking.test.ts` covers AC-COLDC-1 through AC-COLDC-9 plus
-the #830 lock semantics and the auto-recycle behavior (36 tests);
-`SessionRouter.test.ts` gains a #830 regression test for the legacy path. The full suite
-passes (210 total).
+`test/diamond/facets/DelegateStaking.test.ts` covers AC-COLDC-1 through AC-COLDC-9, the
+#830 lock semantics, auto-recycle, the funder cap/delisting (F-02/03/04), permissionless
+settlement (F-01/06) and queue coalescing (F-08); `SessionRouter.test.ts` adds the #830
+legacy-path regression, approval binding (F-09) and on-hold pagination bounds (F-07);
+`DelegateStaking.stress.test.ts` proves gas bounds at the 64-funder cap and the pool
+solvency invariant over a mixed lifecycle. The full suite passes (232 total).
 
-Deployment: `deploy/5_delegate_staking.migration.ts` (upgrade of an existing diamond:
-removes the old SessionRouter facet selectors via the loupe, adds the new SessionRouter and
-DelegateStaking facets). Fresh deploys get the facet via `deploy/1_full_protocol.migration.ts`.
+Deployment is **forward-only** (see `delegate-staking-upgrade-runbook.md`): testnet
+iterates by cutting in new facets, mainnet ships only after
+`delegate-staking-testnet-validation.md` is signed off, and there is no rollback path by
+policy — the pre-pool router must never serve a diamond that holds pool state.
+
+Local development: `deploy/5_delegate_staking.migration.ts` (guarded to localhost).
+Live networks: `deploy/6_delegate_staking_deploy_facets.migration.ts` +
+`scripts/delegate-staking-cut-calldata.ts` (owner-signed two-step ceremony).
+Fresh deploys get the facet via `deploy/1_full_protocol.migration.ts`.
 
 ## Consumer-node integration sketch
 

@@ -1,5 +1,6 @@
 import { Deployer, Reporter } from '@solarity/hardhat-migrate';
 import { Fragment } from 'ethers';
+import { ethers } from 'hardhat';
 
 import { parseConfig } from './helpers/config-parser';
 
@@ -14,11 +15,25 @@ import {
 } from '@/generated-types/ethers';
 import { FacetAction } from '@/test/helpers/deployers';
 
-// Adds the delegated consumer staking capability (RFP §3.5.1):
+// LOCAL DEVELOPMENT ONLY (review F-15): deploys the delegated staking facets AND
+// executes the diamondCut in one shot, which requires the migration signer to BE
+// the diamond owner. That is only ever true on a local fork. Live networks use
+// the two-step ceremony instead: migration 6 (deploy-only) + the owner-signed
+// calldata from scripts/delegate-staking-cut-calldata.ts. This migration refuses
+// to run anywhere but localhost so it can never touch a live diamond by accident.
+//
 // 1. Deploys the new DelegateStaking facet (grants, funding, withdrawal, views).
 // 2. Redeploys the SessionRouter facet with `openSessionFromPool` and
 //    pool-aware stake recycling on close. All existing selectors keep their ABI.
 module.exports = async function (deployer: Deployer) {
+  const { chainId } = await ethers.provider.getNetwork();
+  if (chainId !== 31337n && chainId !== 1337n) {
+    throw new Error(
+      `Migration 5 executes a diamondCut directly and is for local forks only (got chainId ${chainId}). ` +
+        'On live networks run migration 6 and scripts/delegate-staking-cut-calldata.ts instead.',
+    );
+  }
+
   const config = parseConfig();
 
   const ldid = await deployer.deploy(LinearDistributionIntervalDecrease__factory);
@@ -76,10 +91,9 @@ module.exports = async function (deployer: Deployer) {
   );
 };
 
-// npx hardhat migrate --only 5
-
-// npx hardhat migrate --network base_sepolia --only 5 --verify
-// npx hardhat migrate --network base_sepolia --only 5 --verify --continue
-
-// npx hardhat migrate --network base --only 5 --verify
-// npx hardhat migrate --network base --only 5 --verify --continue
+// npx hardhat migrate --only 5   (localhost / local fork ONLY)
+//
+// Live networks (two-step, owner-signed):
+//   npx hardhat migrate --network base_sepolia --only 6 --verify
+//   NEW_SESSION_ROUTER_FACET=0x... DELEGATE_STAKING_FACET=0x... \
+//     npx hardhat run scripts/delegate-staking-cut-calldata.ts --network base_sepolia
