@@ -2,10 +2,10 @@
 pragma solidity ^0.8.24;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {Context} from "@openzeppelin/contracts/utils/Context.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {DelegateStakingStorage} from "../storages/DelegateStakingStorage.sol";
+import {OwnableDiamondStorage} from "../presets/OwnableDiamondStorage.sol";
 
 import {IDelegateStaking} from "../../interfaces/facets/IDelegateStaking.sol";
 
@@ -17,9 +17,11 @@ import {IDelegateStaking} from "../../interfaces/facets/IDelegateStaking.sol";
  * custody to the hot wallet. Sessions are opened against the pooled budget through
  * SessionRouter.openSessionFromPool; the pool only ever pays funds back to their funder.
  *
- * This facet is fully permissionless: it has no owner functions and no initializer.
+ * All funder/hot-wallet operations are permissionless and there is no initializer.
+ * The only owner-gated function is setDelegateStakingParams, which lets the diamond
+ * owner (the protocol multisig on mainnet) tune operational limits without a redeploy.
  */
-contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
+contract DelegateStaking is IDelegateStaking, OwnableDiamondStorage, DelegateStakingStorage {
     using Math for uint256;
     using SafeERC20 for IERC20;
 
@@ -116,6 +118,28 @@ contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
         return _getDelegateStakingStorage().sessionDebits[sessionId_];
     }
 
+    function getDelegateStakingParams() external view returns (DelegateStakingParams memory) {
+        return
+            DelegateStakingParams({
+                minPrincipal: _minPrincipal(),
+                maxActiveFunders: _maxActiveFunders(),
+                maxAutoService: _maxAutoService(),
+                maxAutoReleaseDays: _maxAutoReleaseDays()
+            });
+    }
+
+    /** PUBLIC, OWNER */
+    function setDelegateStakingParams(DelegateStakingParams calldata params_) external onlyOwner {
+        _getDelegateStakingStorage().params = params_;
+
+        emit DelegateStakingParamsUpdated(
+            _minPrincipal(),
+            _maxActiveFunders(),
+            _maxAutoService(),
+            _maxAutoReleaseDays()
+        );
+    }
+
     /** PUBLIC, MUTATORS */
     function grantStakingAllowance(address hot_, uint256 maxAmount_, uint128 expiry_) external {
         if (hot_ == address(0)) {
@@ -125,7 +149,8 @@ contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
             revert DelegateStakingInvalidExpiry();
         }
 
-        StakingGrant storage grant = _getDelegateStakingStorage().pools[hot_].grants[_msgSender()];
+        DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
+        StakingGrant storage grant = pool.grants[_msgSender()];
         if (maxAmount_ == 0 || maxAmount_ < grant.funded) {
             revert DelegateStakingMaxAmountTooLow();
         }
@@ -133,6 +158,13 @@ contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
         grant.maxAmount = maxAmount_;
         grant.expiry = expiry_;
         grant.isRevoked = false;
+
+        // A re-grant after revoke/expiry re-activates remaining principal for draws.
+        // The funder re-enters the FIFO list at the end (its original position is not
+        // restored) and only if the pool has room under the active-funder cap.
+        if (grant.principal > 0) {
+            _listFunder(pool, hot_, _msgSender());
+        }
 
         emit StakingAllowanceGranted(_msgSender(), hot_, maxAmount_, expiry_);
     }
@@ -160,7 +192,7 @@ contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
 
         grant.funded += amount_;
         grant.principal += amount_;
-        if (grant.principal < DELEGATE_STAKING_MIN_PRINCIPAL) {
+        if (grant.principal < _minPrincipal()) {
             revert DelegateStakingFundingBelowMinimum();
         }
 
@@ -173,13 +205,18 @@ contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
     }
 
     function revokeStakingAllowance(address hot_) external {
-        StakingGrant storage grant = _getDelegateStakingStorage().pools[hot_].grants[_msgSender()];
+        DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
+        StakingGrant storage grant = pool.grants[_msgSender()];
 
         if (grant.maxAmount == 0) {
             revert DelegateStakingGrantNotFound();
         }
 
         grant.isRevoked = true;
+
+        // Drop the dead grant from the draw-traversal list immediately so it cannot
+        // squat there and inflate draw gas (F-04). Withdrawal rights are unaffected.
+        _delistFunder(pool, _msgSender());
 
         emit StakingAllowanceRevoked(_msgSender(), hot_);
     }
@@ -190,7 +227,7 @@ contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
 
         // Recycle matured day-locks first so the funder is paid from them immediately
         // instead of being queued behind liquidity that is already releasable.
-        _releaseMaturedHolds(pool, hot_, DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS);
+        _releaseMaturedHolds(pool, hot_, _maxAutoReleaseDays());
 
         uint256 withdraw_ = amount_.min(grant.principal);
         if (withdraw_ == 0) {
@@ -198,7 +235,7 @@ contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
         }
 
         grant.principal -= withdraw_;
-        if (grant.principal != 0 && grant.principal < DELEGATE_STAKING_MIN_PRINCIPAL) {
+        if (grant.principal != 0 && grant.principal < _minPrincipal()) {
             revert DelegateStakingWithdrawalLeavesDust();
         }
 
@@ -229,7 +266,7 @@ contract DelegateStaking is IDelegateStaking, Context, DelegateStakingStorage {
         uint256 pendingBefore_ = pool.pendingTotal;
 
         // Matured day-locks service the pending queue as they recycle.
-        _releaseMaturedHolds(pool, hot_, DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS);
+        _releaseMaturedHolds(pool, hot_, _maxAutoReleaseDays());
 
         uint256 paid_ = _servicePendingWithdrawals(pool, hot_, pool.freeBalance, iterations_);
         pool.freeBalance -= paid_;

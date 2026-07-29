@@ -15,9 +15,24 @@ import {IDelegateStakingStorage} from "../storage/IDelegateStakingStorage.sol";
  */
 interface IDelegateStaking is IDelegateStakingStorage {
     /**
+     * The function to update the engine's operational limits. Owner-only (the protocol
+     * multisig on mainnet): the caps that bound loop gas must be tunable without a redeploy.
+     * Zero fields fall back to the built-in defaults.
+     * @param params_ The new limits (see IDelegateStakingCore.DelegateStakingParams).
+     */
+    function setDelegateStakingParams(DelegateStakingParams calldata params_) external;
+
+    /**
+     * The function returns the effective operational limits (defaults applied).
+     */
+    function getDelegateStakingParams() external view returns (DelegateStakingParams memory);
+
+    /**
      * The function to grant (or update) a staking allowance to a hot wallet. Cold-signed (COLDC-R1).
      * The grant is purpose-bound to session staking only; it is not an ERC-20 approval.
-     * Granting again updates the cap/expiry and clears a previous revocation.
+     * Granting again updates the cap/expiry and clears a previous revocation; if the grant
+     * still has principal it re-enters the FIFO draw list at the end, subject to the
+     * active-funder cap.
      * The hot wallet's own self-escrow is created by calling this with hot_ == msg.sender.
      * @param hot_ The hot wallet allowed to stake against the allowance.
      * @param maxAmount_ Cap on the cumulative funded amount. Must be >= the amount already funded.
@@ -37,8 +52,9 @@ interface IDelegateStaking is IDelegateStakingStorage {
 
     /**
      * The function to revoke a staking allowance. Cold-signed (COLDC-R8).
-     * Disables new draws immediately; already-staked funds return via session close
-     * and hold release. Funds remain withdrawable by the funder.
+     * Disables new draws immediately and removes the grant from the FIFO draw list
+     * (so dead grants never consume draw gas); already-staked funds return via session
+     * close and hold release. Funds remain withdrawable by the funder.
      * @param hot_ The hot wallet whose grant is revoked.
      */
     function revokeStakingAllowance(address hot_) external;

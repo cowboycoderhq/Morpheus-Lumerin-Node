@@ -113,13 +113,29 @@ early and normal closes differ only in proportion, not in kind:
   `userStakesOnHold` / `withdrawUserStakes` path, which needs a nightly reclaim loop and
   whose gas grows with the number of on-hold slots. `releasePoolHolds` remains as a
   permissionless fallback for pools idle for more than 8 days.
-- **Anti-dust / anti-griefing (F5).** Funding must leave a principal of ≥ 1 MOR
-  (`DELEGATE_STAKING_MIN_PRINCIPAL`), withdrawals must leave 0 or ≥ 1 MOR, and funders are
-  auto-pruned from the FIFO list once principal, locked and pending are all zero. This keeps
-  the draw loop bounded against dust-grant bloat.
-- **Bounded auto-service.** `closeSession` tops up at most `DELEGATE_STAKING_MAX_AUTO_SERVICE`
-  pending-withdrawal entries per close so close gas stays bounded; the permissionless
-  `claimPendingWithdrawals` clears any backlog (F2: no key needed to release funds).
+- **Anti-dust / anti-griefing (F5, review F-04).** Funding must leave a principal of ≥ 1 MOR
+  (min principal, owner-adjustable), withdrawals must leave 0 or ≥ 1 MOR, and funders are
+  auto-pruned from the FIFO list once principal, locked and pending are all zero. In
+  addition, **revoked grants are delisted from the draw-traversal list immediately and
+  expired grants lazily on the next draw** — withdrawal accounting is fully retained, but a
+  dead grant can never squat in the list and inflate draw gas.
+- **Hard funder cap (review F-02/F-03).** The draw-traversal list is capped at
+  `maxActiveFunders` (default 64, owner-adjustable); funding or re-granting into a full pool
+  reverts with `DelegateStakingTooManyFunders`. Because session debits are created only for
+  listed funders (plus the hot self-escrow) and day-bucket entries derive from those debits,
+  the cap bounds **every** funder loop in the engine: draw, close-time recycle, day-bucket
+  release and the capacity views. Bucket cardinality beyond the cap would additionally
+  require the hot wallet to draw from churned funders across the same day — i.e. a hot
+  wallet can only inflate the gas of its **own** pool's operations.
+- **Bounded auto-service.** `closeSession` tops up at most `maxAutoService` (default 5,
+  owner-adjustable) pending-withdrawal entries per close so close gas stays bounded; the
+  permissionless `claimPendingWithdrawals` clears any backlog (F2: no key needed to release
+  funds).
+- **Owner-adjustable limits.** All operational limits above (min principal, funder cap,
+  auto-service batch, auto-release day batch) live in `DelegateStakingParams`, settable via
+  the owner-only `setDelegateStakingParams` (the 5-of-9 protocol Safe on mainnet). A stored
+  zero means "use the built-in default", so no initializer is needed at cut time and future
+  tuning needs no redeploy.
 - **Grant expiry/revocation** only disable *new draws*; escrowed funds always remain
   withdrawable by their funder (F2: frozen funds are not acceptable).
 

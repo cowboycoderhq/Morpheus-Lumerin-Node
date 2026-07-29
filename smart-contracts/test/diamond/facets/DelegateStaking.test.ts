@@ -679,6 +679,107 @@ describe('DelegateStaking', () => {
     });
   });
 
+  describe('#setDelegateStakingParams, funder cap and delisting (F-02/F-03/F-04)', () => {
+    it('should return the built-in defaults when no params are set', async () => {
+      expect(await delegateStaking.getDelegateStakingParams()).to.deep.eq([wei(1), 64n, 5n, 8n]);
+    });
+    it('should let the owner tune params, zero fields falling back to defaults', async () => {
+      await expect(delegateStaking.setDelegateStakingParams({ minPrincipal: wei(2), maxActiveFunders: 2, maxAutoService: 0, maxAutoReleaseDays: 0 }))
+        .to.emit(delegateStaking, 'DelegateStakingParamsUpdated')
+        .withArgs(wei(2), 2n, 5n, 8n);
+
+      expect(await delegateStaking.getDelegateStakingParams()).to.deep.eq([wei(2), 2n, 5n, 8n]);
+    });
+    it('should throw error when params are set by a non-owner', async () => {
+      await expect(
+        delegateStaking
+          .connect(COLD_A)
+          .setDelegateStakingParams({ minPrincipal: 0, maxActiveFunders: 0, maxAutoService: 0, maxAutoReleaseDays: 0 }),
+      ).to.be.revertedWithCustomError(delegateStaking, 'OwnableUnauthorizedAccount');
+    });
+    it('should enforce the active-funder cap on funding (F-04)', async () => {
+      await delegateStaking.setDelegateStakingParams({ minPrincipal: 0, maxActiveFunders: 2, maxAutoService: 0, maxAutoReleaseDays: 0 });
+
+      await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(1000), 0);
+      await delegateStaking.connect(COLD_A).fundStakingAllowance(HOT, wei(100));
+      await delegateStaking.connect(COLD_B).grantStakingAllowance(HOT, wei(1000), 0);
+      await delegateStaking.connect(COLD_B).fundStakingAllowance(HOT, wei(100));
+
+      await token.approve(delegateStaking, wei(100));
+      await delegateStaking.grantStakingAllowance(HOT, wei(1000), 0);
+      await expect(delegateStaking.fundStakingAllowance(HOT, wei(100)))
+        .to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingTooManyFunders')
+        .withArgs(2);
+
+      // The hot wallet's own self-escrow is never listed, so it is exempt from the cap
+      await delegateStaking.connect(HOT).grantStakingAllowance(HOT, wei(1000), 0);
+      await delegateStaking.connect(HOT).fundStakingAllowance(HOT, wei(100));
+    });
+    it('should delist a revoked funder immediately and skip it on draws (F-04)', async () => {
+      await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(1000), 0);
+      await delegateStaking.connect(COLD_A).fundStakingAllowance(HOT, wei(100));
+      await delegateStaking.connect(COLD_B).grantStakingAllowance(HOT, wei(1000), 0);
+      await delegateStaking.connect(COLD_B).fundStakingAllowance(HOT, wei(100));
+
+      await delegateStaking.connect(COLD_A).revokeStakingAllowance(HOT);
+
+      expect(await delegateStaking.listFundersOf(HOT, 0, 10)).to.deep.eq([[COLD_B.address], 1n]);
+
+      await setTime(payoutStart + 10 * DAY);
+      const sessionId = await _openPoolSession(wei(50));
+
+      // The draw is attributed to B only; A's revoked principal is untouched
+      expect(await delegateStaking.getSessionFunding(sessionId)).to.deep.eq([[COLD_B.address, wei(50)]]);
+
+      const coldBalBefore = await token.balanceOf(COLD_A);
+      await delegateStaking.connect(COLD_A).withdrawStakingAllowance(HOT, wei(100));
+      expect((await token.balanceOf(COLD_A)) - coldBalBefore).to.eq(wei(100));
+    });
+    it('should lazily delist an expired funder on the next draw (F-04)', async () => {
+      await setTime(payoutStart + 10 * DAY);
+
+      await delegateStaking
+        .connect(COLD_A)
+        .grantStakingAllowance(HOT, wei(1000), payoutStart + 10 * DAY + 3600);
+      await delegateStaking.connect(COLD_A).fundStakingAllowance(HOT, wei(100));
+      await delegateStaking.connect(COLD_B).grantStakingAllowance(HOT, wei(1000), 0);
+      await delegateStaking.connect(COLD_B).fundStakingAllowance(HOT, wei(100));
+
+      await setTime(payoutStart + 10 * DAY + 2 * 3600);
+
+      expect((await delegateStaking.getStakingPool(HOT)).funderCount_).to.eq(2);
+
+      const sessionId = await _openPoolSession(wei(50));
+
+      expect(await delegateStaking.getSessionFunding(sessionId)).to.deep.eq([[COLD_B.address, wei(50)]]);
+      expect((await delegateStaking.getStakingPool(HOT)).funderCount_).to.eq(1);
+      expect(await delegateStaking.listFundersOf(HOT, 0, 10)).to.deep.eq([[COLD_B.address], 1n]);
+    });
+    it('should re-list a re-granted funder at the FIFO tail, subject to the cap', async () => {
+      await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(1000), 0);
+      await delegateStaking.connect(COLD_A).fundStakingAllowance(HOT, wei(100));
+      await delegateStaking.connect(COLD_B).grantStakingAllowance(HOT, wei(1000), 0);
+      await delegateStaking.connect(COLD_B).fundStakingAllowance(HOT, wei(100));
+
+      await delegateStaking.connect(COLD_A).revokeStakingAllowance(HOT);
+      await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(1000), 0);
+
+      expect(await delegateStaking.listFundersOf(HOT, 0, 10)).to.deep.eq([[COLD_B.address, COLD_A.address], 2n]);
+
+      // With a full pool, a re-grant with remaining principal cannot re-enter
+      await delegateStaking.setDelegateStakingParams({ minPrincipal: 0, maxActiveFunders: 2, maxAutoService: 0, maxAutoReleaseDays: 0 });
+      await token.approve(delegateStaking, wei(100));
+
+      await delegateStaking.connect(COLD_B).revokeStakingAllowance(HOT);
+      await delegateStaking.grantStakingAllowance(HOT, wei(1000), 0);
+      await delegateStaking.fundStakingAllowance(HOT, wei(100));
+
+      await expect(
+        delegateStaking.connect(COLD_B).grantStakingAllowance(HOT, wei(1000), 0),
+      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingTooManyFunders');
+    });
+  });
+
   describe('events and views reconciliation (AC-COLDC-9)', () => {
     it('should keep the pool, grants and events consistent over a full lifecycle', async () => {
       await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(1000), 0);

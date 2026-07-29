@@ -19,7 +19,10 @@ interface IDelegateStakingCore {
      * @param pendingOwed Withdrawal amount queued because free liquidity was insufficient.
      * @param expiry Timestamp after which new draws from this grant are disabled (0 = no expiry).
      * @param isRevoked If true, new draws from this grant are disabled.
-     * @param isListed If true, the funder is present in the pool's FIFO funder list.
+     * @param isListed If true, the funder is present in the pool's FIFO draw-traversal list.
+     *                 Revoked and expired grants are delisted (immediately on revoke, lazily on
+     *                 the next draw for expiry) so dead grants never consume draw gas; their
+     *                 principal, locked and pending accounting is fully retained.
      */
     struct StakingGrant {
         uint256 maxAmount;
@@ -52,6 +55,23 @@ interface IDelegateStakingCore {
         uint256 amount;
     }
 
+    /**
+     * The operational limits of the delegated staking engine, adjustable by the diamond
+     * owner (the protocol multisig on mainnet). A stored value of zero means "use the
+     * built-in default", so the feature works without any initialization call.
+     * @param minPrincipal Minimum remaining principal per grant (anti-dust, F5).
+     * @param maxActiveFunders Max funders in a pool's draw-traversal list. Bounds every
+     *                         funder loop on the draw, close, release and view paths.
+     * @param maxAutoService Max pending-withdrawal queue entries auto-serviced per pool credit.
+     * @param maxAutoReleaseDays Max matured day-lock buckets recycled per pool operation.
+     */
+    struct DelegateStakingParams {
+        uint256 minPrincipal;
+        uint256 maxActiveFunders;
+        uint256 maxAutoService;
+        uint256 maxAutoReleaseDays;
+    }
+
     event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 maxAmount, uint128 expiry);
     event StakingAllowanceFunded(address indexed funder, address indexed hot, uint256 amount);
     event StakingAllowanceRevoked(address indexed funder, address indexed hot);
@@ -61,6 +81,12 @@ interface IDelegateStakingCore {
     event AllowanceWithdrawn(address indexed funder, address indexed hot, uint256 amount);
     event AllowanceWithdrawQueued(address indexed funder, address indexed hot, uint256 amount);
     event PendingWithdrawalPaid(address indexed funder, address indexed hot, uint256 amount);
+    event DelegateStakingParamsUpdated(
+        uint256 minPrincipal,
+        uint256 maxActiveFunders,
+        uint256 maxAutoService,
+        uint256 maxAutoReleaseDays
+    );
 
     error DelegateStakingZeroAddressProvided();
     error DelegateStakingZeroAmountProvided();
@@ -76,6 +102,7 @@ interface IDelegateStakingCore {
     error DelegateStakingNothingToClaim();
     error DelegateStakingNothingToRelease();
     error DelegateStakingInsufficientPoolBalance(uint256 available, uint256 requested);
+    error DelegateStakingTooManyFunders(uint256 maxActiveFunders);
 }
 
 /**

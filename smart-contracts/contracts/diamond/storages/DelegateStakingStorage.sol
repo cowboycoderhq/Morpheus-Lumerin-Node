@@ -59,23 +59,33 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
     struct DLGSStorage {
         mapping(address hot => DelegateStakingPool) pools;
         mapping(bytes32 sessionId => PoolDebit[]) sessionDebits;
+        // Owner-adjustable operational limits; zero fields fall back to the defaults below.
+        DelegateStakingParams params;
     }
 
     bytes32 internal constant DELEGATE_STAKING_STORAGE_SLOT = keccak256("diamond.standard.delegate.staking.storage");
 
+    // Defaults for the owner-adjustable DelegateStakingParams (a stored zero means
+    // "use the default", so the engine works without an initialization call).
+
     // Anti-dust guard: a funder's remaining principal must be zero or at least this amount,
     // which keeps the FIFO funder list from being bloated with worthless entries (F5).
-    uint256 internal constant DELEGATE_STAKING_MIN_PRINCIPAL = 1 ether;
+    uint256 internal constant DEFAULT_DELEGATE_STAKING_MIN_PRINCIPAL = 1 ether;
+
+    // Max funders in a pool's draw-traversal list. Together with the delisting of
+    // revoked/expired grants this bounds every funder loop in the engine: draw debits,
+    // close-time recycle attribution, day-bucket release and the capacity views.
+    uint256 internal constant DEFAULT_DELEGATE_STAKING_MAX_ACTIVE_FUNDERS = 64;
 
     // Max pending-withdrawal queue entries auto-serviced per pool credit (session close /
     // hold release), keeping closeSession gas bounded. The rest is served by the
     // permissionless claimPendingWithdrawals.
-    uint256 internal constant DELEGATE_STAKING_MAX_AUTO_SERVICE = 5;
+    uint256 internal constant DEFAULT_DELEGATE_STAKING_MAX_AUTO_SERVICE = 5;
 
     // Max matured day-lock buckets recycled automatically per pool operation. One bucket
     // accrues per calendar day with closes, so a pool that stakes at least once every
     // 8 days never needs an explicit releasePoolHolds call.
-    uint256 internal constant DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS = 8;
+    uint256 internal constant DEFAULT_DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS = 8;
 
     /** INTERNAL */
 
@@ -88,7 +98,7 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
     function _drawFromPool(address hot_, uint256 amount_, bytes32 sessionId_) internal {
         DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
 
-        _releaseMaturedHolds(pool, hot_, DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS);
+        _releaseMaturedHolds(pool, hot_, _maxAutoReleaseDays());
 
         uint256 unencumbered_ = _unencumberedBalance(pool);
         if (amount_ == 0 || amount_ > unencumbered_) {
@@ -100,8 +110,17 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
         uint256 remaining_ = amount_;
         address funder_ = pool.firstFunder;
         while (funder_ != address(0) && remaining_ > 0) {
-            remaining_ = _debitGrant(pool, debits, hot_, funder_, remaining_, sessionId_);
-            funder_ = pool.nextFunder[funder_];
+            address next_ = pool.nextFunder[funder_];
+            StakingGrant storage grant = pool.grants[funder_];
+
+            if (grant.isRevoked || (grant.expiry != 0 && block.timestamp > grant.expiry)) {
+                // Dead grant: drop it from the traversal list so it never consumes draw
+                // gas again (its principal/locked/pending accounting is untouched).
+                _delistFunder(pool, funder_);
+            } else {
+                remaining_ = _debitGrant(pool, debits, hot_, funder_, remaining_, sessionId_);
+            }
+            funder_ = next_;
         }
         if (remaining_ > 0) {
             remaining_ = _debitGrant(pool, debits, hot_, hot_, remaining_, sessionId_);
@@ -129,7 +148,7 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
         DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
         PoolDebit[] storage debits = _getDelegateStakingStorage().sessionDebits[sessionId_];
 
-        _releaseMaturedHolds(pool, hot_, DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS);
+        _releaseMaturedHolds(pool, hot_, _maxAutoReleaseDays());
 
         if (lockAmount_ > 0) {
             // Every lock created "today" matures at the same next-midnight timestamp,
@@ -227,7 +246,7 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
             return;
         }
 
-        uint256 paid_ = _servicePendingWithdrawals(pool, hot_, amount_, DELEGATE_STAKING_MAX_AUTO_SERVICE);
+        uint256 paid_ = _servicePendingWithdrawals(pool, hot_, amount_, _maxAutoService());
         pool.freeBalance += amount_ - paid_;
     }
 
@@ -267,12 +286,19 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
     }
 
     /**
-     * Appends a funder to the FIFO list on first funding. The hot wallet's
-     * self-escrow is intentionally never listed (it is always debited last).
+     * Appends a funder to the FIFO list on first funding (or re-listing after a
+     * re-grant). The hot wallet's self-escrow is intentionally never listed (it is
+     * always debited last). The list is hard-capped so every funder loop in the
+     * engine is gas-bounded; the cap is owner-adjustable.
      */
     function _listFunder(DelegateStakingPool storage pool, address hot_, address funder_) internal {
         if (funder_ == hot_ || pool.grants[funder_].isListed) {
             return;
+        }
+
+        uint256 maxFunders_ = _maxActiveFunders();
+        if (pool.funderCount >= maxFunders_) {
+            revert DelegateStakingTooManyFunders(maxFunders_);
         }
 
         if (pool.lastFunder == address(0)) {
@@ -292,13 +318,22 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
      */
     function _pruneFunder(DelegateStakingPool storage pool, address hot_, address funder_) internal {
         StakingGrant storage grant = pool.grants[funder_];
-        if (
-            funder_ == hot_ ||
-            !grant.isListed ||
-            grant.principal != 0 ||
-            grant.locked != 0 ||
-            grant.pendingOwed != 0
-        ) {
+        if (funder_ == hot_ || grant.principal != 0 || grant.locked != 0 || grant.pendingOwed != 0) {
+            return;
+        }
+
+        _delistFunder(pool, funder_);
+    }
+
+    /**
+     * Unlinks a funder from the FIFO draw-traversal list unconditionally, leaving the
+     * grant's principal/locked/pending accounting untouched. Used on revoke (immediately)
+     * and on expiry (lazily during the next draw) so dead grants cannot squat in the
+     * list and inflate draw gas: withdrawal rights never depend on list membership.
+     */
+    function _delistFunder(DelegateStakingPool storage pool, address funder_) internal {
+        StakingGrant storage grant = pool.grants[funder_];
+        if (!grant.isListed) {
             return;
         }
 
@@ -336,6 +371,28 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
         }
 
         return grant.principal > grant.locked ? grant.principal - grant.locked : 0;
+    }
+
+    /** INTERNAL, EFFECTIVE PARAMETERS (stored zero = built-in default) */
+
+    function _minPrincipal() internal view returns (uint256) {
+        uint256 value_ = _getDelegateStakingStorage().params.minPrincipal;
+        return value_ == 0 ? DEFAULT_DELEGATE_STAKING_MIN_PRINCIPAL : value_;
+    }
+
+    function _maxActiveFunders() internal view returns (uint256) {
+        uint256 value_ = _getDelegateStakingStorage().params.maxActiveFunders;
+        return value_ == 0 ? DEFAULT_DELEGATE_STAKING_MAX_ACTIVE_FUNDERS : value_;
+    }
+
+    function _maxAutoService() internal view returns (uint256) {
+        uint256 value_ = _getDelegateStakingStorage().params.maxAutoService;
+        return value_ == 0 ? DEFAULT_DELEGATE_STAKING_MAX_AUTO_SERVICE : value_;
+    }
+
+    function _maxAutoReleaseDays() internal view returns (uint256) {
+        uint256 value_ = _getDelegateStakingStorage().params.maxAutoReleaseDays;
+        return value_ == 0 ? DEFAULT_DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS : value_;
     }
 
     function _getDelegateStakingStorage() internal pure returns (DLGSStorage storage ds) {
