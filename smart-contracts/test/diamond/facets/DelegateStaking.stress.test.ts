@@ -42,6 +42,10 @@ import { DAY } from '@/utils/time';
  */
 describe('DelegateStaking stress and invariants', () => {
   const reverter = new Reverter();
+  // This file mines ~330 setup blocks (64 funders x 5 txs), which advances the
+  // shared chain clock by as many seconds. Other suites use small absolute
+  // timestamps, so the WHOLE file is rolled back once it finishes.
+  const fileReverter = new Reverter();
 
   // Deliberately at the default active-funder cap.
   const FUNDER_COUNT = 64;
@@ -71,6 +75,8 @@ describe('DelegateStaking stress and invariants', () => {
   const bidPricePerSecond = wei(0.0001);
 
   before(async () => {
+    await fileReverter.snapshot();
+
     [OWNER, HOT, FUNDING, PROVIDER] = await ethers.getSigners();
 
     [diamond, token, delegateRegistry] = await Promise.all([
@@ -122,6 +128,8 @@ describe('DelegateStaking stress and invariants', () => {
   });
 
   afterEach(reverter.revert);
+
+  after(fileReverter.revert);
 
   const _openPoolSession = async (amount: bigint, nonce = 0) => {
     const { msg, signature } = await getProviderApproval(PROVIDER, HOT, bidId);
