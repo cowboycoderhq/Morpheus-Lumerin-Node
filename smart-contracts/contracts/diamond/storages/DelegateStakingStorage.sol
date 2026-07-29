@@ -54,6 +54,9 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
         mapping(uint128 releaseAt => DayHoldBucket) dayHolds;
         PendingWithdrawal[] pendingQueue;
         uint256 pendingHead;
+        // One live queue node per funder (review F-08): index+1 of the funder's active
+        // entry in pendingQueue, 0 = none. Repeat withdrawals coalesce into that node.
+        mapping(address funder => uint256) pendingNodeIndexPlus1;
     }
 
     struct DLGSStorage {
@@ -108,7 +111,7 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
 
         uint256 unencumbered_ = _unencumberedBalance(pool);
         if (amount_ == 0 || amount_ > unencumbered_) {
-            revert DelegateStakingInsufficientPoolBalance(unencumbered_, amount_);
+            revert DelegateStakingInsufficientLiquidBalance(unencumbered_, amount_);
         }
 
         PoolDebit[] storage debits = _getDelegateStakingStorage().sessionDebits[sessionId_];
@@ -132,7 +135,9 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
             remaining_ = _debitGrant(pool, debits, hot_, hot_, remaining_, sessionId_);
         }
         if (remaining_ > 0) {
-            revert DelegateStakingInsufficientPoolBalance(amount_ - remaining_, amount_);
+            // Liquidity was sufficient but the live (non-revoked, non-expired) grant
+            // capacity was not — a distinct failure mode for operators (review F-14).
+            revert DelegateStakingInsufficientAuthorizedCapacity(amount_ - remaining_, amount_);
         }
 
         pool.freeBalance -= amount_;
@@ -285,6 +290,7 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
             _pruneFunder(pool, hot_, pending.funder);
 
             if (pending.amount == 0) {
+                delete pool.pendingNodeIndexPlus1[pending.funder];
                 pool.pendingHead++;
             }
             served_++;
@@ -324,7 +330,7 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
      */
     function _pruneFunder(DelegateStakingPool storage pool, address hot_, address funder_) internal {
         StakingGrant storage grant = pool.grants[funder_];
-        if (funder_ == hot_ || grant.principal != 0 || grant.locked != 0 || grant.pendingOwed != 0) {
+        if (funder_ == hot_ || grant.currentPrincipal != 0 || grant.locked != 0 || grant.pendingOwed != 0) {
             return;
         }
 
@@ -376,7 +382,7 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
             return 0;
         }
 
-        return grant.principal > grant.locked ? grant.principal - grant.locked : 0;
+        return grant.currentPrincipal > grant.locked ? grant.currentPrincipal - grant.locked : 0;
     }
 
     /** INTERNAL, EFFECTIVE PARAMETERS (stored zero = built-in default) */

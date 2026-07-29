@@ -399,6 +399,19 @@ describe('SessionRouter', () => {
     });
   });
 
+  describe('#openSession, approval binding (F-09)', () => {
+    it('should throw error when the approval was issued to another user', async () => {
+      await setTime(payoutStart + 10 * DAY);
+      await token.approve(sessionRouter, wei(50));
+
+      // Approval issued to SECOND must not open a session for OWNER
+      const { msg, signature } = await getProviderApproval(PROVIDER, SECOND, bidId);
+      await expect(
+        sessionRouter.connect(OWNER).openSession(OWNER, wei(50), false, msg, signature),
+      ).to.be.revertedWithCustomError(sessionRouter, 'SessionApprovedForAnotherUser');
+    });
+  });
+
   describe('#closeSession', () => {
     it('should close session and send rewards for the provider, late closure', async () => {
       const { sessionId, openedAt } = await _createSession();
@@ -1020,6 +1033,48 @@ describe('SessionRouter', () => {
       expect(userBalAfter - userBalBefore).to.greaterThan(0);
       const contractBalAfter = await token.balanceOf(sessionRouter);
       expect(contractBalBefore - contractBalAfter).to.greaterThan(0);
+    });
+    it('should honor the iteration bounds on views and scans (F-07)', async () => {
+      const openedAt = payoutStart + (payoutStart % DAY) + 10 * DAY - 201;
+
+      // Two day-locked entries created two days apart
+      await setTime(openedAt + 1 * DAY);
+      const { msg: msg1, signature: sig1 } = await getProviderApproval(PROVIDER, SECOND, bidId);
+      await sessionRouter.connect(SECOND).openSession(SECOND, wei(50), false, msg1, sig1);
+      const sessionId1 = await sessionRouter.getSessionId(SECOND, PROVIDER, bidId, 0);
+      await setTime(openedAt + 1 * DAY + 500);
+      const { msg: receiptMsg1, signature: receiptSig1 } = await getReceipt(PROVIDER, sessionId1, 0, 0);
+      await sessionRouter.connect(SECOND).closeSession(receiptMsg1, receiptSig1);
+
+      await setTime(openedAt + 3 * DAY);
+      const { msg: msg2, signature: sig2 } = await getProviderApproval(PROVIDER, SECOND, bidId);
+      await sessionRouter.connect(SECOND).openSession(SECOND, wei(50), false, msg2, sig2);
+      const sessionId2 = await sessionRouter.getSessionId(SECOND, PROVIDER, bidId, 1);
+      await setTime(openedAt + 3 * DAY + 500);
+      const { msg: receiptMsg2, signature: receiptSig2 } = await getReceipt(PROVIDER, sessionId2, 0, 0);
+      await sessionRouter.connect(SECOND).closeSession(receiptMsg2, receiptSig2);
+
+      // Entry 1 has matured, entry 2 is still day-locked
+      await setTime(openedAt + 3 * DAY + 600);
+
+      // The view scans exactly `iterations_` entries (it used to ignore the bound)
+      const [available1, hold1] = await sessionRouter.getUserStakesOnHold(SECOND, 1);
+      const [available2, hold2] = await sessionRouter.getUserStakesOnHold(SECOND, 2);
+      expect(available1).to.eq(available2);
+      expect(hold1).to.eq(0);
+      expect(hold2).to.greaterThan(0);
+
+      // The withdrawal bounds entries EXAMINED: one iteration only reaches the
+      // still-locked tail entry, so nothing is withdrawable within that bound
+      await expect(sessionRouter.connect(SECOND).withdrawUserStakes(SECOND, 1)).to.be.revertedWithCustomError(
+        sessionRouter,
+        'SessionUserAmountToWithdrawIsZero',
+      );
+
+      // Two iterations reach the matured entry and pay it out
+      const userBalBefore = await token.balanceOf(SECOND);
+      await sessionRouter.connect(SECOND).withdrawUserStakes(SECOND, 2);
+      expect((await token.balanceOf(SECOND)) - userBalBefore).to.eq(available1);
     });
     it('should withdraw the user stake on hold, few entities, with on hold', async () => {
       const openedAt = payoutStart + (payoutStart % DAY) + 10 * DAY - 201;

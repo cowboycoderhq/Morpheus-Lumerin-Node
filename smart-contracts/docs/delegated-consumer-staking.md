@@ -46,20 +46,30 @@ A purpose escrow bucket per hot wallet, funded by any number of cold wallets:
 
 ## Accounting model
 
-All pooled funds are fungible; bookkeeping tracks per grant:
+All pooled funds are fungible; bookkeeping tracks per grant (field names per review F-11 —
+the cap applies to *lifetime* funding, so the names say so):
 
-- `principal` — funds the funder currently owns inside the pool (funded − withdrawn),
+- `cumulativeFundingCap` — cap on `lifetimeFunded`; withdrawing does NOT free cap headroom,
+- `lifetimeFunded` — cumulative amount ever transferred into the pool (monotonic),
+- `currentPrincipal` — funds the funder currently owns inside the pool,
 - `locked` — FIFO-attributed to open sessions and day-locked holds,
-- `pendingOwed` — queued withdrawal awaiting freed liquidity.
+- `pendingOwed` — queued withdrawal awaiting freed liquidity (one queue node per funder,
+  coalesced — review F-08).
 
-Pool-level invariant (tested): `Σ principal + pendingTotal == freeBalance + lockedBalance`.
+Pool-level invariant (tested):
+`Σ currentPrincipal + pendingTotal == freeBalance + lockedBalance`.
 
 Because funds are fungible, a funder withdrawing while "its" tokens sit in an open session
 is paid from the free balance immediately; `locked` may then temporarily exceed
-`principal` for that grant, which simply floors its draw capacity at zero. Only the last
-funder out waits, and only until the open sessions close (RFP: "fungible, last-out waits").
+`currentPrincipal` for that grant, which simply floors its draw capacity at zero. Only the
+last funder out waits, and only until the open sessions close (RFP: "fungible, last-out
+waits").
 
-Draw capacity is `min(freeBalance − pendingTotal, Σ live-grant (principal − locked))`, so
+Draw failure modes are distinct errors (review F-14): not enough unencumbered liquidity is
+`DelegateStakingInsufficientLiquidBalance`; enough liquidity but not enough live grant
+capacity is `DelegateStakingInsufficientAuthorizedCapacity`.
+
+Draw capacity is `min(freeBalance − pendingTotal, Σ live-grant (currentPrincipal − locked))`, so
 queued withdrawals always have priority over new sessions, and expired/revoked grants stop
 backing draws while remaining fully withdrawable.
 

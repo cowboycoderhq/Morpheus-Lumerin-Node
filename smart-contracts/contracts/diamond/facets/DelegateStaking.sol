@@ -143,7 +143,7 @@ contract DelegateStaking is IDelegateStaking, OwnableDiamondStorage, DelegateSta
     }
 
     /** PUBLIC, MUTATORS */
-    function grantStakingAllowance(address hot_, uint256 maxAmount_, uint128 expiry_) external {
+    function grantStakingAllowance(address hot_, uint256 cumulativeFundingCap_, uint128 expiry_) external {
         if (hot_ == address(0)) {
             revert DelegateStakingZeroAddressProvided();
         }
@@ -153,22 +153,22 @@ contract DelegateStaking is IDelegateStaking, OwnableDiamondStorage, DelegateSta
 
         DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
         StakingGrant storage grant = pool.grants[_msgSender()];
-        if (maxAmount_ == 0 || maxAmount_ < grant.funded) {
+        if (cumulativeFundingCap_ == 0 || cumulativeFundingCap_ < grant.lifetimeFunded) {
             revert DelegateStakingMaxAmountTooLow();
         }
 
-        grant.maxAmount = maxAmount_;
+        grant.cumulativeFundingCap = cumulativeFundingCap_;
         grant.expiry = expiry_;
         grant.isRevoked = false;
 
         // A re-grant after revoke/expiry re-activates remaining principal for draws.
         // The funder re-enters the FIFO list at the end (its original position is not
         // restored) and only if the pool has room under the active-funder cap.
-        if (grant.principal > 0) {
+        if (grant.currentPrincipal > 0) {
             _listFunder(pool, hot_, _msgSender());
         }
 
-        emit StakingAllowanceGranted(_msgSender(), hot_, maxAmount_, expiry_);
+        emit StakingAllowanceGranted(_msgSender(), hot_, cumulativeFundingCap_, expiry_);
     }
 
     function fundStakingAllowance(address hot_, uint256 amount_) external {
@@ -179,7 +179,7 @@ contract DelegateStaking is IDelegateStaking, OwnableDiamondStorage, DelegateSta
         DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
         StakingGrant storage grant = pool.grants[_msgSender()];
 
-        if (grant.maxAmount == 0) {
+        if (grant.cumulativeFundingCap == 0) {
             revert DelegateStakingGrantNotFound();
         }
         if (grant.isRevoked) {
@@ -188,13 +188,13 @@ contract DelegateStaking is IDelegateStaking, OwnableDiamondStorage, DelegateSta
         if (grant.expiry != 0 && block.timestamp > grant.expiry) {
             revert DelegateStakingGrantExpired();
         }
-        if (grant.funded + amount_ > grant.maxAmount) {
+        if (grant.lifetimeFunded + amount_ > grant.cumulativeFundingCap) {
             revert DelegateStakingFundingExceedsMaxAmount();
         }
 
-        grant.funded += amount_;
-        grant.principal += amount_;
-        if (grant.principal < _minPrincipal()) {
+        grant.lifetimeFunded += amount_;
+        grant.currentPrincipal += amount_;
+        if (grant.currentPrincipal < _minPrincipal()) {
             revert DelegateStakingFundingBelowMinimum();
         }
 
@@ -210,7 +210,7 @@ contract DelegateStaking is IDelegateStaking, OwnableDiamondStorage, DelegateSta
         DelegateStakingPool storage pool = _getDelegateStakingStorage().pools[hot_];
         StakingGrant storage grant = pool.grants[_msgSender()];
 
-        if (grant.maxAmount == 0) {
+        if (grant.cumulativeFundingCap == 0) {
             revert DelegateStakingGrantNotFound();
         }
 
@@ -231,13 +231,13 @@ contract DelegateStaking is IDelegateStaking, OwnableDiamondStorage, DelegateSta
         // instead of being queued behind liquidity that is already releasable.
         _releaseMaturedHolds(pool, hot_, _maxAutoReleaseDays());
 
-        uint256 withdraw_ = amount_.min(grant.principal);
+        uint256 withdraw_ = amount_.min(grant.currentPrincipal);
         if (withdraw_ == 0) {
             revert DelegateStakingNothingToWithdraw();
         }
 
-        grant.principal -= withdraw_;
-        if (grant.principal != 0 && grant.principal < _minPrincipal()) {
+        grant.currentPrincipal -= withdraw_;
+        if (grant.currentPrincipal != 0 && grant.currentPrincipal < _minPrincipal()) {
             revert DelegateStakingWithdrawalLeavesDust();
         }
 
@@ -252,7 +252,16 @@ contract DelegateStaking is IDelegateStaking, OwnableDiamondStorage, DelegateSta
             emit AllowanceWithdrawn(_msgSender(), hot_, immediate_);
         }
         if (queued_ > 0) {
-            pool.pendingQueue.push(PendingWithdrawal(_msgSender(), queued_));
+            // One live queue node per funder (review F-08): repeat shortfall withdrawals
+            // coalesce into the funder's existing entry instead of growing the queue,
+            // so a single funder can never crowd the bounded auto-service window.
+            uint256 nodePlus1_ = pool.pendingNodeIndexPlus1[_msgSender()];
+            if (nodePlus1_ > pool.pendingHead) {
+                pool.pendingQueue[nodePlus1_ - 1].amount += queued_;
+            } else {
+                pool.pendingQueue.push(PendingWithdrawal(_msgSender(), queued_));
+                pool.pendingNodeIndexPlus1[_msgSender()] = pool.pendingQueue.length;
+            }
             grant.pendingOwed += queued_;
             pool.pendingTotal += queued_;
 
@@ -310,7 +319,7 @@ contract DelegateStaking is IDelegateStaking, OwnableDiamondStorage, DelegateSta
             locked_ -= pool.dayHolds[releaseAt_].amounts[funder_];
         }
 
-        return grant.principal > locked_ ? grant.principal - locked_ : 0;
+        return grant.currentPrincipal > locked_ ? grant.currentPrincipal - locked_ : 0;
     }
 
     function _maturedHoldsTotal(DelegateStakingPool storage pool) private view returns (uint256 total_) {

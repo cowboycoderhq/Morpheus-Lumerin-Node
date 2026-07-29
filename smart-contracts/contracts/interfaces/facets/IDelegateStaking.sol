@@ -35,10 +35,10 @@ interface IDelegateStaking is IDelegateStakingStorage {
      * active-funder cap.
      * The hot wallet's own self-escrow is created by calling this with hot_ == msg.sender.
      * @param hot_ The hot wallet allowed to stake against the allowance.
-     * @param maxAmount_ Cap on the cumulative funded amount. Must be >= the amount already funded.
+     * @param cumulativeFundingCap_ Cap on the cumulative funded amount. Must be >= the amount already funded.
      * @param expiry_ Timestamp after which new draws are disabled (0 = no expiry).
      */
-    function grantStakingAllowance(address hot_, uint256 maxAmount_, uint128 expiry_) external;
+    function grantStakingAllowance(address hot_, uint256 cumulativeFundingCap_, uint128 expiry_) external;
 
     /**
      * The function to fund the purpose escrow behind a previously created grant. Cold-signed (COLDC-R2).

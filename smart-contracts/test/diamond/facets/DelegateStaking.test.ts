@@ -119,9 +119,9 @@ describe('DelegateStaking', () => {
         .withArgs(COLD_A, HOT, wei(1000), 0);
 
       const grant = await delegateStaking.getStakingAllowance(COLD_A, HOT);
-      expect(grant.maxAmount).to.eq(wei(1000));
-      expect(grant.funded).to.eq(0);
-      expect(grant.principal).to.eq(0);
+      expect(grant.cumulativeFundingCap).to.eq(wei(1000));
+      expect(grant.lifetimeFunded).to.eq(0);
+      expect(grant.currentPrincipal).to.eq(0);
       expect(grant.locked).to.eq(0);
       expect(grant.expiry).to.eq(0);
       expect(grant.isRevoked).to.eq(false);
@@ -136,7 +136,7 @@ describe('DelegateStaking', () => {
       await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(2000), payoutStart + 20 * DAY);
 
       const grant = await delegateStaking.getStakingAllowance(COLD_A, HOT);
-      expect(grant.maxAmount).to.eq(wei(2000));
+      expect(grant.cumulativeFundingCap).to.eq(wei(2000));
       expect(grant.expiry).to.eq(payoutStart + 20 * DAY);
       expect(grant.isRevoked).to.eq(false);
     });
@@ -178,8 +178,8 @@ describe('DelegateStaking', () => {
       expect((await token.balanceOf(diamond)) - diamondBalBefore).to.eq(wei(100));
 
       const grant = await delegateStaking.getStakingAllowance(COLD_A, HOT);
-      expect(grant.funded).to.eq(wei(100));
-      expect(grant.principal).to.eq(wei(100));
+      expect(grant.lifetimeFunded).to.eq(wei(100));
+      expect(grant.currentPrincipal).to.eq(wei(100));
       expect(grant.isListed).to.eq(true);
 
       expect(await delegateStaking.getAvailableToStake(HOT)).to.eq(wei(100));
@@ -241,7 +241,7 @@ describe('DelegateStaking', () => {
       const { msg, signature } = await getProviderApproval(PROVIDER, HOT, bidId);
       await expect(
         sessionRouter.connect(HOT).openSessionFromPool(HOT, wei(50), msg, signature),
-      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientPoolBalance');
+      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientLiquidBalance');
     });
     it('should open a session from a single cold grant without a per-session cold signature (AC-COLDC-2)', async () => {
       await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(1000), 0);
@@ -322,7 +322,7 @@ describe('DelegateStaking', () => {
       const { msg, signature } = await getProviderApproval(PROVIDER, HOT, bidId);
       await expect(
         sessionRouter.connect(HOT).openSessionFromPool(HOT, wei(101), msg, signature),
-      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientPoolBalance');
+      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientLiquidBalance');
 
       // expiry disables further draws even though the funds are still escrowed
       await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(100), payoutStart + 11 * DAY);
@@ -330,7 +330,7 @@ describe('DelegateStaking', () => {
       const { msg: msg2, signature: signature2 } = await getProviderApproval(PROVIDER, HOT, bidId);
       await expect(
         sessionRouter.connect(HOT).openSessionFromPool(HOT, wei(50), msg2, signature2),
-      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientPoolBalance');
+      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientAuthorizedCapacity');
       expect(await delegateStaking.getAvailableToStake(HOT)).to.eq(0);
     });
     it('should revert when the pool is drawn by a wallet that is not the hot wallet or its delegatee (AC-COLDC-5)', async () => {
@@ -346,7 +346,7 @@ describe('DelegateStaking', () => {
       // another wallet has no pool of its own
       await expect(
         sessionRouter.connect(COLD_B).openSessionFromPool(COLD_B, wei(50), msg, signature),
-      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientPoolBalance');
+      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientLiquidBalance');
     });
     it('should open a session from the hot wallet delegatee address', async () => {
       await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(1000), 0);
@@ -568,7 +568,7 @@ describe('DelegateStaking', () => {
       expect((await token.balanceOf(COLD_A)) - coldBalBefore).to.eq(wei(100));
 
       const grant = await delegateStaking.getStakingAllowance(COLD_A, HOT);
-      expect(grant.principal).to.eq(0);
+      expect(grant.currentPrincipal).to.eq(0);
       expect(grant.isListed).to.eq(false);
       expect(await delegateStaking.listFundersOf(HOT, 0, 10)).to.deep.eq([[], 0n]);
     });
@@ -585,7 +585,7 @@ describe('DelegateStaking', () => {
       expect(await delegateStaking.getPendingWithdrawal(COLD_A, HOT)).to.eq(wei(40));
 
       const grant = await delegateStaking.getStakingAllowance(COLD_A, HOT);
-      expect(grant.principal).to.eq(wei(40));
+      expect(grant.currentPrincipal).to.eq(wei(40));
       expect(grant.locked).to.eq(wei(80));
 
       // pending withdrawals are paid automatically when the session closes
@@ -638,7 +638,7 @@ describe('DelegateStaking', () => {
       const { msg, signature } = await getProviderApproval(PROVIDER, HOT, bidId);
       await expect(
         sessionRouter.connect(HOT).openSessionFromPool(HOT, wei(40), msg, signature),
-      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientPoolBalance');
+      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientLiquidBalance');
 
       const coldBalBefore = await token.balanceOf(COLD_A);
       await expect(delegateStaking.connect(OWNER).claimPendingWithdrawals(HOT, 10))
@@ -650,6 +650,27 @@ describe('DelegateStaking', () => {
       expect([freeBalance, pendingTotal]).to.deep.eq([wei(30), 0n]);
       expect(await delegateStaking.getAvailableToStake(HOT)).to.eq(wei(30));
     });
+    it('should coalesce repeat shortfall withdrawals into one queue entry (F-08)', async () => {
+      await setTime(payoutStart + 10 * DAY);
+      await _openPoolSession(wei(100));
+
+      // Two separate shortfall withdrawals while everything is staked
+      await delegateStaking.connect(COLD_A).withdrawStakingAllowance(HOT, wei(30));
+      await delegateStaking.connect(COLD_A).withdrawStakingAllowance(HOT, wei(30));
+      expect(await delegateStaking.getPendingWithdrawal(COLD_A, HOT)).to.eq(wei(60));
+
+      // Fresh liquidity + a SINGLE-entry claim pays the whole coalesced amount:
+      // with two separate nodes, one iteration could only have paid the first 30
+      await delegateStaking.connect(COLD_B).grantStakingAllowance(HOT, wei(1000), 0);
+      await delegateStaking.connect(COLD_B).fundStakingAllowance(HOT, wei(80));
+
+      const coldBalBefore = await token.balanceOf(COLD_A);
+      await delegateStaking.connect(OWNER).claimPendingWithdrawals(HOT, 1);
+
+      expect((await token.balanceOf(COLD_A)) - coldBalBefore).to.eq(wei(60));
+      expect(await delegateStaking.getPendingWithdrawal(COLD_A, HOT)).to.eq(0);
+      expect((await delegateStaking.getStakingPool(HOT)).pendingTotal_).to.eq(0);
+    });
     it('should keep other funders unaffected by a withdrawal (AC-COLDC-7)', async () => {
       await delegateStaking.connect(COLD_B).grantStakingAllowance(HOT, wei(1000), 0);
       await delegateStaking.connect(COLD_B).fundStakingAllowance(HOT, wei(100));
@@ -657,7 +678,7 @@ describe('DelegateStaking', () => {
       await delegateStaking.connect(COLD_A).withdrawStakingAllowance(HOT, wei(100));
 
       const grantB = await delegateStaking.getStakingAllowance(COLD_B, HOT);
-      expect(grantB.principal).to.eq(wei(100));
+      expect(grantB.currentPrincipal).to.eq(wei(100));
       expect(await delegateStaking.getAvailableToStake(HOT)).to.eq(wei(100));
       expect(await delegateStaking.listFundersOf(HOT, 0, 10)).to.deep.eq([[COLD_B.address], 1n]);
     });
@@ -700,7 +721,7 @@ describe('DelegateStaking', () => {
       const { msg, signature } = await getProviderApproval(PROVIDER, HOT, bidId);
       await expect(
         sessionRouter.connect(HOT).openSessionFromPool(HOT, wei(50), msg, signature),
-      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientPoolBalance');
+      ).to.be.revertedWithCustomError(delegateStaking, 'DelegateStakingInsufficientAuthorizedCapacity');
 
       const coldBalBefore = await token.balanceOf(COLD_A);
       await delegateStaking.connect(COLD_A).withdrawStakingAllowance(HOT, wei(100));
@@ -859,11 +880,11 @@ describe('DelegateStaking', () => {
 
       const grantA = await delegateStaking.getStakingAllowance(COLD_A, HOT);
       const grantB = await delegateStaking.getStakingAllowance(COLD_B, HOT);
-      expect([grantA.principal, grantA.locked]).to.deep.eq([wei(60), 0n]);
-      expect([grantB.principal, grantB.locked]).to.deep.eq([wei(40), 0n]);
+      expect([grantA.currentPrincipal, grantA.locked]).to.deep.eq([wei(60), 0n]);
+      expect([grantB.currentPrincipal, grantB.locked]).to.deep.eq([wei(40), 0n]);
 
       // invariant: sum(principal) + pendingTotal == freeBalance + lockedBalance
-      expect(grantA.principal + grantB.principal + pendingTotal).to.eq(freeBalance + lockedBalance);
+      expect(grantA.currentPrincipal + grantB.currentPrincipal + pendingTotal).to.eq(freeBalance + lockedBalance);
     });
   });
 });

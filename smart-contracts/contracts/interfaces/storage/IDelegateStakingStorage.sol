@@ -10,12 +10,16 @@ interface IDelegateStakingCore {
     /**
      * The structure that stores a staking allowance from one funder to one hot wallet.
      * The hot wallet's own self-escrow is a grant where the funder is the hot wallet itself.
-     * @param maxAmount Cap on the cumulative funded amount.
-     * @param funded Cumulative amount the funder has transferred into the pool.
-     * @param principal Funds currently owned by the funder inside the pool (funded minus withdrawn).
+     * Field names are deliberately explicit (review F-11): the cap applies to LIFETIME
+     * funding, not to the current balance — withdrawing does not free up cap headroom.
+     * @param cumulativeFundingCap Cap on lifetimeFunded; funding beyond it reverts.
+     * @param lifetimeFunded Cumulative amount the funder has ever transferred into the pool
+     *                       (monotonic; withdrawals do NOT decrease it).
+     * @param currentPrincipal Funds currently owned by the funder inside the pool
+     *                         (lifetimeFunded minus withdrawals/payouts).
      * @param locked Funds notionally locked in open sessions or day-locked holds (FIFO bookkeeping;
-     *               the pooled funds themselves are fungible, so locked may temporarily exceed principal
-     *               after a free-balance withdrawal).
+     *               the pooled funds themselves are fungible, so locked may temporarily exceed
+     *               currentPrincipal after a free-balance withdrawal).
      * @param pendingOwed Withdrawal amount queued because free liquidity was insufficient.
      * @param expiry Timestamp after which new draws from this grant are disabled (0 = no expiry).
      * @param isRevoked If true, new draws from this grant are disabled.
@@ -25,9 +29,9 @@ interface IDelegateStakingCore {
      *                 principal, locked and pending accounting is fully retained.
      */
     struct StakingGrant {
-        uint256 maxAmount;
-        uint256 funded;
-        uint256 principal;
+        uint256 cumulativeFundingCap;
+        uint256 lifetimeFunded;
+        uint256 currentPrincipal;
         uint256 locked;
         uint256 pendingOwed;
         uint128 expiry;
@@ -75,7 +79,7 @@ interface IDelegateStakingCore {
         uint256 settlementGrace;
     }
 
-    event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 maxAmount, uint128 expiry);
+    event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 cumulativeFundingCap, uint128 expiry);
     event StakingAllowanceFunded(address indexed funder, address indexed hot, uint256 amount);
     event StakingAllowanceRevoked(address indexed funder, address indexed hot);
     event AllowanceDebited(address indexed hot, address indexed funder, uint256 amount, bytes32 indexed sessionId);
@@ -105,7 +109,8 @@ interface IDelegateStakingCore {
     error DelegateStakingNothingToWithdraw();
     error DelegateStakingNothingToClaim();
     error DelegateStakingNothingToRelease();
-    error DelegateStakingInsufficientPoolBalance(uint256 available, uint256 requested);
+    error DelegateStakingInsufficientLiquidBalance(uint256 available, uint256 requested);
+    error DelegateStakingInsufficientAuthorizedCapacity(uint256 available, uint256 requested);
     error DelegateStakingTooManyFunders(uint256 maxActiveFunders);
 }
 

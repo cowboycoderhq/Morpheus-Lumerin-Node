@@ -39,6 +39,15 @@ type IBidStorageBid struct {
 	DeletedAt      *big.Int
 }
 
+// IDelegateStakingCoreDelegateStakingParams is an auto generated low-level Go binding around an user-defined struct.
+type IDelegateStakingCoreDelegateStakingParams struct {
+	MinPrincipal       *big.Int
+	MaxActiveFunders   *big.Int
+	MaxAutoService     *big.Int
+	MaxAutoReleaseDays *big.Int
+	SettlementGrace    *big.Int
+}
+
 // IDelegateStakingCorePoolDebit is an auto generated low-level Go binding around an user-defined struct.
 type IDelegateStakingCorePoolDebit struct {
 	Funder common.Address
@@ -47,19 +56,19 @@ type IDelegateStakingCorePoolDebit struct {
 
 // IDelegateStakingCoreStakingGrant is an auto generated low-level Go binding around an user-defined struct.
 type IDelegateStakingCoreStakingGrant struct {
-	MaxAmount   *big.Int
-	Funded      *big.Int
-	Principal   *big.Int
-	Locked      *big.Int
-	PendingOwed *big.Int
-	Expiry      *big.Int
-	IsRevoked   bool
-	IsListed    bool
+	CumulativeFundingCap *big.Int
+	LifetimeFunded       *big.Int
+	CurrentPrincipal     *big.Int
+	Locked               *big.Int
+	PendingOwed          *big.Int
+	Expiry               *big.Int
+	IsRevoked            bool
+	IsListed             bool
 }
 
 // DelegateStakingMetaData contains all meta data concerning the DelegateStaking contract.
 var DelegateStakingMetaData = &bind.MetaData{
-	ABI: "[{\"inputs\":[],\"name\":\"DelegateStakingFundingBelowMinimum\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingFundingExceedsMaxAmount\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingGrantExpired\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingGrantNotFound\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingGrantRevoked\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"available\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"requested\",\"type\":\"uint256\"}],\"name\":\"DelegateStakingInsufficientPoolBalance\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingInvalidExpiry\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingMaxAmountTooLow\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingNothingToClaim\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingNothingToRelease\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingNothingToWithdraw\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingWithdrawalLeavesDust\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingZeroAddressProvided\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingZeroAmountProvided\",\"type\":\"error\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"indexed\":true,\"internalType\":\"bytes32\",\"name\":\"sessionId\",\"type\":\"bytes32\"}],\"name\":\"AllowanceDebited\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint128\",\"name\":\"releaseAt\",\"type\":\"uint128\"}],\"name\":\"AllowanceHoldCreated\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"AllowanceReleased\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"AllowanceWithdrawQueued\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"AllowanceWithdrawn\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"PendingWithdrawalPaid\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"StakingAllowanceFunded\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"maxAmount\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint128\",\"name\":\"expiry\",\"type\":\"uint128\"}],\"name\":\"StakingAllowanceGranted\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"}],\"name\":\"StakingAllowanceRevoked\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"BIDS_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint8\",\"name\":\"iterations_\",\"type\":\"uint8\"}],\"name\":\"claimPendingWithdrawals\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"}],\"name\":\"fundStakingAllowance\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"getAvailableToStake\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"bidId_\",\"type\":\"bytes32\"}],\"name\":\"getBid\",\"outputs\":[{\"components\":[{\"internalType\":\"address\",\"name\":\"provider\",\"type\":\"address\"},{\"internalType\":\"bytes32\",\"name\":\"modelId\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"pricePerSecond\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"nonce\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"createdAt\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"deletedAt\",\"type\":\"uint128\"}],\"internalType\":\"structIBidStorage.Bid\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getModelActiveBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getModelBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"funder_\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"getPendingWithdrawal\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"getPoolStakesOnHold\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"releasable_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"held_\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getProviderActiveBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getProviderBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"sessionId_\",\"type\":\"bytes32\"}],\"name\":\"getSessionFunding\",\"outputs\":[{\"components\":[{\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"internalType\":\"structIDelegateStakingCore.PoolDebit[]\",\"name\":\"\",\"type\":\"tuple[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"funder_\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"getStakingAllowance\",\"outputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"maxAmount\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"funded\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"principal\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"locked\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"pendingOwed\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"expiry\",\"type\":\"uint128\"},{\"internalType\":\"bool\",\"name\":\"isRevoked\",\"type\":\"bool\"},{\"internalType\":\"bool\",\"name\":\"isListed\",\"type\":\"bool\"}],\"internalType\":\"structIDelegateStakingCore.StakingGrant\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"getStakingPool\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"freeBalance_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"lockedBalance_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"pendingTotal_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"funderCount_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"holdCount_\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getToken\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"maxAmount_\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"expiry_\",\"type\":\"uint128\"}],\"name\":\"grantStakingAllowance\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"bidId_\",\"type\":\"bytes32\"}],\"name\":\"isBidActive\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"listFundersOf\",\"outputs\":[{\"internalType\":\"address[]\",\"name\":\"funders_\",\"type\":\"address[]\"},{\"internalType\":\"uint256\",\"name\":\"total_\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint8\",\"name\":\"iterations_\",\"type\":\"uint8\"}],\"name\":\"releasePoolHolds\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"revokeStakingAllowance\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"}],\"name\":\"withdrawStakingAllowance\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]",
+	ABI: "[{\"inputs\":[],\"name\":\"DelegateStakingFundingBelowMinimum\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingFundingExceedsMaxAmount\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingGrantExpired\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingGrantNotFound\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingGrantRevoked\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"available\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"requested\",\"type\":\"uint256\"}],\"name\":\"DelegateStakingInsufficientAuthorizedCapacity\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"available\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"requested\",\"type\":\"uint256\"}],\"name\":\"DelegateStakingInsufficientLiquidBalance\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingInvalidExpiry\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingMaxAmountTooLow\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingNothingToClaim\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingNothingToRelease\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingNothingToWithdraw\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"maxActiveFunders\",\"type\":\"uint256\"}],\"name\":\"DelegateStakingTooManyFunders\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingWithdrawalLeavesDust\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingZeroAddressProvided\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"DelegateStakingZeroAmountProvided\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"account_\",\"type\":\"address\"}],\"name\":\"OwnableUnauthorizedAccount\",\"type\":\"error\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"indexed\":true,\"internalType\":\"bytes32\",\"name\":\"sessionId\",\"type\":\"bytes32\"}],\"name\":\"AllowanceDebited\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint128\",\"name\":\"releaseAt\",\"type\":\"uint128\"}],\"name\":\"AllowanceHoldCreated\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"AllowanceReleased\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"AllowanceWithdrawQueued\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"AllowanceWithdrawn\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"minPrincipal\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"maxActiveFunders\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"maxAutoService\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"maxAutoReleaseDays\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"settlementGrace\",\"type\":\"uint256\"}],\"name\":\"DelegateStakingParamsUpdated\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"bytes32\",\"name\":\"storageSlot\",\"type\":\"bytes32\"}],\"name\":\"Initialized\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"PendingWithdrawalPaid\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"StakingAllowanceFunded\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"cumulativeFundingCap\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint128\",\"name\":\"expiry\",\"type\":\"uint128\"}],\"name\":\"StakingAllowanceGranted\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"hot\",\"type\":\"address\"}],\"name\":\"StakingAllowanceRevoked\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"BIDS_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"DIAMOND_OWNABLE_STORAGE_SLOT\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint8\",\"name\":\"iterations_\",\"type\":\"uint8\"}],\"name\":\"claimPendingWithdrawals\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"}],\"name\":\"fundStakingAllowance\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"getAvailableToStake\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"bidId_\",\"type\":\"bytes32\"}],\"name\":\"getBid\",\"outputs\":[{\"components\":[{\"internalType\":\"address\",\"name\":\"provider\",\"type\":\"address\"},{\"internalType\":\"bytes32\",\"name\":\"modelId\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"pricePerSecond\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"nonce\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"createdAt\",\"type\":\"uint128\"},{\"internalType\":\"uint128\",\"name\":\"deletedAt\",\"type\":\"uint128\"}],\"internalType\":\"structIBidStorage.Bid\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getDelegateStakingParams\",\"outputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"minPrincipal\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"maxActiveFunders\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"maxAutoService\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"maxAutoReleaseDays\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"settlementGrace\",\"type\":\"uint256\"}],\"internalType\":\"structIDelegateStakingCore.DelegateStakingParams\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getModelActiveBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"modelId_\",\"type\":\"bytes32\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getModelBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"funder_\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"getPendingWithdrawal\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"getPoolStakesOnHold\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"releasable_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"held_\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getProviderActiveBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"provider_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"getProviderBids\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"sessionId_\",\"type\":\"bytes32\"}],\"name\":\"getSessionFunding\",\"outputs\":[{\"components\":[{\"internalType\":\"address\",\"name\":\"funder\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"internalType\":\"structIDelegateStakingCore.PoolDebit[]\",\"name\":\"\",\"type\":\"tuple[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"funder_\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"getStakingAllowance\",\"outputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"cumulativeFundingCap\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"lifetimeFunded\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"currentPrincipal\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"locked\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"pendingOwed\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"expiry\",\"type\":\"uint128\"},{\"internalType\":\"bool\",\"name\":\"isRevoked\",\"type\":\"bool\"},{\"internalType\":\"bool\",\"name\":\"isListed\",\"type\":\"bool\"}],\"internalType\":\"structIDelegateStakingCore.StakingGrant\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"getStakingPool\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"freeBalance_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"lockedBalance_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"pendingTotal_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"funderCount_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"holdCount_\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getToken\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"cumulativeFundingCap_\",\"type\":\"uint256\"},{\"internalType\":\"uint128\",\"name\":\"expiry_\",\"type\":\"uint128\"}],\"name\":\"grantStakingAllowance\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"bidId_\",\"type\":\"bytes32\"}],\"name\":\"isBidActive\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"offset_\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"limit_\",\"type\":\"uint256\"}],\"name\":\"listFundersOf\",\"outputs\":[{\"internalType\":\"address[]\",\"name\":\"funders_\",\"type\":\"address[]\"},{\"internalType\":\"uint256\",\"name\":\"total_\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"owner\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint8\",\"name\":\"iterations_\",\"type\":\"uint8\"}],\"name\":\"releasePoolHolds\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"}],\"name\":\"revokeStakingAllowance\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"minPrincipal\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"maxActiveFunders\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"maxAutoService\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"maxAutoReleaseDays\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"settlementGrace\",\"type\":\"uint256\"}],\"internalType\":\"structIDelegateStakingCore.DelegateStakingParams\",\"name\":\"params_\",\"type\":\"tuple\"}],\"name\":\"setDelegateStakingParams\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"hot_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amount_\",\"type\":\"uint256\"}],\"name\":\"withdrawStakingAllowance\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]",
 }
 
 // DelegateStakingABI is the input ABI used to generate the binding from.
@@ -239,6 +248,37 @@ func (_DelegateStaking *DelegateStakingCallerSession) BIDSSTORAGESLOT() ([32]byt
 	return _DelegateStaking.Contract.BIDSSTORAGESLOT(&_DelegateStaking.CallOpts)
 }
 
+// DIAMONDOWNABLESTORAGESLOT is a free data retrieval call binding the contract method 0x4ac3371e.
+//
+// Solidity: function DIAMOND_OWNABLE_STORAGE_SLOT() view returns(bytes32)
+func (_DelegateStaking *DelegateStakingCaller) DIAMONDOWNABLESTORAGESLOT(opts *bind.CallOpts) ([32]byte, error) {
+	var out []interface{}
+	err := _DelegateStaking.contract.Call(opts, &out, "DIAMOND_OWNABLE_STORAGE_SLOT")
+
+	if err != nil {
+		return *new([32]byte), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new([32]byte)).(*[32]byte)
+
+	return out0, err
+
+}
+
+// DIAMONDOWNABLESTORAGESLOT is a free data retrieval call binding the contract method 0x4ac3371e.
+//
+// Solidity: function DIAMOND_OWNABLE_STORAGE_SLOT() view returns(bytes32)
+func (_DelegateStaking *DelegateStakingSession) DIAMONDOWNABLESTORAGESLOT() ([32]byte, error) {
+	return _DelegateStaking.Contract.DIAMONDOWNABLESTORAGESLOT(&_DelegateStaking.CallOpts)
+}
+
+// DIAMONDOWNABLESTORAGESLOT is a free data retrieval call binding the contract method 0x4ac3371e.
+//
+// Solidity: function DIAMOND_OWNABLE_STORAGE_SLOT() view returns(bytes32)
+func (_DelegateStaking *DelegateStakingCallerSession) DIAMONDOWNABLESTORAGESLOT() ([32]byte, error) {
+	return _DelegateStaking.Contract.DIAMONDOWNABLESTORAGESLOT(&_DelegateStaking.CallOpts)
+}
+
 // GetAvailableToStake is a free data retrieval call binding the contract method 0xe9cc2eb0.
 //
 // Solidity: function getAvailableToStake(address hot_) view returns(uint256)
@@ -299,6 +339,37 @@ func (_DelegateStaking *DelegateStakingSession) GetBid(bidId_ [32]byte) (IBidSto
 // Solidity: function getBid(bytes32 bidId_) view returns((address,bytes32,uint256,uint256,uint128,uint128))
 func (_DelegateStaking *DelegateStakingCallerSession) GetBid(bidId_ [32]byte) (IBidStorageBid, error) {
 	return _DelegateStaking.Contract.GetBid(&_DelegateStaking.CallOpts, bidId_)
+}
+
+// GetDelegateStakingParams is a free data retrieval call binding the contract method 0xf56c5dc9.
+//
+// Solidity: function getDelegateStakingParams() view returns((uint256,uint256,uint256,uint256,uint256))
+func (_DelegateStaking *DelegateStakingCaller) GetDelegateStakingParams(opts *bind.CallOpts) (IDelegateStakingCoreDelegateStakingParams, error) {
+	var out []interface{}
+	err := _DelegateStaking.contract.Call(opts, &out, "getDelegateStakingParams")
+
+	if err != nil {
+		return *new(IDelegateStakingCoreDelegateStakingParams), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(IDelegateStakingCoreDelegateStakingParams)).(*IDelegateStakingCoreDelegateStakingParams)
+
+	return out0, err
+
+}
+
+// GetDelegateStakingParams is a free data retrieval call binding the contract method 0xf56c5dc9.
+//
+// Solidity: function getDelegateStakingParams() view returns((uint256,uint256,uint256,uint256,uint256))
+func (_DelegateStaking *DelegateStakingSession) GetDelegateStakingParams() (IDelegateStakingCoreDelegateStakingParams, error) {
+	return _DelegateStaking.Contract.GetDelegateStakingParams(&_DelegateStaking.CallOpts)
+}
+
+// GetDelegateStakingParams is a free data retrieval call binding the contract method 0xf56c5dc9.
+//
+// Solidity: function getDelegateStakingParams() view returns((uint256,uint256,uint256,uint256,uint256))
+func (_DelegateStaking *DelegateStakingCallerSession) GetDelegateStakingParams() (IDelegateStakingCoreDelegateStakingParams, error) {
+	return _DelegateStaking.Contract.GetDelegateStakingParams(&_DelegateStaking.CallOpts)
 }
 
 // GetModelActiveBids is a free data retrieval call binding the contract method 0x8a683b6e.
@@ -734,6 +805,37 @@ func (_DelegateStaking *DelegateStakingCallerSession) ListFundersOf(hot_ common.
 	return _DelegateStaking.Contract.ListFundersOf(&_DelegateStaking.CallOpts, hot_, offset_, limit_)
 }
 
+// Owner is a free data retrieval call binding the contract method 0x8da5cb5b.
+//
+// Solidity: function owner() view returns(address)
+func (_DelegateStaking *DelegateStakingCaller) Owner(opts *bind.CallOpts) (common.Address, error) {
+	var out []interface{}
+	err := _DelegateStaking.contract.Call(opts, &out, "owner")
+
+	if err != nil {
+		return *new(common.Address), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(common.Address)).(*common.Address)
+
+	return out0, err
+
+}
+
+// Owner is a free data retrieval call binding the contract method 0x8da5cb5b.
+//
+// Solidity: function owner() view returns(address)
+func (_DelegateStaking *DelegateStakingSession) Owner() (common.Address, error) {
+	return _DelegateStaking.Contract.Owner(&_DelegateStaking.CallOpts)
+}
+
+// Owner is a free data retrieval call binding the contract method 0x8da5cb5b.
+//
+// Solidity: function owner() view returns(address)
+func (_DelegateStaking *DelegateStakingCallerSession) Owner() (common.Address, error) {
+	return _DelegateStaking.Contract.Owner(&_DelegateStaking.CallOpts)
+}
+
 // ClaimPendingWithdrawals is a paid mutator transaction binding the contract method 0x2436a2fc.
 //
 // Solidity: function claimPendingWithdrawals(address hot_, uint8 iterations_) returns()
@@ -778,23 +880,23 @@ func (_DelegateStaking *DelegateStakingTransactorSession) FundStakingAllowance(h
 
 // GrantStakingAllowance is a paid mutator transaction binding the contract method 0x2623a8a7.
 //
-// Solidity: function grantStakingAllowance(address hot_, uint256 maxAmount_, uint128 expiry_) returns()
-func (_DelegateStaking *DelegateStakingTransactor) GrantStakingAllowance(opts *bind.TransactOpts, hot_ common.Address, maxAmount_ *big.Int, expiry_ *big.Int) (*types.Transaction, error) {
-	return _DelegateStaking.contract.Transact(opts, "grantStakingAllowance", hot_, maxAmount_, expiry_)
+// Solidity: function grantStakingAllowance(address hot_, uint256 cumulativeFundingCap_, uint128 expiry_) returns()
+func (_DelegateStaking *DelegateStakingTransactor) GrantStakingAllowance(opts *bind.TransactOpts, hot_ common.Address, cumulativeFundingCap_ *big.Int, expiry_ *big.Int) (*types.Transaction, error) {
+	return _DelegateStaking.contract.Transact(opts, "grantStakingAllowance", hot_, cumulativeFundingCap_, expiry_)
 }
 
 // GrantStakingAllowance is a paid mutator transaction binding the contract method 0x2623a8a7.
 //
-// Solidity: function grantStakingAllowance(address hot_, uint256 maxAmount_, uint128 expiry_) returns()
-func (_DelegateStaking *DelegateStakingSession) GrantStakingAllowance(hot_ common.Address, maxAmount_ *big.Int, expiry_ *big.Int) (*types.Transaction, error) {
-	return _DelegateStaking.Contract.GrantStakingAllowance(&_DelegateStaking.TransactOpts, hot_, maxAmount_, expiry_)
+// Solidity: function grantStakingAllowance(address hot_, uint256 cumulativeFundingCap_, uint128 expiry_) returns()
+func (_DelegateStaking *DelegateStakingSession) GrantStakingAllowance(hot_ common.Address, cumulativeFundingCap_ *big.Int, expiry_ *big.Int) (*types.Transaction, error) {
+	return _DelegateStaking.Contract.GrantStakingAllowance(&_DelegateStaking.TransactOpts, hot_, cumulativeFundingCap_, expiry_)
 }
 
 // GrantStakingAllowance is a paid mutator transaction binding the contract method 0x2623a8a7.
 //
-// Solidity: function grantStakingAllowance(address hot_, uint256 maxAmount_, uint128 expiry_) returns()
-func (_DelegateStaking *DelegateStakingTransactorSession) GrantStakingAllowance(hot_ common.Address, maxAmount_ *big.Int, expiry_ *big.Int) (*types.Transaction, error) {
-	return _DelegateStaking.Contract.GrantStakingAllowance(&_DelegateStaking.TransactOpts, hot_, maxAmount_, expiry_)
+// Solidity: function grantStakingAllowance(address hot_, uint256 cumulativeFundingCap_, uint128 expiry_) returns()
+func (_DelegateStaking *DelegateStakingTransactorSession) GrantStakingAllowance(hot_ common.Address, cumulativeFundingCap_ *big.Int, expiry_ *big.Int) (*types.Transaction, error) {
+	return _DelegateStaking.Contract.GrantStakingAllowance(&_DelegateStaking.TransactOpts, hot_, cumulativeFundingCap_, expiry_)
 }
 
 // ReleasePoolHolds is a paid mutator transaction binding the contract method 0xcb2fe150.
@@ -837,6 +939,27 @@ func (_DelegateStaking *DelegateStakingSession) RevokeStakingAllowance(hot_ comm
 // Solidity: function revokeStakingAllowance(address hot_) returns()
 func (_DelegateStaking *DelegateStakingTransactorSession) RevokeStakingAllowance(hot_ common.Address) (*types.Transaction, error) {
 	return _DelegateStaking.Contract.RevokeStakingAllowance(&_DelegateStaking.TransactOpts, hot_)
+}
+
+// SetDelegateStakingParams is a paid mutator transaction binding the contract method 0x34cf19fd.
+//
+// Solidity: function setDelegateStakingParams((uint256,uint256,uint256,uint256,uint256) params_) returns()
+func (_DelegateStaking *DelegateStakingTransactor) SetDelegateStakingParams(opts *bind.TransactOpts, params_ IDelegateStakingCoreDelegateStakingParams) (*types.Transaction, error) {
+	return _DelegateStaking.contract.Transact(opts, "setDelegateStakingParams", params_)
+}
+
+// SetDelegateStakingParams is a paid mutator transaction binding the contract method 0x34cf19fd.
+//
+// Solidity: function setDelegateStakingParams((uint256,uint256,uint256,uint256,uint256) params_) returns()
+func (_DelegateStaking *DelegateStakingSession) SetDelegateStakingParams(params_ IDelegateStakingCoreDelegateStakingParams) (*types.Transaction, error) {
+	return _DelegateStaking.Contract.SetDelegateStakingParams(&_DelegateStaking.TransactOpts, params_)
+}
+
+// SetDelegateStakingParams is a paid mutator transaction binding the contract method 0x34cf19fd.
+//
+// Solidity: function setDelegateStakingParams((uint256,uint256,uint256,uint256,uint256) params_) returns()
+func (_DelegateStaking *DelegateStakingTransactorSession) SetDelegateStakingParams(params_ IDelegateStakingCoreDelegateStakingParams) (*types.Transaction, error) {
+	return _DelegateStaking.Contract.SetDelegateStakingParams(&_DelegateStaking.TransactOpts, params_)
 }
 
 // WithdrawStakingAllowance is a paid mutator transaction binding the contract method 0xc96cda18.
@@ -1642,6 +1765,278 @@ func (_DelegateStaking *DelegateStakingFilterer) ParseAllowanceWithdrawn(log typ
 	return event, nil
 }
 
+// DelegateStakingDelegateStakingParamsUpdatedIterator is returned from FilterDelegateStakingParamsUpdated and is used to iterate over the raw logs and unpacked data for DelegateStakingParamsUpdated events raised by the DelegateStaking contract.
+type DelegateStakingDelegateStakingParamsUpdatedIterator struct {
+	Event *DelegateStakingDelegateStakingParamsUpdated // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *DelegateStakingDelegateStakingParamsUpdatedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(DelegateStakingDelegateStakingParamsUpdated)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(DelegateStakingDelegateStakingParamsUpdated)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *DelegateStakingDelegateStakingParamsUpdatedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *DelegateStakingDelegateStakingParamsUpdatedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// DelegateStakingDelegateStakingParamsUpdated represents a DelegateStakingParamsUpdated event raised by the DelegateStaking contract.
+type DelegateStakingDelegateStakingParamsUpdated struct {
+	MinPrincipal       *big.Int
+	MaxActiveFunders   *big.Int
+	MaxAutoService     *big.Int
+	MaxAutoReleaseDays *big.Int
+	SettlementGrace    *big.Int
+	Raw                types.Log // Blockchain specific contextual infos
+}
+
+// FilterDelegateStakingParamsUpdated is a free log retrieval operation binding the contract event 0x996f7784413c0843b89e0d3d4211ca4d50b7450f4d68e3b8fd22363bc4b1445a.
+//
+// Solidity: event DelegateStakingParamsUpdated(uint256 minPrincipal, uint256 maxActiveFunders, uint256 maxAutoService, uint256 maxAutoReleaseDays, uint256 settlementGrace)
+func (_DelegateStaking *DelegateStakingFilterer) FilterDelegateStakingParamsUpdated(opts *bind.FilterOpts) (*DelegateStakingDelegateStakingParamsUpdatedIterator, error) {
+
+	logs, sub, err := _DelegateStaking.contract.FilterLogs(opts, "DelegateStakingParamsUpdated")
+	if err != nil {
+		return nil, err
+	}
+	return &DelegateStakingDelegateStakingParamsUpdatedIterator{contract: _DelegateStaking.contract, event: "DelegateStakingParamsUpdated", logs: logs, sub: sub}, nil
+}
+
+// WatchDelegateStakingParamsUpdated is a free log subscription operation binding the contract event 0x996f7784413c0843b89e0d3d4211ca4d50b7450f4d68e3b8fd22363bc4b1445a.
+//
+// Solidity: event DelegateStakingParamsUpdated(uint256 minPrincipal, uint256 maxActiveFunders, uint256 maxAutoService, uint256 maxAutoReleaseDays, uint256 settlementGrace)
+func (_DelegateStaking *DelegateStakingFilterer) WatchDelegateStakingParamsUpdated(opts *bind.WatchOpts, sink chan<- *DelegateStakingDelegateStakingParamsUpdated) (event.Subscription, error) {
+
+	logs, sub, err := _DelegateStaking.contract.WatchLogs(opts, "DelegateStakingParamsUpdated")
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(DelegateStakingDelegateStakingParamsUpdated)
+				if err := _DelegateStaking.contract.UnpackLog(event, "DelegateStakingParamsUpdated", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseDelegateStakingParamsUpdated is a log parse operation binding the contract event 0x996f7784413c0843b89e0d3d4211ca4d50b7450f4d68e3b8fd22363bc4b1445a.
+//
+// Solidity: event DelegateStakingParamsUpdated(uint256 minPrincipal, uint256 maxActiveFunders, uint256 maxAutoService, uint256 maxAutoReleaseDays, uint256 settlementGrace)
+func (_DelegateStaking *DelegateStakingFilterer) ParseDelegateStakingParamsUpdated(log types.Log) (*DelegateStakingDelegateStakingParamsUpdated, error) {
+	event := new(DelegateStakingDelegateStakingParamsUpdated)
+	if err := _DelegateStaking.contract.UnpackLog(event, "DelegateStakingParamsUpdated", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// DelegateStakingInitializedIterator is returned from FilterInitialized and is used to iterate over the raw logs and unpacked data for Initialized events raised by the DelegateStaking contract.
+type DelegateStakingInitializedIterator struct {
+	Event *DelegateStakingInitialized // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *DelegateStakingInitializedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(DelegateStakingInitialized)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(DelegateStakingInitialized)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *DelegateStakingInitializedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *DelegateStakingInitializedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// DelegateStakingInitialized represents a Initialized event raised by the DelegateStaking contract.
+type DelegateStakingInitialized struct {
+	StorageSlot [32]byte
+	Raw         types.Log // Blockchain specific contextual infos
+}
+
+// FilterInitialized is a free log retrieval operation binding the contract event 0xdc73717d728bcfa015e8117438a65319aa06e979ca324afa6e1ea645c28ea15d.
+//
+// Solidity: event Initialized(bytes32 storageSlot)
+func (_DelegateStaking *DelegateStakingFilterer) FilterInitialized(opts *bind.FilterOpts) (*DelegateStakingInitializedIterator, error) {
+
+	logs, sub, err := _DelegateStaking.contract.FilterLogs(opts, "Initialized")
+	if err != nil {
+		return nil, err
+	}
+	return &DelegateStakingInitializedIterator{contract: _DelegateStaking.contract, event: "Initialized", logs: logs, sub: sub}, nil
+}
+
+// WatchInitialized is a free log subscription operation binding the contract event 0xdc73717d728bcfa015e8117438a65319aa06e979ca324afa6e1ea645c28ea15d.
+//
+// Solidity: event Initialized(bytes32 storageSlot)
+func (_DelegateStaking *DelegateStakingFilterer) WatchInitialized(opts *bind.WatchOpts, sink chan<- *DelegateStakingInitialized) (event.Subscription, error) {
+
+	logs, sub, err := _DelegateStaking.contract.WatchLogs(opts, "Initialized")
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(DelegateStakingInitialized)
+				if err := _DelegateStaking.contract.UnpackLog(event, "Initialized", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseInitialized is a log parse operation binding the contract event 0xdc73717d728bcfa015e8117438a65319aa06e979ca324afa6e1ea645c28ea15d.
+//
+// Solidity: event Initialized(bytes32 storageSlot)
+func (_DelegateStaking *DelegateStakingFilterer) ParseInitialized(log types.Log) (*DelegateStakingInitialized, error) {
+	event := new(DelegateStakingInitialized)
+	if err := _DelegateStaking.contract.UnpackLog(event, "Initialized", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
 // DelegateStakingPendingWithdrawalPaidIterator is returned from FilterPendingWithdrawalPaid and is used to iterate over the raw logs and unpacked data for PendingWithdrawalPaid events raised by the DelegateStaking contract.
 type DelegateStakingPendingWithdrawalPaidIterator struct {
 	Event *DelegateStakingPendingWithdrawalPaid // Event containing the contract specifics and raw log
@@ -2019,16 +2414,16 @@ func (it *DelegateStakingStakingAllowanceGrantedIterator) Close() error {
 
 // DelegateStakingStakingAllowanceGranted represents a StakingAllowanceGranted event raised by the DelegateStaking contract.
 type DelegateStakingStakingAllowanceGranted struct {
-	Funder    common.Address
-	Hot       common.Address
-	MaxAmount *big.Int
-	Expiry    *big.Int
-	Raw       types.Log // Blockchain specific contextual infos
+	Funder               common.Address
+	Hot                  common.Address
+	CumulativeFundingCap *big.Int
+	Expiry               *big.Int
+	Raw                  types.Log // Blockchain specific contextual infos
 }
 
 // FilterStakingAllowanceGranted is a free log retrieval operation binding the contract event 0x3aa047f40a56a8f90a0363fd2daede670681c2a6c746b0abd8ceb822e7aa2ba9.
 //
-// Solidity: event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 maxAmount, uint128 expiry)
+// Solidity: event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 cumulativeFundingCap, uint128 expiry)
 func (_DelegateStaking *DelegateStakingFilterer) FilterStakingAllowanceGranted(opts *bind.FilterOpts, funder []common.Address, hot []common.Address) (*DelegateStakingStakingAllowanceGrantedIterator, error) {
 
 	var funderRule []interface{}
@@ -2049,7 +2444,7 @@ func (_DelegateStaking *DelegateStakingFilterer) FilterStakingAllowanceGranted(o
 
 // WatchStakingAllowanceGranted is a free log subscription operation binding the contract event 0x3aa047f40a56a8f90a0363fd2daede670681c2a6c746b0abd8ceb822e7aa2ba9.
 //
-// Solidity: event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 maxAmount, uint128 expiry)
+// Solidity: event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 cumulativeFundingCap, uint128 expiry)
 func (_DelegateStaking *DelegateStakingFilterer) WatchStakingAllowanceGranted(opts *bind.WatchOpts, sink chan<- *DelegateStakingStakingAllowanceGranted, funder []common.Address, hot []common.Address) (event.Subscription, error) {
 
 	var funderRule []interface{}
@@ -2095,7 +2490,7 @@ func (_DelegateStaking *DelegateStakingFilterer) WatchStakingAllowanceGranted(op
 
 // ParseStakingAllowanceGranted is a log parse operation binding the contract event 0x3aa047f40a56a8f90a0363fd2daede670681c2a6c746b0abd8ceb822e7aa2ba9.
 //
-// Solidity: event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 maxAmount, uint128 expiry)
+// Solidity: event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 cumulativeFundingCap, uint128 expiry)
 func (_DelegateStaking *DelegateStakingFilterer) ParseStakingAllowanceGranted(log types.Log) (*DelegateStakingStakingAllowanceGranted, error) {
 	event := new(DelegateStakingStakingAllowanceGranted)
 	if err := _DelegateStaking.contract.UnpackLog(event, "StakingAllowanceGranted", log); err != nil {

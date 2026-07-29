@@ -131,7 +131,7 @@ contract SessionRouter is
     ) private returns (bytes32) {
         SessionsStorage storage sessionsStorage = _getSessionsStorage();
 
-        bytes32 bidId_ = _extractProviderApproval(approvalEncoded_);
+        bytes32 bidId_ = _extractProviderApproval(user_, approvalEncoded_);
 
         bytes32 sessionId_ = getSessionId(
             user_,
@@ -227,12 +227,22 @@ contract SessionRouter is
         return (amount_ * getComputeBalance(timestamp_)) / (totalMorSupply_ * 100);
     }
 
-    function _extractProviderApproval(bytes calldata providerApproval_) private view returns (bytes32) {
-        (bytes32 bidId_, uint256 chainId_, , uint128 timestamp_) = abi.decode(
+    function _extractProviderApproval(
+        address expectedUser_,
+        bytes calldata providerApproval_
+    ) private view returns (bytes32) {
+        (bytes32 bidId_, uint256 chainId_, address approvedUser_, uint128 timestamp_) = abi.decode(
             providerApproval_,
             (bytes32, uint256, address, uint128)
         );
 
+        // The provider approved a specific wallet; nobody else may consume the approval
+        // (review F-09). Accepted: the session user, or the tx sender — the sender has
+        // already passed _validateDelegatee for this user, which covers the delegatee
+        // flow where the provider only ever saw the delegatee wallet.
+        if (approvedUser_ != expectedUser_ && approvedUser_ != _msgSender()) {
+            revert SessionApprovedForAnotherUser();
+        }
         if (chainId_ != block.chainid) {
             revert SessionApprovedForAnotherChainId();
         }
@@ -498,7 +508,9 @@ contract SessionRouter is
         OnHold[] memory onHold = _getSessionsStorage().userStakesOnHold[user_];
         iterations_ = iterations_ > onHold.length ? uint8(onHold.length) : iterations_;
 
-        for (uint256 i = 0; i < onHold.length; i++) {
+        // Honor the caller's iteration bound (review F-07): the view stays usable via
+        // pagination even if the on-hold array has grown too large to scan in one call.
+        for (uint256 i = 0; i < iterations_; i++) {
             uint256 amount = onHold[i].amount;
 
             if (block.timestamp < onHold[i].releaseAt) {
@@ -521,8 +533,12 @@ contract SessionRouter is
             revert SessionUserAmountToWithdrawIsZero();
         }
 
-        uint8 removedCount_;
-        for (uint256 i = length_; i > 0 && removedCount_ < count_; i--) {
+        // Bound the entries EXAMINED, not just the entries removed (review F-07):
+        // a long run of still-locked entries must not push the scan past the gas limit.
+        uint8 examinedCount_;
+        for (uint256 i = length_; i > 0 && examinedCount_ < count_; i--) {
+            examinedCount_++;
+
             if (block.timestamp < onHoldEntries[i - 1].releaseAt) {
                 continue;
             }
@@ -532,7 +548,6 @@ contract SessionRouter is
             onHoldEntries[i - 1] = onHoldEntries[length_ - 1];
             onHoldEntries.pop();
             length_--;
-            removedCount_++;
         }
 
         if (amount_ == 0) {
@@ -571,7 +586,12 @@ contract SessionRouter is
             uint128(startOfTheDay(timestamp_))
         );
 
-        return periodReward - sessionsStorage.providersTotalClaimed;
+        // Defensive floor (review F-10): providersTotalClaimed also counts direct-payment
+        // claims funded by user stake, so it can in principle outgrow the emission-side
+        // periodReward; the budget math must saturate at zero instead of reverting every
+        // dependent view and open. The accounting split is tracked as an inherited issue.
+        uint256 claimed_ = sessionsStorage.providersTotalClaimed;
+        return periodReward > claimed_ ? periodReward - claimed_ : 0;
     }
 
     /**
