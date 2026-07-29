@@ -124,7 +124,8 @@ contract DelegateStaking is IDelegateStaking, OwnableDiamondStorage, DelegateSta
                 minPrincipal: _minPrincipal(),
                 maxActiveFunders: _maxActiveFunders(),
                 maxAutoService: _maxAutoService(),
-                maxAutoReleaseDays: _maxAutoReleaseDays()
+                maxAutoReleaseDays: _maxAutoReleaseDays(),
+                settlementGrace: _settlementGrace()
             });
     }
 
@@ -136,7 +137,8 @@ contract DelegateStaking is IDelegateStaking, OwnableDiamondStorage, DelegateSta
             _minPrincipal(),
             _maxActiveFunders(),
             _maxAutoService(),
-            _maxAutoReleaseDays()
+            _maxAutoReleaseDays(),
+            _settlementGrace()
         );
     }
 

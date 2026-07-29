@@ -499,6 +499,59 @@ describe('DelegateStaking', () => {
     });
   });
 
+  describe('#settleExpiredSession, pool sessions (F-01)', () => {
+    beforeEach(async () => {
+      await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(1000), 0);
+      await delegateStaking.connect(COLD_A).fundStakingAllowance(HOT, wei(100));
+    });
+
+    it('should let anyone recycle an expired session and free the funder without the hot key', async () => {
+      await setTime(payoutStart + 10 * DAY);
+      const sessionId = await _openPoolSession(wei(50));
+      const session = await sessionRouter.getSession(sessionId);
+
+      // The hot key is gone: settlement is called by the cold funder after the grace period
+      await setTime(Number(session.endsAt) + DAY);
+      await expect(sessionRouter.connect(COLD_A).settleExpiredSession(sessionId))
+        .to.emit(sessionRouter, 'SessionSettledByExpiry')
+        .withArgs(HOT, sessionId, PROVIDER, COLD_A);
+
+      // Full recycle: settlement lands after the stipend epoch, so nothing is day-locked
+      const [freeBalance, lockedBalance, , , holdCount] = await delegateStaking.getStakingPool(HOT);
+      expect([freeBalance, lockedBalance, holdCount]).to.deep.eq([wei(100), 0n, 0n]);
+      expect((await delegateStaking.getStakingAllowance(COLD_A, HOT)).locked).to.eq(0);
+
+      // The funder can exit immediately, cold-signed only
+      const coldBalBefore = await token.balanceOf(COLD_A);
+      await delegateStaking.connect(COLD_A).withdrawStakingAllowance(HOT, wei(100));
+      expect((await token.balanceOf(COLD_A)) - coldBalBefore).to.eq(wei(100));
+    });
+    it('should throw error when the session is not yet past the grace period', async () => {
+      await setTime(payoutStart + 10 * DAY);
+      const sessionId = await _openPoolSession(wei(50));
+      const session = await sessionRouter.getSession(sessionId);
+
+      await setTime(Number(session.endsAt) + 100);
+      await expect(sessionRouter.connect(COLD_A).settleExpiredSession(sessionId))
+        .to.be.revertedWithCustomError(sessionRouter, 'SessionNotYetSettleable')
+        .withArgs(BigInt(session.endsAt) + 86400n);
+    });
+    it('should throw error when the session is already closed or settled', async () => {
+      await setTime(payoutStart + 10 * DAY);
+      const sessionId = await _openPoolSession(wei(50));
+      const session = await sessionRouter.getSession(sessionId);
+
+      await setTime(Number(session.endsAt) + DAY);
+      await sessionRouter.connect(COLD_B).settleExpiredSession(sessionId);
+
+      await expect(sessionRouter.connect(COLD_B).settleExpiredSession(sessionId)).to.be.revertedWithCustomError(
+        sessionRouter,
+        'SessionAlreadyClosed',
+      );
+      await expect(_closeSession(sessionId)).to.be.revertedWithCustomError(sessionRouter, 'SessionAlreadyClosed');
+    });
+  });
+
   describe('#withdrawStakingAllowance', () => {
     beforeEach(async () => {
       await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(1000), 0);
@@ -681,24 +734,24 @@ describe('DelegateStaking', () => {
 
   describe('#setDelegateStakingParams, funder cap and delisting (F-02/F-03/F-04)', () => {
     it('should return the built-in defaults when no params are set', async () => {
-      expect(await delegateStaking.getDelegateStakingParams()).to.deep.eq([wei(1), 64n, 5n, 8n]);
+      expect(await delegateStaking.getDelegateStakingParams()).to.deep.eq([wei(1), 64n, 5n, 8n, 86400n]);
     });
     it('should let the owner tune params, zero fields falling back to defaults', async () => {
-      await expect(delegateStaking.setDelegateStakingParams({ minPrincipal: wei(2), maxActiveFunders: 2, maxAutoService: 0, maxAutoReleaseDays: 0 }))
+      await expect(delegateStaking.setDelegateStakingParams({ minPrincipal: wei(2), maxActiveFunders: 2, maxAutoService: 0, maxAutoReleaseDays: 0, settlementGrace: 0 }))
         .to.emit(delegateStaking, 'DelegateStakingParamsUpdated')
-        .withArgs(wei(2), 2n, 5n, 8n);
+        .withArgs(wei(2), 2n, 5n, 8n, 86400n);
 
-      expect(await delegateStaking.getDelegateStakingParams()).to.deep.eq([wei(2), 2n, 5n, 8n]);
+      expect(await delegateStaking.getDelegateStakingParams()).to.deep.eq([wei(2), 2n, 5n, 8n, 86400n]);
     });
     it('should throw error when params are set by a non-owner', async () => {
       await expect(
         delegateStaking
           .connect(COLD_A)
-          .setDelegateStakingParams({ minPrincipal: 0, maxActiveFunders: 0, maxAutoService: 0, maxAutoReleaseDays: 0 }),
+          .setDelegateStakingParams({ minPrincipal: 0, maxActiveFunders: 0, maxAutoService: 0, maxAutoReleaseDays: 0, settlementGrace: 0 }),
       ).to.be.revertedWithCustomError(delegateStaking, 'OwnableUnauthorizedAccount');
     });
     it('should enforce the active-funder cap on funding (F-04)', async () => {
-      await delegateStaking.setDelegateStakingParams({ minPrincipal: 0, maxActiveFunders: 2, maxAutoService: 0, maxAutoReleaseDays: 0 });
+      await delegateStaking.setDelegateStakingParams({ minPrincipal: 0, maxActiveFunders: 2, maxAutoService: 0, maxAutoReleaseDays: 0, settlementGrace: 0 });
 
       await delegateStaking.connect(COLD_A).grantStakingAllowance(HOT, wei(1000), 0);
       await delegateStaking.connect(COLD_A).fundStakingAllowance(HOT, wei(100));
@@ -767,7 +820,7 @@ describe('DelegateStaking', () => {
       expect(await delegateStaking.listFundersOf(HOT, 0, 10)).to.deep.eq([[COLD_B.address, COLD_A.address], 2n]);
 
       // With a full pool, a re-grant with remaining principal cannot re-enter
-      await delegateStaking.setDelegateStakingParams({ minPrincipal: 0, maxActiveFunders: 2, maxAutoService: 0, maxAutoReleaseDays: 0 });
+      await delegateStaking.setDelegateStakingParams({ minPrincipal: 0, maxActiveFunders: 2, maxAutoService: 0, maxAutoReleaseDays: 0, settlementGrace: 0 });
       await token.approve(delegateStaking, wei(100));
 
       await delegateStaking.connect(COLD_B).revokeStakingAllowance(HOT);

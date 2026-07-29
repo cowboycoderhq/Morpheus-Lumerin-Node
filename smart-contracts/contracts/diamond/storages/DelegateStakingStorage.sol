@@ -87,6 +87,12 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
     // 8 days never needs an explicit releasePoolHolds call.
     uint256 internal constant DEFAULT_DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS = 8;
 
+    // Grace after a session's endsAt before anyone may settle it permissionlessly
+    // (SessionRouter.settleExpiredSession). One full day means settlement can never
+    // pre-empt a same-day close by the user and the used stipend's day-lock epoch is
+    // already over, so settlement releases the entire remaining stake.
+    uint256 internal constant DEFAULT_SESSION_SETTLEMENT_GRACE = 1 days;
+
     /** INTERNAL */
 
     /**
@@ -393,6 +399,11 @@ contract DelegateStakingStorage is IDelegateStakingCore, BidStorage {
     function _maxAutoReleaseDays() internal view returns (uint256) {
         uint256 value_ = _getDelegateStakingStorage().params.maxAutoReleaseDays;
         return value_ == 0 ? DEFAULT_DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS : value_;
+    }
+
+    function _settlementGrace() internal view returns (uint256) {
+        uint256 value_ = _getDelegateStakingStorage().params.settlementGrace;
+        return value_ == 0 ? DEFAULT_SESSION_SETTLEMENT_GRACE : value_;
     }
 
     function _getDelegateStakingStorage() internal pure returns (DLGSStorage storage ds) {

@@ -743,6 +743,63 @@ describe('SessionRouter', () => {
     });
   });
 
+  describe('#settleExpiredSession (F-01/F-06)', () => {
+    it('should let anyone settle an expired wallet session and return the full stake to the user', async () => {
+      const { sessionId } = await _createSession();
+      const session = await sessionRouter.getSession(sessionId);
+
+      const userBalBefore = await token.balanceOf(SECOND);
+
+      // Settled by an unrelated third party (the provider here) after the grace period
+      await setTime(Number(session.endsAt) + DAY);
+      await expect(sessionRouter.connect(PROVIDER).settleExpiredSession(sessionId))
+        .to.emit(sessionRouter, 'SessionSettledByExpiry')
+        .withArgs(SECOND, sessionId, PROVIDER, PROVIDER);
+
+      // Past the stipend epoch: full stake back, nothing on hold
+      expect((await token.balanceOf(SECOND)) - userBalBefore).to.eq(wei(50));
+      const stakesOnHold = await sessionRouter.getUserStakesOnHold(SECOND, 20);
+      expect([stakesOnHold[0], stakesOnHold[1]]).to.deep.eq([0n, 0n]);
+
+      expect((await sessionRouter.getSession(sessionId)).isActive).to.eq(false);
+    });
+    it('should settle even when the provider reward treasury cannot pay (F-06)', async () => {
+      const { sessionId } = await _createSession();
+      const session = await sessionRouter.getSession(sessionId);
+
+      // Break the reward treasury: a receipt-based close now reverts on the provider payout
+      await token.connect(FUNDING).approve(sessionRouter, 0);
+
+      await setTime(Number(session.endsAt) + DAY);
+      const { msg, signature } = await getReceipt(PROVIDER, sessionId, 0, 0);
+      await expect(sessionRouter.connect(SECOND).closeSession(msg, signature)).to.be.reverted;
+
+      // Settlement transfers nothing to the provider, so it is immune to treasury state
+      const userBalBefore = await token.balanceOf(SECOND);
+      await sessionRouter.connect(SECOND).settleExpiredSession(sessionId);
+      expect((await token.balanceOf(SECOND)) - userBalBefore).to.eq(wei(50));
+
+      // Once the treasury works again, the provider still collects its full earnings
+      await token.connect(FUNDING).approve(sessionRouter, wei(10000));
+      await setTime(Number(session.endsAt) + 2 * DAY);
+      const providerBalBefore = await token.balanceOf(PROVIDER);
+      await sessionRouter.connect(PROVIDER).claimForProvider(sessionId);
+      const duration = session.endsAt - session.openedAt;
+      expect((await token.balanceOf(PROVIDER)) - providerBalBefore).to.eq(duration * bidPricePerSecond);
+    });
+    it('should throw error when the session does not exist or is not yet settleable', async () => {
+      await expect(
+        sessionRouter.settleExpiredSession(getHex(Buffer.from('non-existent'))),
+      ).to.be.revertedWithCustomError(sessionRouter, 'SessionNotEndedOrNotExist');
+
+      const { sessionId } = await _createSession();
+      await expect(sessionRouter.settleExpiredSession(sessionId)).to.be.revertedWithCustomError(
+        sessionRouter,
+        'SessionNotYetSettleable',
+      );
+    });
+  });
+
   describe('#claimForProvider', () => {
     it('should claim provider rewards, remainder, with dispute, early closure on the next day', async () => {
       const { sessionId, secondsToDayEnd, openedAt } = await _createSession();

@@ -64,12 +64,15 @@ interface IDelegateStakingCore {
      *                         funder loop on the draw, close, release and view paths.
      * @param maxAutoService Max pending-withdrawal queue entries auto-serviced per pool credit.
      * @param maxAutoReleaseDays Max matured day-lock buckets recycled per pool operation.
+     * @param settlementGrace Seconds after a session's endsAt from which anyone may call
+     *                        SessionRouter.settleExpiredSession to settle it permissionlessly.
      */
     struct DelegateStakingParams {
         uint256 minPrincipal;
         uint256 maxActiveFunders;
         uint256 maxAutoService;
         uint256 maxAutoReleaseDays;
+        uint256 settlementGrace;
     }
 
     event StakingAllowanceGranted(address indexed funder, address indexed hot, uint256 maxAmount, uint128 expiry);
@@ -85,7 +88,8 @@ interface IDelegateStakingCore {
         uint256 minPrincipal,
         uint256 maxActiveFunders,
         uint256 maxAutoService,
-        uint256 maxAutoReleaseDays
+        uint256 maxAutoReleaseDays,
+        uint256 settlementGrace
     );
 
     error DelegateStakingZeroAddressProvided();

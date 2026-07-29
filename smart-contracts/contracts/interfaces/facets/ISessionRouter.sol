@@ -8,6 +8,12 @@ import {IStatsStorage} from "../storage/IStatsStorage.sol";
 interface ISessionRouter is ISessionStorage {
     event SessionOpened(address indexed user, bytes32 indexed sessionId, address indexed providerId);
     event SessionClosed(address indexed user, bytes32 indexed sessionId, address indexed providerId);
+    event SessionSettledByExpiry(
+        address indexed user,
+        bytes32 indexed sessionId,
+        address indexed providerId,
+        address caller
+    );
     event UserWithdrawn(address indexed user, uint256 amount_);
     error SessionProviderSignatureMismatch();
     error SessionApproveExpired();
@@ -19,6 +25,7 @@ interface ISessionRouter is ISessionStorage {
     error SessionTooShort();
     error SessionAlreadyClosed();
     error SessionNotEndedOrNotExist();
+    error SessionNotYetSettleable(uint256 settleableAt);
     error SessionProviderNothingToClaimInThisPeriod();
     error SessionBidNotFound();
     error SessionPoolIndexOutOfBounds();
@@ -86,6 +93,18 @@ interface ISessionRouter is ISessionStorage {
         bytes calldata approvalEncoded_,
         bytes calldata signature_
     ) external returns (bytes32);
+
+    /**
+     * The function to settle a session that expired without being closed. Permissionless:
+     * callable by ANYONE once `endsAt + settlementGrace` has passed (grace is owner-set via
+     * setDelegateStakingParams, default one day), so staked funds never depend on the
+     * session-opening hot key staying alive (liveness backstop for delegated pools).
+     * Settlement returns/recycles the user-side stake exactly like a late close would and
+     * transfers NOTHING to the provider: the provider collects its earnings through the
+     * usual claimForProvider, so settlement cannot be blocked by reward-treasury state.
+     * @param sessionId_ The session ID.
+     */
+    function settleExpiredSession(bytes32 sessionId_) external;
 
     /**
      * The function to get session ID/

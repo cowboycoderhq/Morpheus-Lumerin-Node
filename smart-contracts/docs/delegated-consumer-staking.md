@@ -90,9 +90,33 @@ early and normal closes differ only in proportion, not in kind:
   the session's most-recently-drawn funders. Each day's locks aggregate into one
   `DayHoldBucket` keyed by `releaseAt`, with a per-funder amount map.
 - `_releaseMaturedHolds` runs first on every draw, withdrawal, close and pending-claim,
-  recycling matured buckets (bounded by `DELEGATE_STAKING_MAX_AUTO_RELEASE_DAYS`) back into
+  recycling matured buckets (bounded by the owner-adjustable auto-release batch) back into
   the free balance and clearing each funder's `locked` — this is what makes capacity
   self-restoring at midnight with no housekeeping tx.
+
+### Permissionless expiry settlement (review F-01/F-06)
+
+A session that expires without a close would otherwise strand its stake behind the hot key:
+`closeSession` needs a provider receipt and a caller authorized as the session user. If the
+node crashes, loses its key, or simply disappears, funder capital would be locked
+indefinitely — unacceptable for a pool built on the promise that funders always get their
+money back (F2).
+
+`settleExpiredSession(sessionId)` is the backstop:
+
+- **Callable by anyone** once `block.timestamp ≥ endsAt + settlementGrace` (owner-adjustable,
+  default one day). No receipt, no signatures, no delegation check.
+- **Same user-side math as a late close.** The split above is anchored to
+  `sessionEnd = endsAt`, so the caller cannot influence the outcome and gains nothing by
+  racing the settle; with the default one-day grace the stipend epoch is already over and
+  the entire remaining stake returns (wallet path) or recycles (pool path) immediately.
+- **No provider transfer (F-06).** Settlement moves zero tokens to the provider; the
+  provider collects `(endsAt − openedAt) × pricePerSecond` through the existing
+  `claimForProvider` on its own schedule. Consequence: settlement can never be blocked by
+  the daily reward budget or the funding account's balance/approval state — the treasury
+  coupling that `closeSession`'s payout leg has is deliberately absent here.
+- It takes no metrics and writes no stats: a settled session simply never contributes a
+  receipt (indistinguishable from a disputed-close for reputation purposes).
 
 ## Design decisions
 

@@ -271,6 +271,38 @@ contract SessionRouter is
         emit SessionClosed(session.user, sessionId_, bid.provider);
     }
 
+    /**
+     * Permissionless liveness backstop (review F-01): once a session has been expired for
+     * the owner-set grace period, anyone can settle it and free the user-side stake — no
+     * receipt, no signatures, no hot key. The stake outcome is identical to a late close
+     * (settlement is anchored to endsAt, so a caller gains nothing by racing it), and no
+     * provider payment happens here (review F-06): the provider collects via
+     * claimForProvider, so settlement never depends on the reward treasury.
+     */
+    function settleExpiredSession(bytes32 sessionId_) external {
+        Session storage session = _getSessionsStorage().sessions[sessionId_];
+        Bid storage bid = _getBidsStorage().bids[session.bidId];
+
+        if (session.openedAt == 0) {
+            revert SessionNotEndedOrNotExist();
+        }
+        if (session.closedAt != 0) {
+            revert SessionAlreadyClosed();
+        }
+
+        uint256 settleableAt_ = session.endsAt + _settlementGrace();
+        if (block.timestamp < settleableAt_) {
+            revert SessionNotYetSettleable(settleableAt_);
+        }
+
+        session.isActive = false;
+        session.closedAt = uint128(block.timestamp);
+
+        _rewardUserAfterClose(sessionId_, session, bid);
+
+        emit SessionSettledByExpiry(session.user, sessionId_, bid.provider, _msgSender());
+    }
+
     function _extractProviderReceipt(bytes calldata receiptEncoded_) private view returns (bytes32, uint32, uint32) {
         (bytes32 sessionId_, uint256 chainId_, uint128 timestamp_, uint32 tpsScaled1000_, uint32 ttftMs_) = abi.decode(
             receiptEncoded_,
