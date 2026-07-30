@@ -294,6 +294,7 @@ func start() error {
 	}
 
 	blockchainApi := blockchainapi.NewBlockchainService(ethClient, multicallBackend, *cfg.Marketplace.DiamondContractAddress, *cfg.Marketplace.MorTokenAddress, explorer, wallet, proxyRouterApi, sessionRepo, scorer, authCfg, appLog, rpcLog, cfg.Blockchain.EthLegacyTx, teeVerifier)
+	blockchainApi.SetSessionHealthPolicy(cfg.Proxy.SessionHealthPolicy)
 	sessionRepo.SetModelTagsProvider(blockchainApi)
 	proxyRouterApi.SetSessionService(blockchainApi)
 	proxyRouterApi.SetAttestationVerifier(teeVerifier)
