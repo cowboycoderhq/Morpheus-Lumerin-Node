@@ -353,7 +353,7 @@ func TestCheckAllRateLimited(t *testing.T) {
 	checker.checkAll(context.Background(), common.Address{})
 
 	llm := reportByID(t, checker.GetReports(), modelLLM)
-	require.Equal(t, system.ModelHealthStatusUnhealthy, llm.Status)
+	require.Equal(t, system.ModelHealthStatusDegraded, llm.Status)
 	require.Equal(t, system.ModelHealthErrorRateLimited, llm.ErrorKind)
 	require.Equal(t, 429, llm.HttpStatus)
 }
@@ -547,12 +547,12 @@ func TestReportPromptFailureFlipsAfterThreshold(t *testing.T) {
 	checker.checkAll(context.Background(), common.Address{})
 	require.Equal(t, system.ModelHealthStatusHealthy, reportByID(t, checker.GetReports(), modelLLM).Status)
 
-	checker.ReportPromptFailure(modelLLM)
-	checker.ReportPromptFailure(modelLLM)
+	checker.ReportPromptFailure(modelLLM, 0)
+	checker.ReportPromptFailure(modelLLM, 0)
 	require.Equal(t, system.ModelHealthStatusHealthy, reportByID(t, checker.GetReports(), modelLLM).Status,
 		"below the threshold the status must not change")
 
-	checker.ReportPromptFailure(modelLLM)
+	checker.ReportPromptFailure(modelLLM, 0)
 	llm := reportByID(t, checker.GetReports(), modelLLM)
 	require.Equal(t, system.ModelHealthStatusUnhealthy, llm.Status)
 	require.Equal(t, system.ModelHealthErrorSessionErrors, llm.ErrorKind)
@@ -569,15 +569,15 @@ func TestReportPromptSuccessResetsStreakAndHeals(t *testing.T) {
 	checker.checkAll(context.Background(), common.Address{})
 
 	// success in the middle of a streak resets the counter
-	checker.ReportPromptFailure(modelLLM)
-	checker.ReportPromptFailure(modelLLM)
+	checker.ReportPromptFailure(modelLLM, 0)
+	checker.ReportPromptFailure(modelLLM, 0)
 	checker.ReportPromptSuccess(modelLLM)
-	checker.ReportPromptFailure(modelLLM)
-	checker.ReportPromptFailure(modelLLM)
+	checker.ReportPromptFailure(modelLLM, 0)
+	checker.ReportPromptFailure(modelLLM, 0)
 	require.Equal(t, system.ModelHealthStatusHealthy, reportByID(t, checker.GetReports(), modelLLM).Status)
 
 	// third consecutive failure flips it...
-	checker.ReportPromptFailure(modelLLM)
+	checker.ReportPromptFailure(modelLLM, 0)
 	require.Equal(t, system.ModelHealthStatusUnhealthy, reportByID(t, checker.GetReports(), modelLLM).Status)
 
 	// ...and a successful real prompt heals it right away
@@ -597,22 +597,90 @@ func TestHealthyProbeResetsFailureStreak(t *testing.T) {
 	}
 	checker := newTestChecker(deps)
 
-	checker.ReportPromptFailure(modelLLM)
-	checker.ReportPromptFailure(modelLLM)
+	checker.ReportPromptFailure(modelLLM, 0)
+	checker.ReportPromptFailure(modelLLM, 0)
 
 	// a healthy scheduled sweep clears the streak: two more failures stay
 	// below the threshold again
 	checker.checkAll(context.Background(), common.Address{})
-	checker.ReportPromptFailure(modelLLM)
-	checker.ReportPromptFailure(modelLLM)
+	checker.ReportPromptFailure(modelLLM, 0)
+	checker.ReportPromptFailure(modelLLM, 0)
 	require.Equal(t, system.ModelHealthStatusHealthy, reportByID(t, checker.GetReports(), modelLLM).Status)
+}
+
+func TestReportPromptFailureRateLimitedStreakFlipsDegraded(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelLLM)},
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}},
+		modelIDs: []common.Hash{modelLLM},
+		adapter:  &mathSolvingAdapter{},
+	}
+	checker := newTestChecker(deps) // threshold defaults to 3
+	checker.checkAll(context.Background(), common.Address{})
+
+	// a streak that is pure upstream throttling flips to degraded, not unhealthy
+	checker.ReportPromptFailure(modelLLM, 429)
+	checker.ReportPromptFailure(modelLLM, 429)
+	checker.ReportPromptFailure(modelLLM, 429)
+
+	llm := reportByID(t, checker.GetReports(), modelLLM)
+	require.Equal(t, system.ModelHealthStatusDegraded, llm.Status)
+	require.Equal(t, system.ModelHealthErrorSessionErrors, llm.ErrorKind)
+	require.Equal(t, 429, llm.HttpStatus)
+
+	// a successful real prompt heals session-flipped degraded right away
+	checker.ReportPromptSuccess(modelLLM)
+	llm = reportByID(t, checker.GetReports(), modelLLM)
+	require.Equal(t, system.ModelHealthStatusHealthy, llm.Status)
+	require.Empty(t, llm.ErrorKind)
+	require.Zero(t, llm.HttpStatus)
+}
+
+func TestReportPromptFailureMixedStreakFlipsUnhealthy(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelLLM)},
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}},
+		modelIDs: []common.Hash{modelLLM},
+		adapter:  &mathSolvingAdapter{},
+	}
+	checker := newTestChecker(deps)
+	checker.checkAll(context.Background(), common.Address{})
+
+	// any non-429 failure in the streak means real errors, not just throttling
+	checker.ReportPromptFailure(modelLLM, 429)
+	checker.ReportPromptFailure(modelLLM, 500)
+	checker.ReportPromptFailure(modelLLM, 429)
+
+	llm := reportByID(t, checker.GetReports(), modelLLM)
+	require.Equal(t, system.ModelHealthStatusUnhealthy, llm.Status)
+	require.Equal(t, system.ModelHealthErrorSessionErrors, llm.ErrorKind)
+}
+
+func TestReportPromptFailureDegradedEscalatesToUnhealthy(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelLLM)},
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}},
+		modelIDs: []common.Hash{modelLLM},
+		adapter:  &mathSolvingAdapter{},
+	}
+	checker := newTestChecker(deps)
+	checker.checkAll(context.Background(), common.Address{})
+
+	checker.ReportPromptFailure(modelLLM, 429)
+	checker.ReportPromptFailure(modelLLM, 429)
+	checker.ReportPromptFailure(modelLLM, 429)
+	require.Equal(t, system.ModelHealthStatusDegraded, reportByID(t, checker.GetReports(), modelLLM).Status)
+
+	// a non-429 failure joining the still-open streak escalates to unhealthy
+	checker.ReportPromptFailure(modelLLM, 500)
+	require.Equal(t, system.ModelHealthStatusUnhealthy, reportByID(t, checker.GetReports(), modelLLM).Status)
 }
 
 func TestReportPromptFailureWithoutPriorReport(t *testing.T) {
 	checker := newTestChecker(&mockDeps{})
 
 	for i := 0; i < DefaultMaxConsecutiveErrors; i++ {
-		checker.ReportPromptFailure(modelLLM)
+		checker.ReportPromptFailure(modelLLM, 0)
 	}
 
 	llm := reportByID(t, checker.GetReports(), modelLLM)

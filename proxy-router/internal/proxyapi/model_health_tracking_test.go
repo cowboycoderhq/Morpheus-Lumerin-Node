@@ -8,14 +8,18 @@ import (
 )
 
 type fakeHealthTracker struct {
-	successes int
-	failures  int
-	tee       int
+	successes      int
+	failures       int
+	lastFailStatus int
+	tee            int
 }
 
 func (f *fakeHealthTracker) ReportPromptSuccess(modelID common.Hash) { f.successes++ }
-func (f *fakeHealthTracker) ReportPromptFailure(modelID common.Hash) { f.failures++ }
-func (f *fakeHealthTracker) ReportTeeFailure(modelID common.Hash)    { f.tee++ }
+func (f *fakeHealthTracker) ReportPromptFailure(modelID common.Hash, upstreamStatus int) {
+	f.failures++
+	f.lastFailStatus = upstreamStatus
+}
+func (f *fakeHealthTracker) ReportTeeFailure(modelID common.Hash) { f.tee++ }
 
 func TestTrackPromptResult(t *testing.T) {
 	modelID := common.HexToHash("0x01")
@@ -48,6 +52,15 @@ func TestTrackPromptResult(t *testing.T) {
 			}
 			if tracker.failures != tt.wantFailures {
 				t.Errorf("failures = %d, want %d", tracker.failures, tt.wantFailures)
+			}
+			// A recorded failure must carry the upstream HTTP status (0 for
+			// transport errors) so the tracker can tell throttling apart.
+			wantStatus := 0
+			if tt.wantFailures > 0 && tt.gotEngineErr {
+				wantStatus = tt.engineStatus
+			}
+			if tracker.failures > 0 && tracker.lastFailStatus != wantStatus {
+				t.Errorf("lastFailStatus = %d, want %d", tracker.lastFailStatus, wantStatus)
 			}
 		})
 	}

@@ -31,7 +31,11 @@ type BackendTEEVerifier interface {
 // modelhealth.Checker).
 type ModelHealthTracker interface {
 	ReportPromptSuccess(modelID common.Hash)
-	ReportPromptFailure(modelID common.Hash)
+	// ReportPromptFailure records a failed prompt; upstreamStatus is the HTTP
+	// status returned by the model backend (0 when the failure never got an
+	// HTTP response, e.g. a transport error). An all-429 failure streak flips
+	// the model to degraded instead of unhealthy.
+	ReportPromptFailure(modelID common.Hash, upstreamStatus int)
 	ReportTeeFailure(modelID common.Hash)
 }
 
@@ -103,12 +107,12 @@ func (s *ProxyReceiver) trackPromptResult(modelID common.Hash, transportErr erro
 		return
 	}
 	if transportErr != nil {
-		s.modelHealth.ReportPromptFailure(modelID)
+		s.modelHealth.ReportPromptFailure(modelID, 0)
 		return
 	}
 	if gotEngineErr {
 		if isBackendFaultStatus(engineErrStatus) {
-			s.modelHealth.ReportPromptFailure(modelID)
+			s.modelHealth.ReportPromptFailure(modelID, engineErrStatus)
 		}
 		// client-fault errors count neither as failure nor success
 		return
