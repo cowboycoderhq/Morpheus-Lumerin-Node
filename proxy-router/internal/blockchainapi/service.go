@@ -55,6 +55,25 @@ const sessionTxMaxRetries = 3
 
 var maxUint256 = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
 
+// Consumer-side model health strictness policies applied when opening a
+// session by model ID (SESSION_HEALTH_POLICY). They control how provider
+// model health self-reports (read from the healthcheck pong) gate the
+// failover loop. Single-bid opens always force permissive
+// (healthPolicySingleBid is fixed to "permissive") so single-provider models
+// remain usable.
+const (
+	// HealthPolicyPermissive is the default: skip only providers that
+	// self-report the model as unhealthy, tee_unverified or
+	// no_model_configured. Unknown or missing reports are allowed.
+	HealthPolicyPermissive = "permissive"
+	// HealthPolicyPreferred: when any provider reports the model healthy or
+	// degraded, skip providers with unknown/missing reports; when none does,
+	// fall back to permissive for that open (don't black-hole the model).
+	HealthPolicyPreferred = "preferred"
+	// HealthPolicyStrict: only try providers that report the model healthy.
+	HealthPolicyStrict = "strict"
+)
+
 type BlockchainService struct {
 	ethClient           i.EthClient
 	providerRegistry    *r.ProviderRegistry
@@ -71,6 +90,9 @@ type BlockchainService struct {
 	rating              *rating.Rating
 	minStake            *big.Int
 	attestationVerifier *attestation.Verifier
+	// sessionHealthPolicy is the consumer-side model health strictness for
+	// OpenSessionByModelId; empty means HealthPolicyPermissive.
+	sessionHealthPolicy string
 
 	supplyBudgetMu sync.Mutex
 	cachedSupply   *big.Int
@@ -162,6 +184,13 @@ func NewBlockchainService(
 		txEscalator:         txEscalator,
 		attestationVerifier: attestationVerifier,
 	}
+}
+
+// SetSessionHealthPolicy sets the consumer-side model health strictness used
+// by OpenSessionByModelId (one of HealthPolicyPermissive, HealthPolicyPreferred,
+// HealthPolicyStrict). An empty value means permissive.
+func (s *BlockchainService) SetSessionHealthPolicy(policy string) {
+	s.sessionHealthPolicy = policy
 }
 
 func (s *BlockchainService) requestLog(ctx context.Context) lib.ILogger {
@@ -1300,26 +1329,69 @@ func (s *BlockchainService) OpenSessionByModelId(ctx context.Context, modelID co
 
 	log := s.requestLog(ctx)
 	scoredBids := s.rateBids(bidIDs, bids, providerStats, providers, modelStats, minStake, log)
-	for i, bid := range scoredBids {
+
+	// Hard filters (omitted provider, own bids) come first so the health
+	// policy below only sees bids that are actually attemptable.
+	candidates := make([]structs.ScoredBid, 0, len(scoredBids))
+	distinctProviders := make(map[common.Address]struct{}, len(scoredBids))
+	for _, bid := range scoredBids {
 		providerAddr := bid.Bid.Provider
 		if providerAddr == omitProvider {
-			log.Infof("skipping provider #%d %s", i, providerAddr.String())
+			log.Infof("skipping omitted provider %s", providerAddr.String())
 			failures = append(failures, providerFailure{Provider: providerAddr.String(), Reason: "skipped: omitted provider"})
 			continue
 		}
 
 		if providerAddr == userAddr {
-			log.Infof("skipping own bid #%d %s", i, bid.Bid.Id)
+			log.Infof("skipping own bid %s", bid.Bid.Id)
 			continue
 		}
 
+		candidates = append(candidates, bid)
+		distinctProviders[providerAddr] = struct{}{}
+	}
+
+	policy := s.sessionHealthPolicy
+	if policy == "" {
+		policy = HealthPolicyPermissive
+	}
+	// Single-bid caveat (healthPolicySingleBid: permissive): when the hard
+	// filters leave a single bid — or a single provider for the model —
+	// preferred/strict must not yield zero attempts, so the open is forced
+	// permissive and the sole provider can still be tried.
+	if policy != HealthPolicyPermissive && len(distinctProviders) <= 1 {
+		log.Infof("health policy %q forced to permissive for this open: single candidate provider for model %s", policy, modelID)
+		policy = HealthPolicyPermissive
+	}
+
+	if policy != HealthPolicyPermissive {
+		classes, details := s.candidateModelHealth(ctx, candidates, modelID)
+		keep, permissiveFallback := applyHealthPolicy(policy, classes)
+		if permissiveFallback {
+			log.Infof("health policy preferred: no provider reports model %s as healthy or degraded, falling back to permissive for this open", modelID)
+		}
+
+		kept := make([]structs.ScoredBid, 0, len(candidates))
+		for i, bid := range candidates {
+			if keep[i] {
+				kept = append(kept, bid)
+				continue
+			}
+			reason := fmt.Sprintf("skipped by health policy %s: %s", policy, details[i])
+			log.Infof("provider %s %s", bid.Bid.Provider.String(), reason)
+			failures = append(failures, providerFailure{Provider: bid.Bid.Provider.String(), Reason: reason})
+		}
+		candidates = kept
+	}
+
+	for i, bid := range candidates {
 		log.Infof("trying to open session with provider #%d %s", i, bid.Bid.Provider.String())
 		durationCopy := new(big.Int).Set(duration)
 
 		hash, tryNext, err := s.tryOpenSession(ctx, &bid.Bid, durationCopy, supply, budget, userAddr, directPayment, isFailoverEnabled, agentUsername, isTee)
 		if err != nil {
 			log.Errorf("failed to open session with provider %s: %s", bid.Bid.Provider.String(), err.Error())
-			failures = append(failures, providerFailure{Provider: providerAddr.String(), Reason: err.Error()})
+			failures = append(failures, providerFailure{Provider: bid.Bid.Provider.String(), Reason: err.Error()})
 			if tryNext {
 				continue
 			} else {
@@ -1496,6 +1568,50 @@ func (s *BlockchainService) tryOpenSession(ctx context.Context, bid *structs.Bid
 	return hash, false, nil
 }
 
+// modelHealthClass is the consumer-side classification of a provider's model
+// health self-report, used by the session health policy.
+type modelHealthClass int
+
+const (
+	// modelHealthUnknown: no report at all (pre-upgrade provider or health
+	// checks disabled), the model is absent from the report, or the reported
+	// status carries no serviceability signal (skipped, no_bid).
+	modelHealthUnknown modelHealthClass = iota
+	// modelHealthHealthy: the provider reports the model as healthy.
+	modelHealthHealthy
+	// modelHealthDegraded: serving at reduced capacity. Serviceable under
+	// permissive and preferred (capacity risk is not "don't open"); only
+	// strict excludes it.
+	modelHealthDegraded
+	// modelHealthBlocked: the report says a session for the model would not
+	// be serviceable (unhealthy, tee_unverified, no_model_configured);
+	// skipped under every policy.
+	modelHealthBlocked
+	// modelHealthUnreachable: the healthcheck ping itself failed.
+	modelHealthUnreachable
+)
+
+// classifyModelHealth maps the provider's model health self-report (from the
+// healthcheck pong) to its consumer-side class for the given model, along
+// with the raw reported status (empty when the model has no report).
+func classifyModelHealth(models []system.ModelHealthReport, modelID common.Hash) (modelHealthClass, string) {
+	for _, report := range models {
+		if !strings.EqualFold(report.ModelID, modelID.Hex()) {
+			continue
+		}
+		switch report.Status {
+		case system.ModelHealthStatusHealthy:
+			return modelHealthHealthy, report.Status
+		case system.ModelHealthStatusDegraded:
+			return modelHealthDegraded, report.Status
+		case system.ModelHealthStatusUnhealthy, system.ModelHealthStatusTeeUnverified, system.ModelHealthStatusNoModel:
+			return modelHealthBlocked, report.Status
+		}
+		return modelHealthUnknown, report.Status
+	}
+	return modelHealthUnknown, ""
+}
+
 // blockingModelHealthStatus inspects the provider's model health self-report
 // (from the healthcheck pong) and returns the reported status when it means a
 // session for the model would not be serviceable: the model backend is
@@ -1503,19 +1619,94 @@ func (s *BlockchainService) tryOpenSession(ctx context.Context, bid *structs.Bid
 // but no backend configured for the model. An empty result means the session
 // open may proceed — including when the report is absent (pre-upgrade
 // provider or health checks disabled), since absence of data is not evidence
-// of failure.
+// of failure. This is the permissive baseline gate applied on every attempt
+// regardless of the configured session health policy.
 func blockingModelHealthStatus(models []system.ModelHealthReport, modelID common.Hash) string {
-	for _, report := range models {
-		if !strings.EqualFold(report.ModelID, modelID.Hex()) {
-			continue
-		}
-		switch report.Status {
-		case system.ModelHealthStatusUnhealthy, system.ModelHealthStatusTeeUnverified, system.ModelHealthStatusNoModel:
-			return report.Status
-		}
-		return ""
+	class, status := classifyModelHealth(models, modelID)
+	if class == modelHealthBlocked {
+		return status
 	}
 	return ""
+}
+
+// applyHealthPolicy decides, per candidate provider, whether the session open
+// loop should attempt it under the given health policy (classes[i] is the
+// health class of candidate i for the model being opened). It returns keep
+// flags aligned with classes and whether the preferred policy fell back to
+// permissive because no candidate reported the model healthy or degraded.
+// The single-bid caveat (forcing permissive when only one candidate remains)
+// is handled by the caller before this point.
+func applyHealthPolicy(policy string, classes []modelHealthClass) (keep []bool, permissiveFallback bool) {
+	anyServiceable := false
+	for _, c := range classes {
+		if c == modelHealthHealthy || c == modelHealthDegraded {
+			anyServiceable = true
+			break
+		}
+	}
+
+	keep = make([]bool, len(classes))
+	for i, c := range classes {
+		switch policy {
+		case HealthPolicyStrict:
+			keep[i] = c == modelHealthHealthy
+		case HealthPolicyPreferred:
+			if anyServiceable {
+				keep[i] = c == modelHealthHealthy || c == modelHealthDegraded
+			} else {
+				keep[i] = c == modelHealthUnknown
+			}
+		default:
+			keep[i] = c != modelHealthBlocked && c != modelHealthUnreachable
+		}
+	}
+
+	return keep, policy == HealthPolicyPreferred && !anyServiceable
+}
+
+// candidateModelHealth pings every candidate provider concurrently and
+// classifies its self-reported health for the model. It returns classes and
+// human-readable details (reported status or ping error) aligned with
+// candidates. Used only for the preferred and strict policies; permissive
+// keeps relying on the per-attempt ping inside tryOpenSession.
+func (s *BlockchainService) candidateModelHealth(ctx context.Context, candidates []structs.ScoredBid, modelID common.Hash) ([]modelHealthClass, []string) {
+	classes := make([]modelHealthClass, len(candidates))
+	details := make([]string, len(candidates))
+
+	var wg sync.WaitGroup
+	for i := range candidates {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+
+			providerAddr := candidates[i].Bid.Provider
+			provider, err := s.providerRegistry.GetProviderById(ctx, providerAddr)
+			if err != nil {
+				classes[i] = modelHealthUnreachable
+				details[i] = fmt.Sprintf("failed to get provider: %s", err)
+				return
+			}
+
+			pingCtx, cancel := context.WithTimeout(ctx, proxyapi.TimeoutPingDefault)
+			_, _, models, err := s.proxyService.Ping(pingCtx, provider.Endpoint, providerAddr)
+			cancel()
+			if err != nil {
+				classes[i] = modelHealthUnreachable
+				details[i] = fmt.Sprintf("healthcheck ping failed: %s", err)
+				return
+			}
+
+			class, status := classifyModelHealth(models, modelID)
+			classes[i] = class
+			if status == "" {
+				status = "no health report for model"
+			}
+			details[i] = status
+		}(i)
+	}
+	wg.Wait()
+
+	return classes, details
 }
 
 func (s *BlockchainService) GetMyAddress(ctx context.Context) (common.Address, error) {
