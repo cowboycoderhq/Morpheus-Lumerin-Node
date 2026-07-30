@@ -20,8 +20,9 @@ import { Chat } from '../../../../src/renderer/src/components/chat/Chat';
 // here without a redux double.
 //
 // Numbers are chosen so the count is arithmetic, not a coincidence:
-//   supply/budget = 1  =>  minStake(price) = price * 360   (the 6-min floor)
-//   prices 1e15, 2e15, 1e16  =>  floors 0.36, 0.72, 3.6 MOR
+//   supply/budget = 1  =>  minStake(price) = price * 305   (the min-block floor:
+//                          300s contract minimum + a 5s truncation cushion)
+//   prices 1e15, 2e15, 1e16  =>  floors 0.305, 0.61, 3.05 MOR
 // so ?bal= picks the regime:
 //   1e18  (1 MOR)   -> 2 of 3 affordable  -> the warning
 //   1e19  (10 MOR)  -> 3 of 3 affordable  -> NO warning (it must not cry wolf)
@@ -64,7 +65,7 @@ const props = {
   },
   toasts: { toast: (t, m) => window.__toasts.push([t, m]) },
   // supply/budget = 1 keeps the stake formula (price*durMin*60*supply/budget)
-  // readable: the floors are exactly price*360.
+  // readable: the floors are exactly price*305.
   getModelsData: async () => ({
     models,
     providers,

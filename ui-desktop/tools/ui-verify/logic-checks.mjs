@@ -14,6 +14,11 @@ import {
 } from '../../src/renderer/src/utils/marketplace.ts';
 import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import {
+  MIN_REQUEST_SECONDS,
+  strideSeconds,
+  blocksForDuration,
+} from '../../src/renderer/src/components/keepalive/KeepAliveProvider.tsx';
+import {
   isSecureModel,
   SECURE_TAG,
   formatModelName,
@@ -327,21 +332,23 @@ console.log('queries: userTextFromPrompt (resumed-chat bubble text)');
   ok('empty messages array -> "" (no crash)', userTextFromPrompt({ messages: [] }) === '');
 }
 
-// ---- model-picker pricing: MOR/s vs 6-minute stake -------------------------
-// The 6-min stake mirrors the marketplace floor used by the affordability gate:
-// price * 360 * supply / budget. At supply/budget = 1 the arithmetic is legible
-// (a 1e15 wei/s price -> 0.36 MOR to open), exactly the numbers the affordability
-// evidence used.
+// ---- model-picker pricing: MOR/s vs min-block stake ------------------------
+// The min-block stake mirrors the marketplace floor used by the affordability
+// gate: price * MIN_SESSION_SECONDS * supply / budget. That floor is 305s (the
+// 300s contract minimum + a 5s cushion for the stake->duration truncation), NOT
+// the old 360s — these expectations move with the constant, so if it changes
+// again they fail here rather than silently misquoting the open cost. At
+// supply/budget = 1 the arithmetic is legible (1e15 wei/s -> 0.305 MOR to open).
 console.log('');
 console.log('queries: sixMinuteStakeMor / modelPriceDisplay (picker toggle)');
 {
   const meta1 = { supply: 1, budget: 1 };
-  ok('1e15 wei/s -> 0.36 MOR to open', sixMinuteStakeMor(1e15, meta1) === 0.36);
-  ok('2e15 wei/s -> 0.72 MOR', Math.abs(sixMinuteStakeMor(2e15, meta1) - 0.72) < 1e-9);
-  ok('1e16 wei/s -> 3.6 MOR', Math.abs(sixMinuteStakeMor(1e16, meta1) - 3.6) < 1e-9);
+  ok('1e15 wei/s -> 0.305 MOR to open', sixMinuteStakeMor(1e15, meta1) === 0.305);
+  ok('2e15 wei/s -> 0.61 MOR', Math.abs(sixMinuteStakeMor(2e15, meta1) - 0.61) < 1e-9);
+  ok('1e16 wei/s -> 3.05 MOR', Math.abs(sixMinuteStakeMor(1e16, meta1) - 3.05) < 1e-9);
   // The ratio scales it: supply/budget = 1000 -> 1000x the stake.
   ok('supply/budget ratio scales the stake',
-    Math.abs(sixMinuteStakeMor(1e15, { supply: 1e24, budget: 1e21 }) - 360) < 1e-6);
+    Math.abs(sixMinuteStakeMor(1e15, { supply: 1e24, budget: 1e21 }) - 305) < 1e-6);
   // Meta not loaded -> null (unknowable), never a fake 0.
   ok('no supply -> null', sixMinuteStakeMor(1e15, { budget: 1 }) === null);
   ok('zero budget -> null', sixMinuteStakeMor(1e15, { supply: 1, budget: 0 }) === null);
@@ -356,10 +363,10 @@ console.log('queries: sixMinuteStakeMor / modelPriceDisplay (picker toggle)');
   const ps = modelPriceDisplay(bids, 'perSec', meta1);
   ok('perSec range 0.001–0.002 MOR/s',
     ps.kind === 'range' && Math.abs(ps.min - 0.001) < 1e-9 && Math.abs(ps.max - 0.002) < 1e-9);
-  // Same bids in stake mode: 0.36–0.72 MOR to open.
+  // Same bids in stake mode: 0.305–0.61 MOR to open.
   const st = modelPriceDisplay(bids, 'stake6m', meta1);
-  ok('stake range 0.36–0.72 MOR',
-    st.kind === 'range' && Math.abs(st.min - 0.36) < 1e-9 && Math.abs(st.max - 0.72) < 1e-9);
+  ok('stake range 0.305–0.61 MOR',
+    st.kind === 'range' && Math.abs(st.min - 0.305) < 1e-9 && Math.abs(st.max - 0.61) < 1e-9);
   // stake mode with NO meta -> offline, not a bogus number.
   ok('stake mode without meta -> offline',
     modelPriceDisplay(bids, 'stake6m', {}).kind === 'offline');
@@ -441,6 +448,60 @@ console.log('queries: sortModelsForPicker (picker ordering)');
   ok('two no-price models tie to name, no NaN scramble',
     JSON.stringify(names(sortModelsForPicker(
       [{ Name: 'B', isOnline: true }, { Name: 'A', isOnline: true }], 'cheapest'))) === JSON.stringify(['A', 'B']));
+}
+
+// ---- rolling-session block accounting --------------------------------------
+// blocksForDuration prices the run; scheduleNext decides when to stop opening.
+// They are twins: if they disagree, the affordability gate quotes one number and
+// the wallet pays another. They DID disagree — the old count assumed blocks tile
+// end-to-end when seamless overlaps by OVERLAP_SEC, so a 2-block purchase opened
+// 3 and a 94-block one opened 103. A comment is not enough to hold that; this
+// re-derives the count by walking the scheduler's ACTUAL rule
+// (`endsAt >= targetEndTime` stops) and asserts the formula agrees at every
+// slider position in both modes.
+console.log('');
+console.log('queries: blocksForDuration vs the scheduler stop condition');
+{
+  const walk = (targetSec, overlap) => {
+    const stride = strideSeconds(overlap);
+    let t = 0, opens = 0;
+    for (;;) {
+      opens++;
+      const endsAt = t + MIN_REQUEST_SECONDS;
+      if (endsAt >= targetSec) return { opens, coverTo: endsAt };
+      t += stride;
+      if (opens > 500) return { opens, coverTo: endsAt }; // runaway guard
+    }
+  };
+  const maxSec =
+    Math.floor((8 * 60 * 60) / MIN_REQUEST_SECONDS) * MIN_REQUEST_SECONDS;
+  for (const overlap of [true, false]) {
+    const mode = overlap ? 'seamless' : 'economy';
+    let mismatch = null;
+    let uncovered = null;
+    for (let sec = MIN_REQUEST_SECONDS; sec <= maxSec; sec += MIN_REQUEST_SECONDS) {
+      const w = walk(sec, overlap);
+      if (blocksForDuration(sec, overlap) !== w.opens) {
+        mismatch ??= { sec, priced: blocksForDuration(sec, overlap), opened: w.opens };
+      }
+      // The run must actually reach the duration the slider sold.
+      if (w.coverTo < sec) uncovered ??= { sec, coverTo: w.coverTo };
+    }
+    ok(`${mode}: priced blocks == blocks actually opened, every slider position`,
+      mismatch === null, mismatch && JSON.stringify(mismatch));
+    ok(`${mode}: the run covers the duration the slider sold`,
+      uncovered === null, uncovered && JSON.stringify(uncovered));
+  }
+  // The specific regressions the reviewer measured against the real provider.
+  ok('seamless 2-block purchase prices 3 opens (was 2)',
+    blocksForDuration(2 * MIN_REQUEST_SECONDS, true) === 3);
+  ok('seamless max prices 103 opens (was 94)',
+    blocksForDuration(maxSec, true) === 103);
+  ok('economy max prices 91 opens (was 94)',
+    blocksForDuration(maxSec, false) === 91);
+  ok('a single block is 1 in both modes',
+    blocksForDuration(MIN_REQUEST_SECONDS, true) === 1 &&
+    blocksForDuration(MIN_REQUEST_SECONDS, false) === 1);
 }
 
 console.log('');

@@ -553,8 +553,9 @@ const browser = await chromium.launch();
 // providers must (a) still be allowed to stake, (b) report the count HONESTLY,
 // and (c) size the session off the priciest provider it can actually afford.
 //
-// Fixture (see the case): supply/budget = 1, so minStake(price) = price*360.
-// Prices 1e15 / 2e15 / 1e16 wei/s => 6-min floors of 0.36 / 0.72 / 3.6 MOR.
+// Fixture (see the case): supply/budget = 1, so minStake(price) = price*305
+// (MIN_SESSION_SECONDS: the 300s contract floor + a 5s truncation cushion).
+// Prices 1e15 / 2e15 / 1e16 wei/s => min-block floors of 0.305 / 0.61 / 3.05 MOR.
 {
   const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
 
@@ -577,8 +578,8 @@ const browser = await chromium.launch();
     // of the feature; the old code required the DEAREST provider and blocked it.
     assert(!/You’ll need some MOR/.test(text), 'a wallet that can afford 2 of 3 providers was blocked from staking');
 
-    // (b) The count must be exact. 1 MOR clears the 0.36 and 0.72 floors but not
-    // the 3.6 one -> 2 of 3. A wrong count here is the user being lied to about
+    // (b) The count must be exact. 1 MOR clears the 0.305 and 0.61 floors but not
+    // the 3.05 one -> 2 of 3. A wrong count here is the user being lied to about
     // money, which is worse than no warning at all.
     assert(/covers 2 of 3 providers/.test(text), `expected "covers 2 of 3 providers", got: ${text.slice(0, 400)}`);
 
@@ -587,7 +588,7 @@ const browser = await chromium.launch();
     // sizes off the dearest again this reads 864.00 and fails — which is the
     // exact regression the design exists to prevent.
     assert(/max:\s*172\.80 MOR/.test(text), `stake ceiling not sized off the priciest AFFORDABLE provider: ${text.slice(0, 400)}`);
-    assert(/min:\s*0\.36 MOR/.test(text), `stake floor not the cheapest provider's 6-min floor: ${text.slice(0, 400)}`);
+    assert(/min:\s*0\.305 MOR/.test(text), `stake floor not the cheapest provider's min-block floor: ${text.slice(0, 400)}`);
 
     // Rendering the warning must not open anything on-chain.
     const opened = await p.evaluate(() => window.__opened.length);
@@ -693,13 +694,13 @@ const browser = await chromium.launch();
       'per-second not marked active by default',
     );
 
-    // Switch to 6-min stake: the SAME bids now read as the stake to open
-    // (0.36–0.72 MOR), a different number — proving the toggle recomputes, not
-    // relabels. supply/budget=1 makes 1e15 -> 0.36, 2e15 -> 0.72.
+    // Switch to min-block stake: the SAME bids now read as the stake to open
+    // (0.305–0.61 MOR), a different number — proving the toggle recomputes, not
+    // relabels. supply/budget=1 makes 1e15 -> 0.305, 2e15 -> 0.61.
     await p.getByTestId('price-mode-stake').click();
     await p.waitForTimeout(150);
     body = await p.locator('body').innerText();
-    assert(/0\.36\s*–\s*0\.72/.test(body), `stake range 0.36–0.72 missing after toggle: ${body.slice(0, 300)}`);
+    assert(/0\.305\s*–\s*0\.61/.test(body), `stake range 0.305–0.61 missing after toggle: ${body.slice(0, 1200)}`);
     assert(/MOR to open/.test(body), 'stake unit "MOR to open" missing');
     assert(!/0\.001\s*–\s*0\.002/.test(body), 'per-second range still shown in stake mode');
     assert(

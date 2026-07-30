@@ -4,9 +4,9 @@ import ModelSelectionModal from '../../../../src/renderer/src/components/chat/mo
 
 // The price-mode toggle on the new-chat model picker. A model with two bids at
 // known rates lets the case assert the ACTUAL numbers switch, not just a label:
-//   supply/budget = 1  ->  6-min stake = price * 360 / 1e18
-//   1e15 wei/s -> 0.001 MOR/s -> 0.36 MOR to open
-//   2e15 wei/s -> 0.002 MOR/s -> 0.72 MOR to open
+//   supply/budget = 1  ->  min-block stake = price * 305 / 1e18
+//   1e15 wei/s -> 0.001 MOR/s -> 0.305 MOR to open
+//   2e15 wei/s -> 0.002 MOR/s -> 0.61 MOR to open
 const bid = (p) => ({ Id: '0xbid' + p, Provider: '0xprov' + p, PricePerSecond: String(p) });
 
 const models = [

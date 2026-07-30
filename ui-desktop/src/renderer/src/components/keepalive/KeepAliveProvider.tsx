@@ -27,8 +27,32 @@ import { ToastsContext } from '../toasts';
 // - Open block N+1 shortly BEFORE N expires (OVERLAP_SEC) so inference never
 //   drops. Peak lockup ~2x a 6-min stake during the overlap, then back to 1x.
 
-const MIN_REQUEST_SECONDS = 5 * 60 + 60; // 6-min unit: 5-min floor + 1-min cushion
-const OVERLAP_SEC = 25; // open the next block this early; covers open-tx latency
+export const MIN_REQUEST_SECONDS = 5 * 60 + 5; // block unit: 305s = 300s contract floor + 5s cushion for stake→duration truncation
+export const OVERLAP_SEC = 25; // seamless mode: open the next block this early; covers open-tx latency
+export const REOPEN_DELAY_SEC = 12; // economy mode: open the next block this long AFTER the old one ends
+
+// How far the run advances in wall-clock per block. Blocks do NOT tile
+// end-to-end: seamless OVERLAPS by OVERLAP_SEC, economy leaves a REOPEN_DELAY_SEC
+// gap. Pricing a run as ceil(target / MIN_REQUEST_SECONDS) therefore under-counts
+// seamless (measured: 2 priced, 3 opened) and over-counts economy (94 priced, 91
+// opened). Every consumer that needs a block COUNT must go through
+// blocksForDuration so the affordability gate prices what the loop actually opens.
+export const strideSeconds = (overlap: boolean): number =>
+  overlap
+    ? MIN_REQUEST_SECONDS - OVERLAP_SEC
+    : MIN_REQUEST_SECONDS + REOPEN_DELAY_SEC;
+
+// Blocks needed to cover targetSec. Block 1 covers MIN_REQUEST_SECONDS; each
+// further block advances one stride. Mirrors scheduleNext's stop condition
+// (`endsAt >= targetEndTime`) exactly — if one changes, the other must.
+export const blocksForDuration = (
+  targetSec: number,
+  overlap: boolean,
+): number =>
+  Math.max(
+    1,
+    Math.ceil((targetSec - MIN_REQUEST_SECONDS) / strideSeconds(overlap)) + 1,
+  );
 
 export interface KeepAliveStatus {
   running: boolean;
@@ -42,17 +66,26 @@ export interface KeepAliveStatus {
 interface KeepAliveRun extends KeepAliveStatus {
   isDirectPay: boolean;
   bidId: string | null; // fixed provider for every block, or null = router picks
+  overlap: boolean; // true = seamless (open N+1 before N ends, 2x stake); false = economy (sequential, 1x, small gap)
   id: number; // monotonic run token; guards against a stale tick acting on a new run
 }
 
 export interface StartKeepAliveOpts {
   modelId: string;
   chatId: string;
-  totalMinutes: number;
+  // SECONDS, not minutes. The slider steps in whole 305s blocks, so a minutes
+  // round-trip (sec/60 here, *60 there) reintroduced float error: (16165/60)*60
+  // = 16165.000000000002, which shifted the block count by one at one slider
+  // position out of 94. Seconds are exact.
+  totalSeconds: number;
   isDirectPay: boolean;
   // A specific provider's bid to stake every block against; null = let the
   // router choose a provider each block ("Auto").
   bidId?: string | null;
+  // Seamless (default): overlap blocks for gapless inference, needs ~2x a
+  // block's stake free. Economy (false): open the next block only after the
+  // current one expires and its stake returns — 1x stake, small inference gap.
+  overlap?: boolean;
 }
 
 export interface KeepAliveContextValue {
@@ -186,7 +219,7 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
       if (runRef.current?.id === myId) {
         toasts.toast(
           'info',
-          'Rolling session ended — could not open the next 6-minute block.',
+          'Rolling session ended — could not open the next block.',
         );
         stop();
       }
@@ -219,13 +252,6 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
       return;
     }
     const nowSec = Math.floor(Date.now() / 1000);
-    // Within one increment of the target: stop scheduling. The current block
-    // keeps serving until it lapses; the run is done, so clear the badge.
-    if (nowSec + MIN_REQUEST_SECONDS >= run.targetEndTime) {
-      runRef.current = null;
-      setStatus(null);
-      return;
-    }
     const endsAt = Number(session?.EndsAt);
     if (!Number.isFinite(endsAt)) {
       // No usable expiry — stop rather than fire immediately in a loop.
@@ -233,7 +259,32 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
       stop();
       return;
     }
-    const fireAt = endsAt - OVERLAP_SEC;
+    // This block already covers the target: no more restakes. Test the block's
+    // OWN expiry, not `nowSec + MIN_REQUEST_SECONDS` — the next block would start
+    // at `fireAt` (one stride away), not one full block away, so the old form
+    // under-counted seamless by OVERLAP_SEC per block and kept opening: a 2-block
+    // purchase ran 3 blocks, a 94-block one ran 103. This predicate is the twin of
+    // blocksForDuration; changing either alone re-opens that gap.
+    //
+    // DON'T drop the session here — the current block keeps serving until it
+    // lapses, and for a single-block (minimum-duration) run this IS the only
+    // block. Keep the status live until it actually ends, then clear. (Clearing
+    // immediately bounced a 5-minute min-duration session back to the picker.)
+    if (endsAt >= run.targetEndTime) {
+      const clearDelayMs = Math.max(0, (endsAt - nowSec) * 1000);
+      clearTimer();
+      timerRef.current = setTimeout(() => {
+        runRef.current = null;
+        setStatus(null);
+      }, clearDelayMs);
+      return;
+    }
+    // Seamless: open N+1 just BEFORE N ends (overlap → gapless, 2x stake).
+    // Economy: open N+1 just AFTER N ends, once its stake has returned (1x
+    // stake, small gap while the stake recycles).
+    const fireAt = run.overlap
+      ? endsAt - OVERLAP_SEC
+      : endsAt + REOPEN_DELAY_SEC;
     const delayMs = Math.max(0, (fireAt - nowSec) * 1000);
     clearTimer();
     timerRef.current = setTimeout(() => {
@@ -246,21 +297,18 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
     async ({
       modelId,
       chatId,
-      totalMinutes,
+      totalSeconds,
       isDirectPay,
       bidId = null,
+      overlap = true,
     }: StartKeepAliveOpts) => {
       stop(); // replace any existing run
       // Drop the previous run's block so the consumer's mirror effect can't route
       // inference to a stale/expired session while this one's first block opens.
       setCurrentSession(null);
       const myId = ++runCounterRef.current;
-      const total = Math.max(
-        1,
-        Math.ceil((totalMinutes * 60) / MIN_REQUEST_SECONDS),
-      );
-      const targetEndTime =
-        Math.floor(Date.now() / 1000) + totalMinutes * 60;
+      const total = blocksForDuration(totalSeconds, overlap);
+      const targetEndTime = Math.floor(Date.now() / 1000) + totalSeconds;
       runRef.current = {
         running: true,
         index: 1,
@@ -270,6 +318,7 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
         chatId,
         isDirectPay,
         bidId,
+        overlap,
         id: myId,
       };
       setStatus({ running: true, index: 1, total, targetEndTime, modelId, chatId });
