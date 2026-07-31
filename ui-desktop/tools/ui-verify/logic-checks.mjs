@@ -756,6 +756,54 @@ console.log('queries: economy stake reservation');
     strideSeconds(true) < MIN_REQUEST_SECONDS);
 }
 
+
+// ---- the overlap reserve counts SEAMLESS runs only -------------------------
+// Reported from a live pass: three running sessions blocked a new one on a
+// wallet with plenty spare, and the error read "3.067758097729243e+21 MOR".
+// Two bugs in one line. Economy recycles its own stake (it closes each expired
+// block and reuses it), so it must reserve nothing; and the figure is WEI, so
+// printing it beside the word MOR yields nonsense.
+console.log('');
+console.log('queries: overlap reserve excludes economy runs');
+{
+  const B = 305000000000000000n; // one block's stake, in WEI
+  const reserve = (runs, exceptChatId) =>
+    Object.entries(runs).reduce(
+      (t, [k, r]) =>
+        !r.running || k === exceptChatId || !r.overlap ? t : t + r.perBlockStakeWei,
+      0n,
+    );
+
+  const threeEconomy = {
+    a: { running: true, overlap: false, perBlockStakeWei: B },
+    b: { running: true, overlap: false, perBlockStakeWei: B },
+    c: { running: true, overlap: false, perBlockStakeWei: B },
+  };
+  ok('three economy runs reserve NOTHING', reserve(threeEconomy) === 0n);
+
+  const mixed = {
+    a: { running: true, overlap: true, perBlockStakeWei: B },
+    b: { running: true, overlap: false, perBlockStakeWei: B },
+    c: { running: true, overlap: true, perBlockStakeWei: B },
+  };
+  ok('only the two seamless runs reserve', reserve(mixed) === 2n * B);
+  ok('the asking chat is excluded', reserve(mixed, 'a') === B);
+  ok('a stopped seamless run reserves nothing',
+    reserve({ a: { running: false, overlap: true, perBlockStakeWei: B } }) === 0n);
+
+  // The units bug, pinned with the figure actually observed in the app rather
+  // than an invented one: the reserve is WEI, so printing it beside the word
+  // MOR rendered "3.067758097729243e+21 MOR".
+  const OBSERVED_WEI = 3.067758097729243e21;
+  ok('the raw wei figure is the unreadable one the user saw',
+    String(OBSERVED_WEI).includes('e+'));
+  const shown = formatMor(OBSERVED_WEI, 18);
+  ok(`a wei reserve formats to a human MOR figure (got ${shown})`,
+    typeof shown === 'string' && !shown.includes('e+'));
+  ok('and it is the MOR magnitude, not the wei one',
+    Number(String(shown).replace(/[^0-9.]/g, '')) < 1e6);
+}
+
 console.log('');
 console.log(`LOGIC CHECKS: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

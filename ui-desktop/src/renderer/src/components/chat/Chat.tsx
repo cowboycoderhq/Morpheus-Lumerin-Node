@@ -924,7 +924,7 @@ export const Chat = (props: ChatProps) => {
       // see this: the other runs' next stakes are still in the user's wallet.
       // No argument: startRolling always seeds a brand-new chat id, so there is
       // never an existing run of its own to exclude.
-      const otherRunsNeed = keepAlive.committedOverlapMor();
+      const otherRunsNeed = keepAlive.committedOverlapWei();
       const requiredFreeStake =
         (needsTwo ? 2 : 1) * perBlockStake + otherRunsNeed;
       if (
@@ -937,7 +937,7 @@ export const Chat = (props: ChatProps) => {
         props.toasts.toast(
           'error',
           otherRunsNeed > 0
-            ? `Not enough MOR to add another rolling session — your ${keepAlive.runningCount} running session(s) still need about ${otherRunsNeed.toFixed(3)} MOR to keep renewing. Stop one, or add MOR.`
+            ? `Not enough MOR to add another rolling session — your ${keepAlive.runningCount} running session(s) still need about ${formatMor(otherRunsNeed, 18) ?? '—'} MOR to keep renewing. Stop one, or add MOR.`
             : needsTwo
               ? 'Not enough MOR for a rolling session — you need about twice a 5-minute stake free. Shorten the session to a single block, or add MOR.'
               : 'Not enough MOR for a session — you need about one 5-minute stake free. Add MOR and try again.',
@@ -959,7 +959,7 @@ export const Chat = (props: ChatProps) => {
         bidId: chosenBid ? chosenBid.Id : null,
         overlap,
         // So the NEXT run's gate can reserve this one's pending overlap.
-        perBlockStakeMor: perBlockStake,
+        perBlockStakeWei: perBlockStake,
       });
     } finally {
       startingRollingRef.current = false;
