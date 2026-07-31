@@ -6,8 +6,8 @@ exactly one `diamondCut`. No proxy-router / node changes.
 
 | | BASE Sepolia | BASE mainnet |
 |---|---|---|
-| Diamond | `0x6e4d0B775E3C3b02683A6F277Ac80240C4aFF930` | `0x6aBE1d282f72B474E54527D93b979A4f64d3030a` |
-| Owner | EOA `0x19ec1E4b714990620edf41fE28e9a1552953a7F4` | Gnosis Safe **5-of-9** `0x1FE04BC15Cf2c5A2d41a0b3a96725596676eBa1E` |
+| Diamond | `0xA328196f2438DADA5ab729E39388D86896c27c85` | `0x6aBE1d282f72B474E54527D93b979A4f64d3030a` |
+| Owner | EOA `0x94C58f682A9A518EfF83c7B53F3738294bB0F357` | Gnosis Safe **5-of-9** `0x1FE04BC15Cf2c5A2d41a0b3a96725596676eBa1E` |
 | Who signs the cut | Key-holder directly | Safe proposal → 5 sigs → execute |
 
 Re-read `owner()` on-chain before starting (the calldata script prints it).
