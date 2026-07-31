@@ -68,6 +68,19 @@ interface KeepAliveRun extends KeepAliveStatus {
   bidId: string | null; // fixed provider for every block, or null = router picks
   overlap: boolean; // true = seamless (open N+1 before N ends, 2x stake); false = economy (sequential, 1x, small gap)
   id: number; // monotonic run token; guards against a stale tick acting on a new run
+  // Per-run timer. This used to be one module-level ref, which is precisely what
+  // made runs mutually exclusive: a second run's schedule overwrote the first's
+  // handle and the first stopped restaking silently. Each run owns its own.
+  timer: ReturnType<typeof setTimeout> | null;
+  // EVERY block this run has opened, not just the current one. During a seamless
+  // overlap two of a run's blocks are open at once and both are listed with a
+  // Close button; matching only the current block meant closing the older one
+  // paid the early-close penalty AND left the run happily restaking.
+  openedSessionIds: string[];
+  // What one block of this run costs. Needed to reserve the pending overlap of
+  // OTHER live runs when gating a new one — without it the gate approves each
+  // run in isolation and the wallet is oversubscribed N-fold.
+  perBlockStakeMor: number;
 }
 
 export interface StartKeepAliveOpts {
@@ -79,6 +92,9 @@ export interface StartKeepAliveOpts {
   // position out of 94. Seconds are exact.
   totalSeconds: number;
   isDirectPay: boolean;
+  // MOR one block of this run stakes. Recorded so the provider can tell a new
+  // run's affordability gate what the existing runs still need.
+  perBlockStakeMor?: number;
   // A specific provider's bid to stake every block against; null = let the
   // router choose a provider each block ("Auto").
   bidId?: string | null;
@@ -89,51 +105,128 @@ export interface StartKeepAliveOpts {
 }
 
 export interface KeepAliveContextValue {
-  status: KeepAliveStatus | null;
-  currentSession: any | null;
+  // Keyed by chatId. Several rolling sessions run at once — including several
+  // against the SAME provider, which the contract allows (each openSession takes
+  // a fresh nonce) and the router routes by session id.
+  statuses: Record<string, KeepAliveStatus>;
+  sessionsByChat: Record<string, any>;
+  // Every session id each run has opened (current block last). A run's older
+  // block stays open through the seamless overlap, so "is this session mine?"
+  // cannot be answered by the current block alone.
+  sessionIdsByChat: Record<string, string[]>;
+  runningCount: number;
+  // MOR that live runs OTHER than `exceptChatId` still need to fund their next
+  // overlap. A new run's gate must add this to its own requirement: each run
+  // asking only "can I peak at 2x?" oversubscribes the wallet once several are
+  // live, and every run that loses the race reverts having already paid for its
+  // first block.
+  committedOverlapMor: (exceptChatId?: string) => number;
   start: (opts: StartKeepAliveOpts) => Promise<void>;
-  stop: () => void;
+  // Stop one run, or every run when called with no argument.
+  stop: (chatId?: string) => void;
 }
 
 export const KeepAliveContext = createContext<KeepAliveContextValue>({
-  status: null,
-  currentSession: null,
+  statuses: {},
+  sessionsByChat: {},
+  sessionIdsByChat: {},
+  runningCount: 0,
+  committedOverlapMor: () => 0,
   start: async () => {},
   stop: () => {},
 });
 
 export const useKeepAlive = () => useContext(KeepAliveContext);
 
-const KeepAliveProviderInner = ({ client, children }: any) => {
+// Exported for the isolate suite: the concurrency this file exists to provide is
+// stateful (per-run timers, per-run identity tokens) and cannot be checked by
+// testing pure helpers. The case mounts THIS, unwrapped, with a fake client.
+export const KeepAliveProviderInner = ({ client, children }: any) => {
   const address = useSelector((s: any) => selectors.getWalletAddress(s));
   const url = useSelector((s: any) => selectors.getLocalProxyRouterUrl(s));
   const toasts = useContext(ToastsContext);
 
-  const [status, setStatus] = useState<KeepAliveStatus | null>(null);
-  const [currentSession, setCurrentSession] = useState<any | null>(null);
+  const [statuses, setStatuses] = useState<Record<string, KeepAliveStatus>>({});
+  const [sessionsByChat, setSessionsByChat] = useState<Record<string, any>>({});
+  const [sessionIdsByChat, setSessionIdsByChat] = useState<
+    Record<string, string[]>
+  >({});
 
-  // Mutable values the (long-lived) timer callback must read fresh, so it never
-  // fires on a stale closure. runRef is the single source of truth for the run.
-  const runRef = useRef<KeepAliveRun | null>(null);
+  // Mutable state the (long-lived) timer callbacks must read fresh, so they never
+  // fire on a stale closure. runsRef is the source of truth: chatId -> run.
+  // Lazily initialised: `useRef(new Map())` allocates a Map on every render and
+  // throws it away.
+  const runsRef = useRef<Map<string, KeepAliveRun> | null>(null);
+  if (runsRef.current === null) {
+    runsRef.current = new Map();
+  }
   const runCounterRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const urlRef = useRef(url);
   urlRef.current = url;
   const addressRef = useRef(address);
   addressRef.current = address;
 
-  const clearTimer = () => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
+  const clearRunTimer = (run: KeepAliveRun | undefined | null) => {
+    if (run?.timer) {
+      clearTimeout(run.timer);
+      run.timer = null;
     }
   };
 
-  const stop = useCallback(() => {
-    clearTimer();
-    runRef.current = null;
-    setStatus(null);
-    // Leave currentSession as the last block; it lapses on its own and Chat can
+  const publish = () => {
+    const nextStatuses: Record<string, KeepAliveStatus> = {};
+    const nextIds: Record<string, string[]> = {};
+    runsRef.current!.forEach((run, key) => {
+      nextStatuses[key] = {
+        running: run.running,
+        index: run.index,
+        total: run.total,
+        targetEndTime: run.targetEndTime,
+        modelId: run.modelId,
+        chatId: run.chatId,
+      };
+      nextIds[key] = [...run.openedSessionIds];
+    });
+    setStatuses(nextStatuses);
+    setSessionIdsByChat(nextIds);
+  };
+
+  // Sum of one block's stake for every live run except the one asking. Seamless
+  // runs hold a second block's worth briefly at each rotation; economy runs need
+  // their next block's stake before the previous one's has returned. Either way
+  // the money is spoken for and a new run must not count it as free.
+  const committedOverlapMor = useCallback((exceptChatId?: string) => {
+    let total = 0;
+    runsRef.current!.forEach((run, key) => {
+      if (!run.running || key === exceptChatId) {
+        return;
+      }
+      const per = Number(run.perBlockStakeMor);
+      if (Number.isFinite(per) && per > 0) {
+        total += per;
+      }
+    });
+    return total;
+  }, []);
+
+  // stop(chatId) ends ONE run; stop() ends all of them. Callers that mean "this
+  // thread is going away" must pass the id — an argument-less stop from a chat
+  // switch would kill every other chat's auto-renewal, which is the whole point
+  // of running them in parallel.
+  const stop = useCallback((chatId?: string) => {
+    if (chatId === undefined) {
+      runsRef.current!.forEach((run) => clearRunTimer(run));
+      runsRef.current!.clear();
+    } else {
+      const run = runsRef.current!.get(chatId);
+      if (!run) {
+        return;
+      }
+      clearRunTimer(run);
+      runsRef.current!.delete(chatId);
+    }
+    publish();
+    // Leave the last block in sessionsByChat; it lapses on its own and Chat can
     // keep showing/using it until it expires. Never close it here.
   }, []);
 
@@ -195,11 +288,20 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
   };
 
   // Forward-declared so tick and scheduleNext can reference each other.
-  const scheduleNextRef = useRef<(session: any) => void>(() => {});
+  const scheduleNextRef = useRef<(key: string, session: any) => void>(() => {});
 
-  const tick = async () => {
-    const run = runRef.current;
+  const tick = async (key: string) => {
+    const run = runsRef.current!.get(key);
     if (!run?.running) {
+      return;
+    }
+    // Never stake past the target. scheduleNext decides when to stop scheduling,
+    // but a timer can fire arbitrarily LATE — the laptop sleeps, or Chromium
+    // throttles a background renderer — and tick would then open and PAY for a
+    // block the user never asked for. With several runs that is one wasted stake
+    // each, silently, on wake. Re-check at spend time, not only at plan time.
+    if (Math.floor(Date.now() / 1000) >= run.targetEndTime) {
+      stop(key);
       return;
     }
     const myId = run.id;
@@ -215,39 +317,34 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
       }
     } catch (e) {
       console.error('keep-alive: could not open next block', e);
-      // Only tear down if this is still OUR run (a newer run manages itself).
-      if (runRef.current?.id === myId) {
+      // Only tear down if this is still OUR run (a newer run on the same chat
+      // manages itself). Scoped to this key so one chat's failure to restake
+      // cannot end another chat's healthy run.
+      if (runsRef.current!.get(key)?.id === myId) {
         toasts.toast(
           'info',
           'Rolling session ended — could not open the next block.',
         );
-        stop();
+        stop(key);
       }
       return;
     }
     // Re-check AFTER the await by run IDENTITY, not just `running`: if Stop (or a
-    // new run) happened mid-open, don't revive/rotate. The one extra block that
-    // opened lapses on its own (never closed).
-    const cur = runRef.current;
+    // new run on this chat) happened mid-open, don't revive/rotate. The one extra
+    // block that opened lapses on its own (never closed).
+    const cur = runsRef.current!.get(key);
     if (!cur?.running || cur.id !== myId) {
       return;
     }
-    const nextIndex = Math.min(cur.index + 1, cur.total);
-    runRef.current = { ...cur, index: nextIndex };
-    setStatus({
-      running: true,
-      index: nextIndex,
-      total: cur.total,
-      targetEndTime: cur.targetEndTime,
-      modelId: cur.modelId,
-      chatId: cur.chatId,
-    });
-    setCurrentSession(newSession);
-    scheduleNextRef.current(newSession);
+    cur.index = Math.min(cur.index + 1, cur.total);
+    cur.openedSessionIds.push(newSession.Id);
+    publish();
+    setSessionsByChat((prev) => ({ ...prev, [key]: newSession }));
+    scheduleNextRef.current(key, newSession);
   };
 
-  const scheduleNext = (session: any) => {
-    const run = runRef.current;
+  const scheduleNext = (key: string, session: any) => {
+    const run = runsRef.current!.get(key);
     if (!run?.running) {
       return;
     }
@@ -256,7 +353,7 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
     if (!Number.isFinite(endsAt)) {
       // No usable expiry — stop rather than fire immediately in a loop.
       console.error('keep-alive: block has no EndsAt; stopping', session);
-      stop();
+      stop(key);
       return;
     }
     // This block already covers the target: no more restakes. Test the block's
@@ -272,10 +369,15 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
     // immediately bounced a 5-minute min-duration session back to the picker.)
     if (endsAt >= run.targetEndTime) {
       const clearDelayMs = Math.max(0, (endsAt - nowSec) * 1000);
-      clearTimer();
-      timerRef.current = setTimeout(() => {
-        runRef.current = null;
-        setStatus(null);
+      const myId = run.id;
+      clearRunTimer(run);
+      run.timer = setTimeout(() => {
+        // Identity-checked: a NEW run may have been started on this same chat
+        // during the wait, and clearing by key alone would delete that live run.
+        if (runsRef.current!.get(key)?.id === myId) {
+          runsRef.current!.delete(key);
+          publish();
+        }
       }, clearDelayMs);
       return;
     }
@@ -286,9 +388,9 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
       ? endsAt - OVERLAP_SEC
       : endsAt + REOPEN_DELAY_SEC;
     const delayMs = Math.max(0, (fireAt - nowSec) * 1000);
-    clearTimer();
-    timerRef.current = setTimeout(() => {
-      void tick();
+    clearRunTimer(run);
+    run.timer = setTimeout(() => {
+      void tick(key);
     }, delayMs);
   };
   scheduleNextRef.current = scheduleNext;
@@ -301,15 +403,26 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
       isDirectPay,
       bidId = null,
       overlap = true,
+      perBlockStakeMor = 0,
     }: StartKeepAliveOpts) => {
-      stop(); // replace any existing run
-      // Drop the previous run's block so the consumer's mirror effect can't route
-      // inference to a stale/expired session while this one's first block opens.
-      setCurrentSession(null);
+      // Replace only THIS chat's run. It used to be a bare stop() that killed
+      // every run, which is what made concurrent auto-renewal impossible.
+      stop(chatId);
+      // Drop this chat's previous block so the consumer's mirror effect can't
+      // route inference to a stale/expired session while the first block opens.
+      // Scoped to this chat — other chats' live sessions must survive.
+      setSessionsByChat((prev) => {
+        if (!(chatId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[chatId];
+        return next;
+      });
       const myId = ++runCounterRef.current;
       const total = blocksForDuration(totalSeconds, overlap);
       const targetEndTime = Math.floor(Date.now() / 1000) + totalSeconds;
-      runRef.current = {
+      runsRef.current!.set(chatId, {
         running: true,
         index: 1,
         total,
@@ -320,8 +433,11 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
         bidId,
         overlap,
         id: myId,
-      };
-      setStatus({ running: true, index: 1, total, targetEndTime, modelId, chatId });
+        timer: null,
+        openedSessionIds: [],
+        perBlockStakeMor: Number(perBlockStakeMor) || 0,
+      });
+      publish();
 
       let firstSession: any = null;
       try {
@@ -335,29 +451,60 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
         }
       } catch (e) {
         console.error('keep-alive: first block failed', e);
-        if (runRef.current?.id === myId) {
+        if (runsRef.current!.get(chatId)?.id === myId) {
           toasts.toast('error', 'Could not start the rolling session.');
-          stop();
+          stop(chatId);
         }
         return;
       }
-      if (runRef.current?.id !== myId || !runRef.current?.running) {
+      if (
+        runsRef.current!.get(chatId)?.id !== myId ||
+        !runsRef.current!.get(chatId)?.running
+      ) {
         return; // stopped or superseded during the await
       }
-      setCurrentSession(firstSession);
-      scheduleNextRef.current(firstSession);
+      runsRef.current!.get(chatId)?.openedSessionIds.push(firstSession.Id);
+      setSessionsByChat((prev) => ({ ...prev, [chatId]: firstSession }));
+      publish();
+      scheduleNextRef.current(chatId, firstSession);
     },
     // client/toasts are stable; url/address are read via refs inside the calls.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [stop],
   );
 
-  // Clear the pending timer if the whole app shell unmounts (app close).
-  useEffect(() => () => clearTimer(), []);
+  // Clear every pending timer if the whole app shell unmounts (app close).
+  useEffect(
+    () => () => {
+      runsRef.current!.forEach((run) => clearRunTimer(run));
+    },
+    [],
+  );
+
+  const runningCount = useMemo(
+    () => Object.values(statuses).filter((s) => s.running).length,
+    [statuses],
+  );
 
   const value = useMemo(
-    () => ({ status, currentSession, start, stop }),
-    [status, currentSession, start, stop],
+    () => ({
+      statuses,
+      sessionsByChat,
+      sessionIdsByChat,
+      runningCount,
+      committedOverlapMor,
+      start,
+      stop,
+    }),
+    [
+      statuses,
+      sessionsByChat,
+      sessionIdsByChat,
+      runningCount,
+      committedOverlapMor,
+      start,
+      stop,
+    ],
   );
 
   return (

@@ -24,6 +24,8 @@ import {
   formatModelName,
   modelMatchesQuery,
   userTextFromPrompt,
+  resolveChatSession,
+  sessionsClaimedByOtherChats,
 } from '../../src/renderer/src/components/chat/utils.js';
 import { buildModelsWithBids } from '../../src/renderer/src/store/queries.ts';
 
@@ -502,6 +504,152 @@ console.log('queries: blocksForDuration vs the scheduler stop condition');
   ok('a single block is 1 in both modes',
     blocksForDuration(MIN_REQUEST_SECONDS, true) === 1 &&
     blocksForDuration(MIN_REQUEST_SECONDS, false) === 1);
+}
+
+// ---- chat -> session binding (parallel sessions) ---------------------------
+// The rule that makes two chats able to hold two DIFFERENT sessions on the same
+// model and the same provider. The old behaviour resolved from the model, so
+// every chat on a model collapsed onto the first open session; these pin that it
+// cannot come back.
+console.log('');
+console.log('queries: resolveChatSession (per-chat session binding)');
+{
+  const S = (id, modelId, bidId) => ({ Id: id, ModelAgentId: modelId, BidID: bidId });
+  // Two sessions, SAME model, SAME provider bid — the case that was unreachable.
+  const s1 = S('0xsess1', '0xmodelA', '0xbidP');
+  const s2 = S('0xsess2', '0xmodelA', '0xbidP');
+  const open = [s1, s2];
+
+  ok('bound chat resolves to ITS session, not the first for the model',
+    resolveChatSession(open, { modelId: '0xmodelA', sessionId: '0xsess2' })?.Id === '0xsess2');
+  ok('a second chat on the same model+provider resolves to the OTHER session',
+    resolveChatSession(open, { modelId: '0xmodelA', sessionId: '0xsess1' })?.Id === '0xsess1');
+  ok('two chats on one model do not collapse onto one session',
+    resolveChatSession(open, { modelId: '0xmodelA', sessionId: '0xsess1' })?.Id !==
+    resolveChatSession(open, { modelId: '0xmodelA', sessionId: '0xsess2' })?.Id);
+
+  // The money property: a chat whose session closed must go READONLY, never
+  // silently adopt a sibling session — that would bill its prompts elsewhere.
+  ok('bound chat whose session closed -> undefined (readonly), NOT a sibling',
+    resolveChatSession([s2], { modelId: '0xmodelA', sessionId: '0xsess1' }) === undefined);
+  ok('bound chat never falls back to the model lookup',
+    resolveChatSession(open, { modelId: '0xmodelA', sessionId: '0xgone' }) === undefined);
+
+  // Legacy chats (no sessionId persisted) keep the old behaviour.
+  ok('unbound chat falls back to the model lookup',
+    resolveChatSession(open, { modelId: '0xmodelA' })?.Id === '0xsess1');
+  ok('unbound chat on a model with no open session -> undefined',
+    resolveChatSession(open, { modelId: '0xmodelB' }) === undefined);
+
+  // Degenerate inputs must not throw — this runs on every chat switch.
+  ok('no chat -> undefined', resolveChatSession(open, undefined) === undefined);
+  ok('no modelId and no sessionId -> undefined', resolveChatSession(open, {}) === undefined);
+  ok('no sessions -> undefined',
+    resolveChatSession(undefined, { modelId: '0xmodelA' }) === undefined);
+
+  // A legacy (unbound) chat must not land on a session a bound chat OWNS. The
+  // old code recomputed that collision harmlessly every switch; the router now
+  // PERSISTS it, so both chat files would permanently claim one session and bill
+  // to it. Review executed exactly this and got 0xsessB for both chats.
+  const chats = [
+    { id: 'chatB', modelId: '0xmodelA', sessionId: '0xsess2' },
+    { id: 'chatL', modelId: '0xmodelA' }, // legacy, no binding
+  ];
+  const claimedForL = sessionsClaimedByOtherChats(chats, 'chatL');
+  ok('claimed set excludes the chat asking',
+    claimedForL.has('0xsess2') && claimedForL.size === 1);
+  ok('legacy chat skips a session another chat owns',
+    resolveChatSession(open, chats[1], claimedForL)?.Id === '0xsess1');
+  ok('legacy chat with EVERY session owned -> undefined, not theft',
+    resolveChatSession(
+      open,
+      chats[1],
+      new Set(['0xsess1', '0xsess2']),
+    ) === undefined);
+  ok('a bound chat ignores the claimed set (its own id is its own)',
+    resolveChatSession(open, chats[0], new Set(['0xsess2']))?.Id === '0xsess2');
+
+  // The reopen-orphan shape: the drawer row is stale, the live binding is newer.
+  // selectChat must prefer the newer one or the just-paid-for session is lost.
+  const staleRow = { id: 'chatA', modelId: '0xmodelA', sessionId: '0xexpired' };
+  const liveBinding = '0xsess2';
+  const merged = { ...staleRow, sessionId: liveBinding ?? staleRow.sessionId };
+  ok('newer live binding wins over a stale drawer row',
+    resolveChatSession(open, merged)?.Id === '0xsess2');
+  ok('stale row alone would have resolved to nothing (the orphan bug)',
+    resolveChatSession(open, staleRow) === undefined);
+}
+
+// ---- concurrent rolling runs: the wallet must not be oversubscribed ---------
+// Each run's gate used to ask only "can I peak at 2x a block?" — true for every
+// run in isolation, so N runs were approved against one block of headroom and
+// the losers reverted having already paid for block 1. Measured: 9 runs on a
+// 3.05 MOR wallet, combined peak 5.49. The gate now adds what the OTHER live
+// runs still need. This replays the real formula.
+console.log('');
+console.log('queries: concurrent rolling runs vs. one wallet');
+{
+  // Mirrors Chat.tsx startRolling: required = (multiBlock ? 2 : 1) * perBlock
+  //                                          + committedOverlapMor(others)
+  const admit = (walletMor, perBlock, liveRuns, aggregate) => {
+    const otherNeed = aggregate ? liveRuns * perBlock : 0;
+    const required = 2 * perBlock + otherNeed;
+    // Free balance falls by one locked block per live run.
+    const free = walletMor - liveRuns * perBlock;
+    return free >= required;
+  };
+  const admitted = (walletMor, perBlock, aggregate) => {
+    let n = 0;
+    while (admit(walletMor, perBlock, n, aggregate) && n < 50) n++;
+    return n;
+  };
+
+  const WALLET = 3.05;
+  const BLOCK = 0.305;
+  // Without the aggregate reserve the gate lets in far more runs than the
+  // wallet can carry through their overlaps.
+  const naive = admitted(WALLET, BLOCK, false);
+  const guarded = admitted(WALLET, BLOCK, true);
+  // Worst case every live run hits its overlap together: each holds 2 blocks.
+  const peak = (n) => n * 2 * BLOCK;
+
+  ok('without an aggregate reserve the admitted runs can exceed the wallet',
+    peak(naive) > WALLET,
+    `admitted ${naive}, peak ${peak(naive).toFixed(3)} vs wallet ${WALLET}`);
+  ok('aggregate reserve admits strictly fewer runs',
+    guarded < naive, `guarded=${guarded} naive=${naive}`);
+  ok('with the reserve, all admitted runs can overlap at once within the wallet',
+    peak(guarded) <= WALLET + 1e-9,
+    `guarded=${guarded} peak=${peak(guarded).toFixed(3)}`);
+  ok('a wallet that cannot fund even one run admits none',
+    admitted(BLOCK, BLOCK, true) === 0);
+  ok('a fatter wallet admits more runs',
+    admitted(10 * BLOCK, BLOCK, true) > admitted(4 * BLOCK, BLOCK, true));
+}
+
+// ---- closeSession must recognise EVERY block a run has opened ---------------
+// Through the seamless overlap a run holds two open blocks and the drawer offers
+// Close on both. Matching only the current block left the run restaking after
+// the user closed its older one — and that close pays the early-close penalty.
+console.log('');
+console.log('queries: rolling-run ownership of a closed session');
+{
+  const ownerOf = (sessionIdsByChat, statuses, sessionId) =>
+    Object.values(statuses).find(
+      (s) => s.running && (sessionIdsByChat[s.chatId] || []).includes(sessionId),
+    )?.chatId;
+  const statuses = { chatR: { running: true, chatId: 'chatR' } };
+  const ids = { chatR: ['0xb1', '0xb2', '0xb3'] };
+
+  ok('current block resolves to its run', ownerOf(ids, statuses, '0xb3') === 'chatR');
+  ok('the OVERLAPPING previous block also resolves to its run',
+    ownerOf(ids, statuses, '0xb2') === 'chatR');
+  ok('an older expired block still resolves (stopping is right either way)',
+    ownerOf(ids, statuses, '0xb1') === 'chatR');
+  ok('a session from no run resolves to nobody',
+    ownerOf(ids, statuses, '0xother') === undefined);
+  ok('current-block-only matching would have MISSED the overlap block',
+    ({ chatR: '0xb3' }).chatR !== '0xb2');
 }
 
 console.log('');

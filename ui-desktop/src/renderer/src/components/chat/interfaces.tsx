@@ -12,6 +12,11 @@ export interface ChatData {
     createdAt: Date;
     modelId: string;
     isLocal?: boolean;
+    // The session THIS chat talks through. The binding lives on the chat, not on
+    // the model: several chats can share a model while holding separate sessions
+    // (including two sessions with the same provider), which is impossible if the
+    // session is re-derived from the model on every switch.
+    sessionId?: string;
 }
 
 export interface HistoryMessage {

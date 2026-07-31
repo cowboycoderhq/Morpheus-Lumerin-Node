@@ -10,23 +10,39 @@ import (
 )
 
 type History struct {
-	engine             AIEngineStream
-	storage            gcs.ChatStorageInterface
-	chatID             common.Hash
-	modelID            common.Hash
+	engine  AIEngineStream
+	storage gcs.ChatStorageInterface
+	chatID  common.Hash
+	modelID common.Hash
+	// The session serving this exchange, persisted alongside the turn so the
+	// client can re-bind a chat to its OWN session instead of re-deriving one
+	// from the model. Zero for local models.
+	sessionID          common.Hash
 	forwardChatContext bool
 	log                lib.ILogger
 }
 
-func NewHistory(engine AIEngineStream, storage gcs.ChatStorageInterface, chatID, modelID common.Hash, forwardChatContext bool, log lib.ILogger) *History {
+func NewHistory(engine AIEngineStream, storage gcs.ChatStorageInterface, chatID, modelID, sessionID common.Hash, forwardChatContext bool, log lib.ILogger) *History {
 	return &History{
 		engine:             engine,
 		storage:            storage,
 		chatID:             chatID,
 		modelID:            modelID,
+		sessionID:          sessionID,
 		forwardChatContext: forwardChatContext,
 		log:                log,
 	}
+}
+
+// sessionIDHex is "" for the zero hash rather than 0x000…0, so a local-model
+// turn stores an EMPTY session id. The storage layer treats empty as "leave the
+// existing binding alone"; an all-zero hex string would be a live-looking value
+// that overwrites it.
+func (h *History) sessionIDHex() string {
+	if h.sessionID == (common.Hash{}) {
+		return ""
+	}
+	return h.sessionID.Hex()
 }
 
 func (h *History) Prompt(ctx context.Context, prompt *gcs.OpenAICompletionRequestExtra, cb gcs.CompletionCallback) error {
@@ -55,7 +71,7 @@ func (h *History) Prompt(ctx context.Context, prompt *gcs.OpenAICompletionReques
 	}
 	endTime := time.Now()
 
-	err = h.storage.StorePromptResponseToFile(h.chatID.Hex(), isLocal, h.modelID.Hex(), prompt, completions, startTime, endTime)
+	err = h.storage.StorePromptResponseToFile(h.chatID.Hex(), isLocal, h.modelID.Hex(), h.sessionIDHex(), prompt, completions, startTime, endTime)
 	if err != nil {
 		h.log.Errorf("failed to store prompt response: %v", err)
 	}
@@ -79,7 +95,7 @@ func (h *History) AudioTranscription(ctx context.Context, prompt *gcs.AudioTrans
 	}
 	endTime := time.Now()
 
-	err = h.storage.StorePromptResponseToFile(h.chatID.Hex(), isLocal, h.modelID.Hex(), prompt, completions, startTime, endTime)
+	err = h.storage.StorePromptResponseToFile(h.chatID.Hex(), isLocal, h.modelID.Hex(), h.sessionIDHex(), prompt, completions, startTime, endTime)
 	if err != nil {
 		h.log.Errorf("failed to store prompt response: %v", err)
 	}
@@ -103,7 +119,7 @@ func (h *History) AudioSpeech(ctx context.Context, prompt *gcs.AudioSpeechReques
 	}
 	endTime := time.Now()
 
-	err = h.storage.StorePromptResponseToFile(h.chatID.Hex(), isLocal, h.modelID.Hex(), prompt, completions, startTime, endTime)
+	err = h.storage.StorePromptResponseToFile(h.chatID.Hex(), isLocal, h.modelID.Hex(), h.sessionIDHex(), prompt, completions, startTime, endTime)
 	if err != nil {
 		h.log.Errorf("failed to store prompt response: %v", err)
 	}
@@ -127,7 +143,7 @@ func (h *History) Embeddings(ctx context.Context, prompt *gcs.EmbeddingsRequest,
 	}
 	endTime := time.Now()
 
-	err = h.storage.StorePromptResponseToFile(h.chatID.Hex(), isLocal, h.modelID.Hex(), prompt, completions, startTime, endTime)
+	err = h.storage.StorePromptResponseToFile(h.chatID.Hex(), isLocal, h.modelID.Hex(), h.sessionIDHex(), prompt, completions, startTime, endTime)
 	if err != nil {
 		h.log.Errorf("failed to store prompt response: %v", err)
 	}

@@ -85,6 +85,8 @@ import {
   getModelModality,
   formatModelName,
   userTextFromPrompt,
+  resolveChatSession,
+  sessionsClaimedByOtherChats,
 } from './utils';
 import { Cooldown } from './Cooldown';
 import {
@@ -171,6 +173,7 @@ export const Chat = (props: ChatProps) => {
 
   const [chatData, setChatsData] = useState<ChatData[]>([]);
 
+
   const [openChangeModal, setOpenChangeModal] = useState(false);
   const [isReadonly, setIsReadonly] = useState(false);
 
@@ -182,6 +185,48 @@ export const Chat = (props: ChatProps) => {
   }>({ min: 0, max: 0 });
 
   const [chat, setChat] = useState<ChatData | undefined>(undefined);
+
+  // Which chat is open RIGHT NOW, readable from async work that started earlier.
+  // `chat` captured in an async closure is its value at CALL time, which is the
+  // whole bug in setSessionData: the session resolves seconds later, by which
+  // point the user may be in a different thread.
+  const chatIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    chatIdRef.current = chat?.id;
+  }, [chat?.id]);
+
+  // selectChat's parameter is also named `chatData` and shadows the list state,
+  // so the list is reachable in there only through a ref.
+  const chatListRef = useRef<ChatData[]>([]);
+  useEffect(() => {
+    chatListRef.current = chatData;
+  }, [chatData]);
+
+  // Latches the mount-restore below. Also set by selectChat / onCreateNewChat:
+  // once the user has picked a thread, auto-restore must never override them.
+  const restoredOnceRef = useRef(false);
+
+  // A chat's session binding lives in TWO places — the live `chat` object and the
+  // `chatData` drawer list — and selectChat reads the DRAWER entry. Updating only
+  // the live one meant a reopen looked fine until you switched away and back, at
+  // which point the stale drawer entry won and the just-paid-for session was
+  // orphaned (the user had to stake a third time). Every binding change goes
+  // through here so the two cannot drift.
+  const bindChatToSession = (chatId?: string, sessionId?: string) => {
+    if (!chatId || !sessionId) {
+      return;
+    }
+    setChat((prev) =>
+      prev && prev.id === chatId && prev.sessionId !== sessionId
+        ? { ...prev, sessionId }
+        : prev,
+    );
+    setChatsData((prev) =>
+      prev.map((c) =>
+        c.id === chatId && c.sessionId !== sessionId ? { ...c, sessionId } : c,
+      ),
+    );
+  };
 
   // --- Keep-alive (auto-restake) --------------------------------------------
   // Target total minutes for a rolling session; 0 = off (a single auto-sized
@@ -202,6 +247,12 @@ export const Chat = (props: ChatProps) => {
     string | null
   >(null);
   const keepAlive = useKeepAlive();
+  // Rolling sessions are now per-chat and concurrent, so almost every question
+  // the UI used to ask of "the run" is really about THIS chat's run. Reading the
+  // global map directly is how a sibling chat's run would light up this one's
+  // header and, worse, hand this chat someone else's session id.
+  const myRun = chat?.id ? keepAlive.statuses[chat.id] : undefined;
+  const myRunSession = chat?.id ? keepAlive.sessionsByChat[chat.id] : undefined;
   // Guards the Stake button against a double-click opening two first blocks
   // before the first render reflects the started run.
   const startingRollingRef = useRef(false);
@@ -404,7 +455,15 @@ export const Chat = (props: ChatProps) => {
     setChat({
       id: generateHashId(),
       createdAt: new Date(),
-      modelId: latestSessionModel.ModelAgentId,
+      // `.Id`, not `.ModelAgentId` — ModelAgentId is a field on SESSIONS and
+      // BIDS, not on models (this very model was found by `m.Id ==
+      // session.ModelAgentId`). The boot chat was therefore created with
+      // modelId: undefined, and selectChat bails on a chat with no model id, so
+      // the session adopted at startup could never be returned to once left.
+      modelId: latestSessionModel.Id,
+      // Carry the binding on the chat, not just in activeSession, so this
+      // boot-time thread survives a switch away and back like any other.
+      sessionId: latestSession.Id,
     });
     setInitialized(true);
 
@@ -429,6 +488,7 @@ export const Chat = (props: ChatProps) => {
           modelId: string;
           createdAt: number;
           isLocal: boolean;
+          sessionId?: string;
         }>
       | undefined;
     if (!titles || !allModels) {
@@ -443,6 +503,7 @@ export const Chat = (props: ChatProps) => {
           createdAt: new Date(item.createdAt * 1000),
           modelId: item.modelId,
           isLocal: item.isLocal,
+          sessionId: item.sessionId,
         });
       }
       return res;
@@ -523,6 +584,16 @@ export const Chat = (props: ChatProps) => {
     // session_id=undefined (router rejects it as invalid hex). On a hard miss,
     // throw WITHOUT touching state so callers (including the keep-alive loop)
     // stop cleanly and the prior good session stays intact.
+    //
+    // Capture WHICH chat this resolution is for. The poll above runs for up to
+    // ~7.5s, and the failover path (handleSystemMessage, "new session opened")
+    // fires it from inside the streaming loop WITHOUT setting isActionLoading —
+    // the drawer stays clickable throughout. Committing to "the current chat" on
+    // resolve therefore stamped a session onto whatever chat the user had
+    // switched to, and because the router persists whatever the session_id
+    // header carried, that theft became permanent on disk: a prompt in chat A
+    // billed to chat B's session while A's own paid session sat unused.
+    const targetChatId = chatIdRef.current;
     let targetSessionData;
     for (let attempt = 0; attempt < 5; attempt++) {
       const allSessions = await refreshSessions();
@@ -532,6 +603,18 @@ export const Chat = (props: ChatProps) => {
     }
     if (!targetSessionData) {
       throw new Error(`Opened session ${sessionId} is not yet queryable`);
+    }
+    // Bind the chat this was STARTED for — always, even if the user has since
+    // switched away, so its stake is never orphaned. Use targetSessionData.Id
+    // rather than the raw argument so the stored id is the canonical one.
+    const boundId = targetSessionData.Id ?? sessionId;
+    bindChatToSession(targetChatId, boundId);
+
+    // Only touch the VISIBLE session state if that chat is still the open one.
+    // activeSession drives the outgoing session_id header; writing it for a chat
+    // the user has left is exactly the mis-billing above.
+    if (chatIdRef.current !== targetChatId) {
+      return;
     }
     setActiveSession({ ...targetSessionData, sessionId });
     const targetModel = chainData?.models?.find(
@@ -556,7 +639,7 @@ export const Chat = (props: ChatProps) => {
     // That invariant lives in a render expression and a refactor of
     // isCreateSessionMode would silently retire it. startRolling has the same
     // guard; make it structural on both sides rather than incidental on one.
-    if (keepAlive.status?.running) {
+    if (myRun?.running) {
       return;
     }
     setIsActionLoading(true);
@@ -671,7 +754,10 @@ export const Chat = (props: ChatProps) => {
   // only gate affordability, seed a fresh chat thread, and hand off to it.
   const startRolling = async (isDirectPay: boolean) => {
     // Re-entrancy guard: a rapid double-click must not open two first blocks.
-    if (startingRollingRef.current || keepAlive.status?.running) {
+    // NOT gated on "some run is active" any more — starting a rolling session
+    // while other chats roll is the point. startRolling always seeds a brand-new
+    // chat id, so it can never collide with an existing run.
+    if (startingRollingRef.current) {
       return;
     }
     startingRollingRef.current = true;
@@ -693,7 +779,33 @@ export const Chat = (props: ChatProps) => {
       const chosenBid = selectedProviderBidId
         ? model.bids.find((b: any) => b.Id == selectedProviderBidId)
         : null;
-      const aff = getStakeAffordability(model.bids, Number(balances.mor));
+      // Read the balance FRESH. `balances` comes from a react-query cache with
+      // refetchOnWindowFocus off, and now that rolling sessions run concurrently
+      // the cached figure can predate every stake the other runs have locked.
+      // Gating on that stale number approves a run the wallet cannot fund: block
+      // 1 opens and is paid for, block 2 reverts, and the run dies having spent
+      // real MOR. Costs one request at the only moment it matters.
+      let freeMor = Number(balances.mor);
+      try {
+        const fresh: any = await queryClient.fetchQuery({
+          queryKey: queryKeys.modelsData,
+          queryFn: () => props.getModelsData(),
+          // WITHOUT this the refetch is a no-op: queryClient.ts sets a global
+          // staleTime of 30s and fetchQuery returns cache while data is fresh,
+          // so "read the balance FRESH" handed back the same stale number the
+          // gate already had — measured, three consecutive reads, one request.
+          staleTime: 0,
+        });
+        const refreshed = Number(fresh?.userBalances?.mor);
+        if (Number.isFinite(refreshed)) {
+          freeMor = refreshed;
+        }
+      } catch (e) {
+        // Fall through on the cached value rather than blocking the user; the
+        // router still rejects an unaffordable open, this gate is the early one.
+        console.warn('keep-alive: balance refresh failed, using cached', e);
+      }
+      const aff = getStakeAffordability(model.bids, freeMor);
       const blockPrice = chosenBid
         ? Number(chosenBid.PricePerSecond)
         : aff.priceForDuration;
@@ -724,19 +836,32 @@ export const Chat = (props: ChatProps) => {
       // reserves 2x like seamless. It still buys a real thing (no overlap =
       // never two stakes locked at once) — just not a smaller balance to start.
       const needsTwo = blockCount > 1;
-      const requiredFreeStake = (needsTwo ? 2 : 1) * perBlockStake;
+      // Reserve what the OTHER live runs still need. Each run asking only "can I
+      // peak at 2x?" oversubscribes the wallet once several are live: with a
+      // 3.05 MOR balance and 0.305 MOR blocks the gate approved NINE concurrent
+      // runs (measured), whose combined peak is 5.49 MOR. They then race for one
+      // block of headroom at overlaps that fall at arbitrary phases, and the
+      // losers revert having already paid for block 1. Free balance alone cannot
+      // see this: the other runs' next stakes are still in the user's wallet.
+      // No argument: startRolling always seeds a brand-new chat id, so there is
+      // never an existing run of its own to exclude.
+      const otherRunsNeed = keepAlive.committedOverlapMor();
+      const requiredFreeStake =
+        (needsTwo ? 2 : 1) * perBlockStake + otherRunsNeed;
       if (
         !aff.known ||
         (!chosenBid && aff.affordableCount < 1) ||
         !Number.isFinite(perBlockStake) ||
         perBlockStake <= 0 ||
-        Number(balances.mor) < requiredFreeStake
+        freeMor < requiredFreeStake
       ) {
         props.toasts.toast(
           'error',
-          needsTwo
-            ? 'Not enough MOR for a rolling session — you need about twice a 5-minute stake free. Shorten the session to a single block, or add MOR.'
-            : 'Not enough MOR for a session — you need about one 5-minute stake free. Add MOR and try again.',
+          otherRunsNeed > 0
+            ? `Not enough MOR to add another rolling session — your ${keepAlive.runningCount} running session(s) still need about ${otherRunsNeed.toFixed(3)} MOR to keep renewing. Stop one, or add MOR.`
+            : needsTwo
+              ? 'Not enough MOR for a rolling session — you need about twice a 5-minute stake free. Shorten the session to a single block, or add MOR.'
+              : 'Not enough MOR for a session — you need about one 5-minute stake free. Add MOR and try again.',
         );
         return;
       }
@@ -754,6 +879,8 @@ export const Chat = (props: ChatProps) => {
         isDirectPay,
         bidId: chosenBid ? chosenBid.Id : null,
         overlap,
+        // So the NEXT run's gate can reserve this one's pending overlap.
+        perBlockStakeMor: perBlockStake,
       });
     } finally {
       startingRollingRef.current = false;
@@ -764,36 +891,70 @@ export const Chat = (props: ChatProps) => {
   // countdown) and inference (session_id header reads activeSession.Id) follow
   // the background rotation. Runs on mount too, so returning to Chat mid-run
   // restores the live session with no gap.
+  // Only ever reads THIS chat's block, so a sibling run rotating its session can
+  // no longer stamp itself over the open chat and bill its prompts to the wrong
+  // thread. The old code read a single global currentSession and needed a chatId
+  // guard bolted on; keying the lookup removes the failure mode instead of
+  // catching it.
   useEffect(() => {
-    const cs = keepAlive.currentSession;
-    if (!keepAlive.status?.running || !cs) {
+    if (!myRun?.running || !myRunSession) {
       return;
     }
-    setActiveSession(cs);
-    const model = chainData?.models?.find((m: any) => m.Id == cs.ModelAgentId);
-    const bid = model?.bids?.find((b: any) => b.Id == cs.BidID);
+    setActiveSession(myRunSession);
+    bindChatToSession(chat?.id, myRunSession.Id);
+    const model = chainData?.models?.find(
+      (m: any) => m.Id == myRunSession.ModelAgentId,
+    );
+    const bid = model?.bids?.find((b: any) => b.Id == myRunSession.BidID);
     if (bid) {
       setSelectedBid(bid);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keepAlive.currentSession, keepAlive.status?.running]);
+  }, [myRunSession, myRun?.running, chat?.id]);
 
   // Restore the rolling thread when Chat (re)mounts during an active run (e.g.
   // returning from the Wallet tab). Re-point chat.id + model to the run and
   // reload its transcript; the mirror effect handles the live session.
   useEffect(() => {
-    const st = keepAlive.status;
-    if (!st?.running || chat?.id === st.chatId) {
+    // ONCE per mount, and never after the user has chosen a thread themselves.
+    //
+    // This is a mount-restore, but its deps cannot express that: publish() hands
+    // back a brand-new `statuses` object on every restake tick, and
+    // `myRun?.running` flips the moment you leave a rolling chat. So the effect
+    // re-fired on every tick and every navigation, and — whenever exactly one run
+    // was live, the common case — it dragged the user straight back into the
+    // rolling thread. Clicking another chat bounced back; "New chat" reverted the
+    // model you had just picked; and a second run merely FINISHING was enough to
+    // yank you out of the thread you were typing in, so the next message was
+    // persisted to the wrong transcript and billed to the wrong session. The old
+    // code was safe only because the blanket stop() made `running` false.
+    if (restoredOnceRef.current) {
       return;
     }
+    // With several runs there is no single "the" run to jump back to, and yanking
+    // the user into an arbitrary one is worse than leaving them put.
+    const running = Object.values(keepAlive.statuses).filter((s) => s.running);
+    if (running.length !== 1 || myRun?.running) {
+      return;
+    }
+    const st = running[0];
+    if (chat?.id === st.chatId) {
+      return;
+    }
+    restoredOnceRef.current = true;
     const model = chainData?.models?.find((m: any) => m.Id == st.modelId);
     if (model) {
       setSelectedModel(model);
     }
-    setChat({ id: st.chatId, createdAt: new Date(), modelId: st.modelId });
+    setChat({
+      id: st.chatId,
+      createdAt: new Date(),
+      modelId: st.modelId,
+      sessionId: keepAlive.sessionsByChat[st.chatId]?.Id,
+    });
     loadChatHistory(st.chatId).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keepAlive.status?.running, keepAlive.status?.chatId]);
+  }, [keepAlive.statuses, myRun?.running]);
 
   const loadChatHistory = async (chatId: string) => {
     try {
@@ -878,13 +1039,33 @@ export const Chat = (props: ChatProps) => {
   };
 
   const closeSession = async (sessionId: string) => {
-    keepAlive.stop(); // a manual close ends the rolling session; don't reopen
+    // Stop only the run whose CURRENT block is the session being closed — the
+    // user closed that thread's session, not every thread's. An argument-less
+    // stop here would silently end auto-renewal for every other chat, which is
+    // both surprising and expensive (their next block never opens).
+    // Match against EVERY block the run has opened, not just its current one.
+    // Through the seamless overlap a run has two open blocks and the drawer
+    // offers Close on both; matching only the newest meant closing the older one
+    // paid the early-close penalty (a live session lost ~2.7 MOR to exactly this
+    // on 2026-07-16) AND left the run restaking regardless.
+    const owner = Object.values(keepAlive.statuses).find(
+      (s) =>
+        s.running &&
+        (keepAlive.sessionIdsByChat[s.chatId] || []).includes(sessionId),
+    );
+    if (owner) {
+      keepAlive.stop(owner.chatId);
+    }
     setIsActionLoading(true);
     await props.closeSession(sessionId);
     await refreshSessions();
     setIsActionLoading(false);
 
-    if (activeSession.Id == sessionId) {
+    // Optional-chained: a chat bound to a session that has since closed now
+    // resolves activeSession to undefined (it must NOT adopt a sibling session),
+    // so closing any session from the drawer while such a chat is open used to
+    // throw here — the old model lookup always happened to find something.
+    if (activeSession?.Id == sessionId) {
       const localModel = chainData?.models?.find((m: any) => m.isLocal);
       if (localModel) {
         setSelectedModel(localModel);
@@ -900,7 +1081,11 @@ export const Chat = (props: ChatProps) => {
   };
 
   const selectChat = async (chatData: ChatData) => {
-    keepAlive.stop(); // navigating to another chat ends the rolling session
+    restoredOnceRef.current = true; // user chose a thread; never auto-restore over it
+    // Deliberately does NOT stop anything. Viewing another thread must not end
+    // its neighbours' auto-renewal — concurrent rolling sessions are the point,
+    // and a chat you navigate away from keeps restaking until it hits its target
+    // or you stop it explicitly. (This used to be a blanket keepAlive.stop().)
     setSelectedProviderBidId(null); // provider pin doesn't carry across chats
     const modelId = chatData.modelId;
     if (!modelId) {
@@ -922,8 +1107,44 @@ export const Chat = (props: ChatProps) => {
     }
 
     const openSessions = sessions.filter((s) => !isClosed(s));
-    // search open session by model ID
-    const openSession = openSessions.find((s) => s.ModelAgentId == modelId);
+    // Bind to the session THIS chat owns. The old lookup was
+    // `openSessions.find(s => s.ModelAgentId == modelId)` — first open session
+    // for the model — which meant two chats on one model always resolved to the
+    // same session, and a second session with the same provider was unreachable
+    // no matter how it was opened.
+    //
+    // Legacy chats (written before the router persisted sessionId) have none, so
+    // they keep the old model-based behaviour rather than becoming unusable.
+    // A chat whose bound session has since closed resolves to undefined and goes
+    // readonly, which is the reopen path — not silently adopting someone else's
+    // live session, which would bill this chat's prompts to another thread.
+    // The clicked drawer row can be a STALE copy of the binding: a session
+    // opened or reopened since the list was built lands in `chat`/`chatData`
+    // state, and nothing refetches the titles query (refetchOnWindowFocus is
+    // off). Taking the row at face value is what made a reopened session vanish
+    // on the next switch — the user had paid for it and had to stake again.
+    // Newest wins: live `chat` for this same chat, then the list, then the row.
+    const listEntry = chatListRef.current.find((c) => c.id === chatData.id);
+    const bound = {
+      ...chatData,
+      sessionId:
+        (chat?.id === chatData.id ? chat?.sessionId : undefined) ??
+        listEntry?.sessionId ??
+        chatData.sessionId,
+    };
+    // The claimed set must also cover LIVE ROLLING runs. A rolling chat stakes
+    // real MOR the moment it starts but only enters the drawer list after its
+    // first prompt, so until then its block looked unowned and the legacy
+    // fallback handed it to any unbound chat on the same model — whose prompts
+    // were then billed to the rolling run's stake, and the router persisted that
+    // theft. The mitigation was right; its input set was incomplete.
+    const claimed = sessionsClaimedByOtherChats(chatListRef.current, bound.id);
+    Object.entries(keepAlive.sessionIdsByChat).forEach(([cid, ids]) => {
+      if (cid !== bound.id) {
+        ids.forEach((id) => claimed.add(id));
+      }
+    });
+    const openSession = resolveChatSession(openSessions, bound, claimed);
     setIsReadonly(!openSession);
 
     if (openSession) {
@@ -1523,7 +1744,10 @@ export const Chat = (props: ChatProps) => {
   }, [selectedModel, meta.supply, meta.budget, balances.mor]);
 
   const onCreateNewChat = ({ modelId, isLocal }) => {
-    keepAlive.stop(); // leaving this thread ends any rolling session
+    restoredOnceRef.current = true; // user chose a thread; never auto-restore over it
+    // No stop(): opening a new thread must leave every existing rolling session
+    // renewing. This was a blanket keepAlive.stop(), so "new chat" silently
+    // ended the run you had just paid to keep alive.
     setSelectedProviderBidId(null); // provider pin doesn't carry across models
     abort = true;
     setMessages([]);
@@ -1554,20 +1778,20 @@ export const Chat = (props: ChatProps) => {
       return;
     }
 
-    const openSessions = sessions.filter((s) => !isClosed(s));
-    const openModelSession = openSessions.find(
-      (s) => s.ModelAgentId == modelId,
-    );
-
-    if (openModelSession) {
-      const selectedBid = selectedModel.bids.find(
-        (b) => b.Id == openModelSession.BidID && b.bids,
-      );
-      setSelectedBid(selectedBid);
-      setActiveSession(openModelSession);
-      return;
-    }
-
+    // A new chat starts UNBOUND, even when this model already has an open
+    // session. It used to adopt the first open session for the model and return
+    // early, which is precisely why a second concurrent session was impossible:
+    // every new chat was funnelled back into the existing one. Falling through to
+    // the stake UI lets this chat open its own session — pin the same provider
+    // and you get a second session with them, which the contract allows (the
+    // sessionId nonce makes it distinct) and the router routes by session id.
+    //
+    // The cost is real: a new chat on a model you already have open now asks for
+    // its own stake instead of riding the existing one for free.
+    //
+    // The stake screen names any already-open sessions on this model so the
+    // second payment is a choice rather than a surprise (see renderChatBlock's
+    // openSessionsForThisModel).
     const aff = getStakeAffordability(selectedModel.bids, Number(balances.mor));
     setRequiredStake({
       min: aff.minStake,
@@ -1581,11 +1805,16 @@ export const Chat = (props: ChatProps) => {
 
   const renderChatBlock = () => {
     const isNewChat = !messages?.length;
+    // Paid, still-open sessions on the model this chat is about to stake for.
+    const openSessionsForThisModel = selectedModel?.Id
+      ? sessions.filter(
+          (s) => !isClosed(s) && s.ModelAgentId == selectedModel.Id,
+        ).length
+      : 0;
     // A keep-alive run has started (timer running) but its first block hasn't
     // been mirrored into activeSession yet — a transient "opening…" state, not a
     // reason to show the payment screen.
-    const isKeepAliveStarting =
-      !!keepAlive.status?.running && !activeSession;
+    const isKeepAliveStarting = !!myRun?.running && !activeSession;
     const isCreateSessionMode =
       isNewChat &&
       !isLocal &&
@@ -1674,6 +1903,20 @@ export const Chat = (props: ChatProps) => {
                   <ChatIntroInnerTitle>
                     Select payment method
                   </ChatIntroInnerTitle>
+                  {/* Say it out loud when this model ALREADY has paid, open
+                      sessions. A new chat no longer rides an existing session
+                      (that reuse is what made a second concurrent session
+                      unreachable), so staking here is a SECOND payment — and it
+                      used to happen with no signal whatsoever. */}
+                  {openSessionsForThisModel > 0 && (
+                    <ChatIntroInnerText>
+                      You already have {openSessionsForThisModel} open session
+                      {openSessionsForThisModel > 1 ? 's' : ''} on this model.
+                      Staking here opens an additional one — a separate payment,
+                      billed separately. Use the chat history to return to an
+                      existing session instead.
+                    </ChatIntroInnerText>
+                  )}
                   <ChatIntroInnerText>
                     Stake MOR to get a free compute. Session will last from 5 mins
                     up to 24 hours depending on the amount you stake (min:{' '}
@@ -1878,13 +2121,13 @@ export const Chat = (props: ChatProps) => {
                     {stakedFunds} MOR staked
                     {/* One timer. During a rolling session it counts down the
                         TOTAL time remaining, not the current 6-min block. */}
-                    {(keepAlive.status?.running || activeSession?.EndsAt) && (
+                    {(myRun?.running || activeSession?.EndsAt) && (
                       <>
                         {' · '}
                         <Cooldown
                           endDate={
-                            keepAlive.status?.running
-                              ? keepAlive.status.targetEndTime
+                            myRun?.running
+                              ? myRun.targetEndTime
                               : activeSession?.EndsAt
                           }
                         />
@@ -1897,6 +2140,20 @@ export const Chat = (props: ChatProps) => {
           </ChatIdentity>
 
           <HeaderActions>
+            {/* The ONLY way to end a rolling run. Chat-switch and New-chat used
+                to stop it implicitly, and removing those (so runs survive
+                navigation) left no control at all while the stake copy promised
+                "Stop anytime" — a run would keep restaking for up to 8 hours.
+                Stops scheduling only; the current block lapses on its own, which
+                is what avoids the ~24h early-close lock. */}
+            {myRun?.running && (
+              <HeaderBtn
+                onClick={() => chat?.id && keepAlive.stop(chat.id)}
+                title="Stop auto-renewing this session (the current block runs out on its own)"
+              >
+                <IconPlayerStopFilled size={16} /> Stop renewing
+              </HeaderBtn>
+            )}
             <HeaderBtn onClick={toggleDrawer} title="Chat history">
               <IconHistory size={18} stroke={1.75} />
             </HeaderBtn>

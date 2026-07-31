@@ -799,6 +799,93 @@ const browser = await chromium.launch();
   await page.close();
 }
 
+// --- keep-alive: several rolling sessions renew at once, same provider ------
+// The capability the feature exists for. Previously the provider held one run,
+// one timer and one session, and start() began with a blanket stop(), so a
+// second rolling session ended the first. Drives the REAL provider on a virtual
+// clock (see the case) with both runs pinned to the SAME bid.
+{
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  const url = `http://localhost:${PORT}/?case=keepalive-concurrent`;
+
+  await drive(page, 'keepalive-two-runs-same-provider', url, async (p) => {
+    await p.waitForSelector('[data-testid="start-a"]', { timeout: 20000 });
+    const count = () => p.getByTestId('running-count').innerText();
+    const opens = async () => JSON.parse(await p.getByTestId('opens').innerText());
+
+    await p.getByTestId('start-a').click();
+    await p.waitForFunction(
+      () => document.querySelector('[data-testid="running-count"]').innerText === '1',
+      { timeout: 15000 },
+    );
+
+    // The assertion the old single-run provider could not satisfy.
+    await p.getByTestId('start-b').click();
+    await p.waitForFunction(
+      () => document.querySelector('[data-testid="running-count"]').innerText === '2',
+      { timeout: 15000 },
+    );
+    assert((await count()) === '2', `expected 2 concurrent runs, got ${await count()}`);
+    const chats = await p.getByTestId('running-chats').innerText();
+    assert(chats === 'chatA,chatB', `both chats should be rolling, got: ${chats}`);
+
+    // Each run must hold its OWN session — a shared one would mean both chats
+    // billing to the same stake, which is not two stakes at all.
+    const sa = await p.getByTestId('session-a').innerText();
+    const sb = await p.getByTestId('session-b').innerText();
+    assert(sa !== '-' && sb !== '-', `both runs need a live block, got ${sa} / ${sb}`);
+    assert(sa !== sb, `runs must not share a session, both were ${sa}`);
+
+    // Both staked against the SAME provider bid — the actual request.
+    const o1 = await opens();
+    assert(o1.length >= 2, `expected at least 2 opens, got ${o1.length}`);
+    assert(
+      o1.every((o) => o.bid === '0xbid-same-provider'),
+      `every block must stake the pinned provider: ${JSON.stringify(o1)}`,
+    );
+
+    // Both keep RENEWING: the open count must keep climbing while both live.
+    const before = o1.length;
+    await p.waitForFunction(
+      (n) => JSON.parse(document.querySelector('[data-testid="opens"]').innerText).length >= n + 2,
+      before,
+      { timeout: 20000 },
+    );
+    assert((await count()) === '2', 'both runs should still be renewing');
+  });
+
+  // Stopping one run must not touch the other — the blanket stop() bug, inverted.
+  await drive(page, 'keepalive-stop-one-leaves-the-other', url, async (p) => {
+    await p.waitForSelector('[data-testid="start-a"]', { timeout: 20000 });
+    await p.getByTestId('start-a').click();
+    await p.getByTestId('start-b').click();
+    await p.waitForFunction(
+      () => document.querySelector('[data-testid="running-count"]').innerText === '2',
+      { timeout: 15000 },
+    );
+
+    await p.getByTestId('stop-a').click();
+    await p.waitForFunction(
+      () => document.querySelector('[data-testid="running-count"]').innerText === '1',
+      { timeout: 15000 },
+    );
+    const chats = await p.getByTestId('running-chats').innerText();
+    assert(chats === 'chatB', `only chatB should survive stop(chatA), got: ${chats}`);
+
+    // And B must still be RENEWING, not merely listed as running.
+    const n = JSON.parse(await p.getByTestId('opens').innerText()).length;
+    await p.waitForFunction(
+      (x) => JSON.parse(document.querySelector('[data-testid="opens"]').innerText).length > x,
+      n,
+      { timeout: 20000 },
+    );
+    const after = await p.getByTestId('running-chats').innerText();
+    assert(after === 'chatB', `chatB should keep renewing alone, got: ${after}`);
+  });
+
+  await page.close();
+}
+
 await browser.close();
 await server.close();
 
