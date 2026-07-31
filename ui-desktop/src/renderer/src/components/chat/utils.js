@@ -215,18 +215,45 @@ export function modelMatchesQuery(model, q) {
 // that a bound chat owns, and — unlike the old code, which merely recomputed the
 // same wrong answer each time — the router now PERSISTS that binding on the next
 // turn, so two chat files permanently claim one session and both bill to it.
-export function resolveChatSession(openSessions, chat, claimedByOthers) {
+// `allowAdoption` exists because adoption is what made this class of bug
+// expensive. Now that the router records the binding when the session OPENS,
+// any chat created after that change HAS one — so an unbound chat is either a
+// genuinely old file (pre-feature) or a session whose bind was lost. Guessing an
+// owner for the second case is how a paid session got billed to the wrong chat
+// and the theft written to disk.
+//
+// Orphaning is the acceptable failure: bounded, visible, and recoverable. Theft
+// is neither. Callers that cannot distinguish the two cases should pass false
+// and surface the session as unclaimed instead of assigning it.
+export function resolveChatSession(
+  openSessions,
+  chat,
+  claimedByOthers,
+  allowAdoption = true,
+) {
   const open = openSessions || [];
   if (chat?.sessionId) {
     return open.find((s) => s.Id === chat.sessionId);
   }
-  if (!chat?.modelId) {
+  if (!chat?.modelId || !allowAdoption) {
     return undefined;
   }
   const claimed = claimedByOthers || new Set();
   return open.find(
     (s) => s.ModelAgentId === chat.modelId && !claimed.has(s.Id),
   );
+}
+
+// Open sessions that no chat and no run lays claim to. These are the ones a
+// bind failed to record (or that outlived their chat) — surface them so the user
+// can see and close a stake they are paying for, rather than silently handing
+// them to whichever chat asks first.
+export function orphanedSessions(openSessions, chats, liveIds, retainedIds) {
+  const claimed = claimedSessionIds(liveIds, retainedIds, undefined);
+  for (const c of chats || []) {
+    if (c?.sessionId) claimed.add(c.sessionId);
+  }
+  return (openSessions || []).filter((s) => !claimed.has(s?.Id));
 }
 
 // Session ids owned by chats OTHER than `exceptChatId`.

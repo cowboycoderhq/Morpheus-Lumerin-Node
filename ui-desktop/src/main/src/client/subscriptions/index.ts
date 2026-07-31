@@ -42,6 +42,7 @@ const listeners = {
   'get-chat-history': handlers.getChatHistory,
   'delete-chat-history': handlers.deleteChatHistory,
   'update-chat-history-title': handlers.updateChatHistoryTitle,
+  'update-chat-session': handlers.updateChatSession,
   // Failover
   'get-failover-setting': handlers.isFailoverEnabled,
   'set-failover-setting': handlers.setFailoverSetting,

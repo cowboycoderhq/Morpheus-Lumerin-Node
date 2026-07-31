@@ -160,3 +160,145 @@ func TestGetChatsToleratesAZeroMessageChatFile(t *testing.T) {
 func writeFile(dir, name, content string) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte(content), 0644)
 }
+
+// The binding must be recordable BEFORE any prompt exists — that is the whole
+// point: the stake is spent at open, so waiting for the first message leaves a
+// paid session unrecorded for as long as the user does not type.
+func TestUpdateChatSessionCreatesTheFileBeforeAnyPrompt(t *testing.T) {
+	cs := NewChatStorage(t.TempDir())
+
+	if err := cs.UpdateChatSession("chatNew", "0xsess1", "0xmodelX"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	h, err := cs.LoadChatFromFile("chatNew")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if h.SessionID != "0xsess1" {
+		t.Errorf("SessionID = %q, want 0xsess1", h.SessionID)
+	}
+	if len(h.Messages) != 0 {
+		t.Errorf("expected a zero-message chat, got %d", len(h.Messages))
+	}
+	// A zero-message chat must not break the list that now carries every binding.
+	for _, c := range cs.GetChats() {
+		if c.ChatID == "chatNew" && c.SessionID != "0xsess1" {
+			t.Errorf("GetChats lost the binding: %+v", c)
+		}
+	}
+}
+
+// Rolling sessions rotate every ~305s; the binding names the CURRENT block.
+func TestUpdateChatSessionRotates(t *testing.T) {
+	cs := NewChatStorage(t.TempDir())
+	for _, id := range []string{"0xb1", "0xb2", "0xb3"} {
+		if err := cs.UpdateChatSession("chatR", id, "0xmodelX"); err != nil {
+			t.Fatalf("bind %s: %v", id, err)
+		}
+	}
+	h, _ := cs.LoadChatFromFile("chatR")
+	if h.SessionID != "0xb3" {
+		t.Errorf("SessionID = %q, want the newest block 0xb3", h.SessionID)
+	}
+}
+
+// Binding must never destroy an existing transcript, and an empty id must never
+// erase a good binding.
+func TestUpdateChatSessionPreservesMessagesAndIgnoresEmpty(t *testing.T) {
+	cs := NewChatStorage(t.TempDir())
+	now := time.Now()
+	if err := cs.StorePromptResponseToFile("chatT", false, "0xmodel", "0xsessA", prompt("hi"), nil, now, now); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if err := cs.UpdateChatSession("chatT", "0xsessB", "0xmodelX"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	h, _ := cs.LoadChatFromFile("chatT")
+	if len(h.Messages) != 1 {
+		t.Fatalf("binding destroyed the transcript: %d messages", len(h.Messages))
+	}
+	if h.SessionID != "0xsessB" {
+		t.Errorf("SessionID = %q, want 0xsessB", h.SessionID)
+	}
+	if h.Title == "" || h.ModelId == "" {
+		t.Errorf("binding dropped metadata: title=%q model=%q", h.Title, h.ModelId)
+	}
+	if err := cs.UpdateChatSession("chatT", "", "0xmodelX"); err != nil {
+		t.Fatalf("empty bind: %v", err)
+	}
+	h2, _ := cs.LoadChatFromFile("chatT")
+	if h2.SessionID != "0xsessB" {
+		t.Errorf("an empty id erased the binding: %q", h2.SessionID)
+	}
+}
+
+// A binding placeholder must not cost the chat its title/model. The first-prompt
+// metadata write was gated on `Messages == nil`, and the placeholder creates the
+// file with an empty-but-non-nil slice — which would have left every
+// bound-before-typed chat permanently untitled in the list.
+func TestBindingPlaceholderDoesNotBlockFirstPromptMetadata(t *testing.T) {
+	cs := NewChatStorage(t.TempDir())
+	now := time.Now()
+
+	if err := cs.UpdateChatSession("chatP", "0xsess1", "0xmodelX"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	if err := cs.StorePromptResponseToFile("chatP", false, "0xmodelX", "0xsess1", prompt("first words"), nil, now, now); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	h, _ := cs.LoadChatFromFile("chatP")
+	if h.Title != "first words" {
+		t.Errorf("title never set after a placeholder: %q", h.Title)
+	}
+	if h.ModelId != "0xmodelX" {
+		t.Errorf("modelId never set after a placeholder: %q", h.ModelId)
+	}
+}
+
+// GetChats must survive junk in the chats directory. It carries every chat's
+// session binding, and gin runs without Recovery, so a panic here blanks the
+// whole list rather than skipping one file.
+func TestGetChatsIgnoresNonJsonAndShortFilenames(t *testing.T) {
+	dir := t.TempDir()
+	cs := NewChatStorage(dir)
+	now := time.Now()
+	if err := cs.StorePromptResponseToFile("chatGood", false, "0xmodel", "0xsessG", prompt("hi"), nil, now, now); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	for _, junk := range []string{"a.md", "x", ".json", "notes.txt"} {
+		if err := writeFile(dir, junk, "x"); err != nil {
+			t.Fatalf("write %s: %v", junk, err)
+		}
+	}
+
+	got := cs.GetChats() // must not panic
+	if len(got) != 1 || got[0].ChatID != "chatGood" {
+		t.Errorf("expected only the real chat, got %+v", got)
+	}
+}
+
+// The binding must carry modelId. The renderer drops any chat row whose modelId
+// does not resolve to a known model, so a row persisted without one is invisible
+// in the drawer, claims nothing, and its paid session is handed to the next
+// unbound chat on that model — the exact theft the binding exists to prevent.
+func TestUpdateChatSessionPersistsModelIdSoTheRowIsUsable(t *testing.T) {
+	cs := NewChatStorage(t.TempDir())
+	if err := cs.UpdateChatSession("chatV", "0xsessV", "0xmodelReal"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	var row *struct{ ModelID, SessionID string }
+	for _, c := range cs.GetChats() {
+		if c.ChatID == "chatV" {
+			row = &struct{ ModelID, SessionID string }{c.ModelID, c.SessionID}
+		}
+	}
+	if row == nil {
+		t.Fatal("chat missing from GetChats")
+	}
+	if row.ModelID != "0xmodelReal" {
+		t.Errorf("ModelID = %q — the renderer will discard this row", row.ModelID)
+	}
+	if row.SessionID != "0xsessV" {
+		t.Errorf("SessionID = %q", row.SessionID)
+	}
+}

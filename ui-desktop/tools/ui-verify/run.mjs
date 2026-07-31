@@ -1095,6 +1095,38 @@ for (const [label, kase] of [
   await page.close();
 }
 
+// --- after a RELAUNCH, only the durable record protects a paid session -------
+// Keep-alive state is in refs and dies with the process, so "open a session,
+// quit before typing, reopen the app" had no in-memory claim at all — boot took
+// openSessions[0] and stapled it to a fresh chat id, and the next prompt wrote
+// that theft to disk. The router now records the binding when the session OPENS;
+// this proves boot actually READS it. A durable record no consumer consults is
+// worse than none: it makes the bug look retired while it still happens.
+{
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+  await drive(page, 'relaunch-honours-the-durable-binding', `http://localhost:${PORT}/?case=boot-relaunch-durable`, async (p) => {
+    await p.waitForSelector('textarea', { timeout: 20000 });
+    await p.waitForTimeout(1000);
+    const ta = p.locator('textarea').first();
+    if (!(await ta.isDisabled())) {
+      await ta.fill('hello');
+      await ta.press('Enter');
+      await p.waitForTimeout(800);
+    }
+    const sent = await p.evaluate(() => window.__sent || []);
+    const stolen = sent.filter(
+      (s) =>
+        (s.session_id === '0xsessA' && s.chat_id !== 'chatA') ||
+        (s.session_id === '0xsessB' && s.chat_id !== 'chatB'),
+    );
+    assert(
+      stolen.length === 0,
+      `after relaunch a durably-bound session was billed under another chat: ${JSON.stringify(sent)}`,
+    );
+  });
+  await page.close();
+}
+
 await browser.close();
 await server.close();
 

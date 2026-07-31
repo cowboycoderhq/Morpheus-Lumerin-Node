@@ -28,6 +28,7 @@ import {
   sessionsClaimedByOtherChats,
   claimedSessionIds,
   adoptableSessions,
+  orphanedSessions,
 } from '../../src/renderer/src/components/chat/utils.js';
 import { buildModelsWithBids } from '../../src/renderer/src/store/queries.ts';
 
@@ -686,6 +687,37 @@ console.log('queries: claimedSessionIds / adoptableSessions');
     !adoptable.some((s) => s.Id === '0xold1'));
   ok('no runs -> everything adoptable',
     adoptableSessions(open, {}, {}).length === 3);
+}
+
+
+// ---- no-adoption + orphan surfacing ----------------------------------------
+// Persisting the binding at OPEN time means any chat created since HAS one, so
+// an unbound chat is either genuinely old or a lost bind. Guessing an owner for
+// the second case is exactly how a paid session got billed to the wrong chat and
+// the theft written to disk. Orphaning is bounded and visible; theft is not.
+console.log('');
+console.log('queries: adoption is refusable, orphans are surfaced');
+{
+  const S = (id, model) => ({ Id: id, ModelAgentId: model });
+  const open = [S('0xfree', '0xmodelA'), S('0xmine', '0xmodelA')];
+  const chats = [{ id: 'chatM', modelId: '0xmodelA', sessionId: '0xmine' }];
+
+  ok('adoption ON: an unbound chat still takes an unclaimed session',
+    resolveChatSession(open, { modelId: '0xmodelA' }, new Set(['0xmine']), true)?.Id === '0xfree');
+  ok('adoption OFF: an unbound chat takes nothing',
+    resolveChatSession(open, { modelId: '0xmodelA' }, new Set(['0xmine']), false) === undefined);
+  ok('adoption OFF never affects a BOUND chat',
+    resolveChatSession(open, { modelId: '0xmodelA', sessionId: '0xmine' }, new Set(), false)?.Id === '0xmine');
+
+  ok('an unclaimed paid session is reported as an orphan',
+    orphanedSessions(open, chats, {}, {}).map((s) => s.Id).join() === '0xfree');
+  ok('a session a chat owns is not an orphan',
+    !orphanedSessions(open, chats, {}, {}).some((s) => s.Id === '0xmine'));
+  ok('a live run\'s block is not an orphan',
+    orphanedSessions(open, [], { chatR: ['0xfree'] }, {}).length === 1);
+  ok('an ended run\'s still-open block is not an orphan',
+    !orphanedSessions(open, chats, {}, { chatOld: ['0xfree'] }).some((s) => s.Id === '0xfree'));
+  ok('nothing open -> no orphans', orphanedSessions([], chats, {}, {}).length === 0);
 }
 
 console.log('');
