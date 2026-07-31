@@ -87,6 +87,9 @@ import {
   userTextFromPrompt,
   resolveChatSession,
   sessionsClaimedByOtherChats,
+  upsertChat,
+  claimedSessionIds,
+  adoptableSessions,
 } from './utils';
 import { Cooldown } from './Cooldown';
 import {
@@ -435,12 +438,10 @@ export const Chat = (props: ChatProps) => {
     // one stake, and the router wrote that onto disk on the next prompt. Chat
     // unmounts on every tab switch, so this fired on a routine trip to Wallet
     // and back, not just at startup.
-    const ownedByRuns = new Set<string>();
-    Object.values(keepAlive.sessionIdsByChat).forEach((ids) =>
-      ids.forEach((id) => ownedByRuns.add(id)),
-    );
-    const openSessions = mappedSessions.filter(
-      (s) => !isClosed(s) && !ownedByRuns.has(s.Id),
+    const openSessions = adoptableSessions(
+      mappedSessions.filter((s) => !isClosed(s)),
+      keepAlive.sessionIdsByChat,
+      keepAlive.retainedSessionIds,
     );
 
     // A restore already put the user in the rolling thread; don't overwrite it.
@@ -921,14 +922,22 @@ export const Chat = (props: ChatProps) => {
       return;
     }
     setActiveSession(myRunSession);
-    // Clear readonly too. selectChat resolves a chat's PERSISTED binding, which
-    // for a rolling chat is whichever block was current at its last prompt — long
-    // lapsed — so returning to a live rolling thread set readonly and nothing
-    // ever cleared it. The composer said "Session is closed" while the header
-    // offered "Stop renewing", and the user could not type into a session they
-    // were actively paying to keep alive. If this run has a live block, the chat
-    // is by definition usable.
-    setIsReadonly(false);
+    // Clear readonly — but ONLY while this run's block is actually open.
+    //
+    // selectChat resolves a chat's PERSISTED binding, which for a rolling chat is
+    // whichever block was current at its last prompt — long lapsed — so returning
+    // to a live rolling thread set readonly and nothing cleared it: the composer
+    // said "Session is closed" while the header offered "Stop renewing", on a
+    // session the user was paying for.
+    //
+    // `myRun.running` is NOT the same as "this block is open". Economy mode
+    // deliberately leaves a gap (REOPEN_DELAY_SEC, plus fetchSession polling)
+    // during which the run is still running while sessionsByChat holds the
+    // EXPIRED block. Clearing readonly unconditionally there re-enabled the
+    // composer over a dead session and sent the prompt against it.
+    if (!isClosed(myRunSession)) {
+      setIsReadonly(false);
+    }
     bindChatToSession(chat?.id, myRunSession.Id);
     const model = chainData?.models?.find(
       (m: any) => m.Id == myRunSession.ModelAgentId,
@@ -1166,12 +1175,15 @@ export const Chat = (props: ChatProps) => {
     // fallback handed it to any unbound chat on the same model — whose prompts
     // were then billed to the rolling run's stake, and the router persisted that
     // theft. The mitigation was right; its input set was incomplete.
+    // Persisted chat bindings, plus live runs AND ended-but-still-open ones.
+    // The run maps are separate because closeSession must map an id to a LIVE
+    // run only; entitlement is the broader question and needs both.
     const claimed = sessionsClaimedByOtherChats(chatListRef.current, bound.id);
-    Object.entries(keepAlive.sessionIdsByChat).forEach(([cid, ids]) => {
-      if (cid !== bound.id) {
-        ids.forEach((id) => claimed.add(id));
-      }
-    });
+    claimedSessionIds(
+      keepAlive.sessionIdsByChat,
+      keepAlive.retainedSessionIds,
+      bound.id,
+    ).forEach((id) => claimed.add(id));
     const openSession = resolveChatSession(openSessions, bound, claimed);
     setIsReadonly(!openSession);
 
@@ -1501,7 +1513,13 @@ export const Chat = (props: ChatProps) => {
     scrollToBottom();
 
     if (messages.length === 0 && chat) {
-      setChatsData([...chatData, { ...chat, title: file.name || 'Transcription' }]);
+      // Upsert for the same reason as the text path below.
+      setChatsData(
+        upsertChat(chatData, {
+          ...chat,
+          title: file.name || 'Transcription',
+        }),
+      );
     }
 
     try {
@@ -1677,7 +1695,12 @@ export const Chat = (props: ChatProps) => {
 
     if (messages.length === 0 && chat) {
       const title = { ...chat, title: promptInput };
-      setChatsData([...chatData, title]);
+      // Upsert, don't append. "No messages yet" is not the same as "not in the
+      // list": a chat restored from the drawer with an empty transcript is
+      // already there, and appending gave two rows with the same key — React
+      // warns that duplicate keys may duplicate or OMIT children, so a chat can
+      // vanish from the sidebar. Pre-existing; surfaced by the restore tests.
+      setChatsData(upsertChat(chatData, title));
     }
 
     setIsSpinning(true);
@@ -2189,13 +2212,13 @@ export const Chat = (props: ChatProps) => {
                 unstoppable, leaving the Sessions-tab Close (the ~24h early-close
                 lock) as the only control. Stops scheduling only; every current
                 block still lapses naturally. */}
-            {!myRun?.running && keepAlive.runningCount > 0 && (
+            {keepAlive.runningCount - (myRun?.running ? 1 : 0) > 0 && (
               <HeaderBtn
                 onClick={() => keepAlive.stop()}
-                title={`Stop auto-renewing on ${keepAlive.runningCount} other chat(s). Their current blocks run out on their own — nothing is closed early.`}
+                title={`Stop auto-renewing on ${keepAlive.runningCount - (myRun?.running ? 1 : 0)} other chat(s). Their current blocks run out on their own — nothing is closed early.`}
               >
-                <IconPlayerStopFilled size={16} /> Stop renewing (
-                {keepAlive.runningCount})
+                <IconPlayerStopFilled size={16} /> Stop all renewing (
+                {keepAlive.runningCount - (myRun?.running ? 1 : 0)})
               </HeaderBtn>
             )}
             <HeaderBtn onClick={toggleDrawer} title="Chat history">

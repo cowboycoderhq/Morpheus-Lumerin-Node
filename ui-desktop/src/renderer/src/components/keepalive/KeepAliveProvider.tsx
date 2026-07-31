@@ -110,10 +110,18 @@ export interface KeepAliveContextValue {
   // a fresh nonce) and the router routes by session id.
   statuses: Record<string, KeepAliveStatus>;
   sessionsByChat: Record<string, any>;
-  // Every session id each run has opened (current block last). A run's older
-  // block stays open through the seamless overlap, so "is this session mine?"
-  // cannot be answered by the current block alone.
+  // Every session id each LIVE run has opened (current block last). A run's
+  // older block stays open through the seamless overlap, so "is this session
+  // mine?" cannot be answered by the current block alone.
+  //
+  // Live-only on purpose: closeSession maps a session id back to the run that
+  // owns it, and folding ended runs in here would let an OLD id stop a healthy
+  // NEW run on the same chat.
   sessionIdsByChat: Record<string, string[]>;
+  // Ids from runs that have ENDED, whose final block may still be open. Kept
+  // apart from the live map (see above) — this one is for answering "is anyone
+  // still entitled to this session?", never "which run should I stop?".
+  retainedSessionIds: Record<string, string[]>;
   runningCount: number;
   // MOR that live runs OTHER than `exceptChatId` still need to fund their next
   // overlap. A new run's gate must add this to its own requirement: each run
@@ -130,6 +138,7 @@ export const KeepAliveContext = createContext<KeepAliveContextValue>({
   statuses: {},
   sessionsByChat: {},
   sessionIdsByChat: {},
+  retainedSessionIds: {},
   runningCount: 0,
   committedOverlapMor: () => 0,
   start: async () => {},
@@ -149,6 +158,9 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
   const [statuses, setStatuses] = useState<Record<string, KeepAliveStatus>>({});
   const [sessionsByChat, setSessionsByChat] = useState<Record<string, any>>({});
   const [sessionIdsByChat, setSessionIdsByChat] = useState<
+    Record<string, string[]>
+  >({});
+  const [retainedSessionIds, setRetainedSessionIds] = useState<
     Record<string, string[]>
   >({});
 
@@ -184,9 +196,16 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     // the map left that paid block unowned and adoptable by any unbound chat on
     // the same model. Retaining costs nothing: an id that has since expired is
     // no longer in openSessions, so claiming it can never block anything real.
+    // Published as SEPARATE maps, not one overlaid on the other. Seeding retained
+    // and then assigning live over it meant a restarted run wiped its own chat's
+    // retained ids (the new run begins with openedSessionIds: []), so the
+    // previous run's final block — open for up to a full block — lost its claim
+    // for the entire life of the new run. That is the exact hole retention
+    // exists to close.
     const nextIds: Record<string, string[]> = {};
+    const nextRetained: Record<string, string[]> = {};
     retainedIdsRef.current.forEach((ids, key) => {
-      nextIds[key] = [...ids];
+      nextRetained[key] = [...ids];
     });
     runsRef.current!.forEach((run, key) => {
       nextStatuses[key] = {
@@ -201,6 +220,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     });
     setStatuses(nextStatuses);
     setSessionIdsByChat(nextIds);
+    setRetainedSessionIds(nextRetained);
   };
 
   // Sum of one block's stake for every live run except the one asking. Seamless
@@ -522,6 +542,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       statuses,
       sessionsByChat,
       sessionIdsByChat,
+      retainedSessionIds,
       runningCount,
       committedOverlapMor,
       start,
@@ -531,6 +552,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       statuses,
       sessionsByChat,
       sessionIdsByChat,
+      retainedSessionIds,
       runningCount,
       committedOverlapMor,
       start,

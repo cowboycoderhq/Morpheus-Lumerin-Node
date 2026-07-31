@@ -239,3 +239,50 @@ export function sessionsClaimedByOtherChats(chats, exceptChatId) {
   }
   return claimed;
 }
+
+// Add a chat to the list, or update it in place if its id is already there.
+// The callers fire when a chat has no messages yet, which is NOT the same as
+// "not in the list" — a chat restored from the drawer with an empty transcript
+// is already present, and a blind append produced two rows with the same key.
+// React's duplicate-key warning is not cosmetic: it says children may be
+// duplicated OR OMITTED, so a real chat can disappear from the sidebar.
+export function upsertChat(chats, entry) {
+  const list = chats || [];
+  if (!entry?.id) {
+    return list;
+  }
+  const i = list.findIndex((c) => c.id === entry.id);
+  if (i === -1) {
+    return [...list, entry];
+  }
+  const next = [...list];
+  // Preserve fields the caller didn't carry (e.g. an existing sessionId).
+  next[i] = { ...next[i], ...entry };
+  return next;
+}
+
+// Every session id that some chat is still entitled to — live runs AND runs that
+// have ended but whose final block may still be open (blocks are never closed
+// early; that time-locks the stake).
+//
+// Extracted so the tests exercise THIS, not a copy. Local re-implementations in
+// the test file passed happily with the production bug applied, which is worse
+// than no test: the suite reported green while the defect shipped.
+export function claimedSessionIds(liveIdsByChat, retainedIdsByChat, exceptChatId) {
+  const out = new Set();
+  for (const map of [liveIdsByChat || {}, retainedIdsByChat || {}]) {
+    for (const [chatId, ids] of Object.entries(map)) {
+      if (chatId === exceptChatId) continue;
+      (ids || []).forEach((id) => out.add(id));
+    }
+  }
+  return out;
+}
+
+// Open sessions that boot may adopt into a new chat. A session belonging to any
+// run — live or recently ended — is off limits: adopting one staples a paid
+// block to a second chat, and the router then writes that binding to disk.
+export function adoptableSessions(openSessions, liveIdsByChat, retainedIdsByChat) {
+  const owned = claimedSessionIds(liveIdsByChat, retainedIdsByChat, undefined);
+  return (openSessions || []).filter((s) => !owned.has(s?.Id));
+}

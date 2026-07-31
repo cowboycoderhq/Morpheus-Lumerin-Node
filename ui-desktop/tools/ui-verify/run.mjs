@@ -881,8 +881,217 @@ const browser = await chromium.launch();
     );
     const after = await p.getByTestId('running-chats').innerText();
     assert(after === 'chatB', `chatB should keep renewing alone, got: ${after}`);
+
+    // The stopped run's blocks must STAY claimed. Its final block is still open
+    // (stopping never closes early — that time-locks the stake), and dropping
+    // the claim along with the run made that paid block adoptable by any unbound
+    // chat on the same model.
+    const claimed = JSON.parse(await p.getByTestId('claimed-ids').innerText());
+    assert(
+      Array.isArray(claimed.chatA) && claimed.chatA.length > 0,
+      `stopped run chatA lost its claim entirely: ${JSON.stringify(claimed)}`,
+    );
+    const aOpens = JSON.parse(await p.getByTestId('opens').innerText())
+      .map((o) => o.id);
+    assert(
+      claimed.chatA.every((id) => aOpens.includes(id)),
+      `retained ids are not real blocks chatA opened: ${JSON.stringify(claimed.chatA)}`,
+    );
+
+    // RESTART the stopped chat. Its previous final block can still be open for
+    // up to a full block, so its claim must survive the new run starting. When
+    // retained and live were published as one overlaid map, the new run (which
+    // begins with openedSessionIds: []) wiped the whole entry and left that paid
+    // block unclaimed for the new run's entire life.
+    const before = new Set(claimed.chatA);
+    await p.getByTestId('restart-a').click();
+    await p.waitForFunction(
+      () => document.querySelector('[data-testid="running-count"]').innerText === '2',
+      { timeout: 15000 },
+    );
+    const after2 = JSON.parse(await p.getByTestId('claimed-ids').innerText());
+    const lost = [...before].filter((id) => !(after2.chatA || []).includes(id));
+    assert(
+      lost.length === 0,
+      `restarting chatA dropped ${lost.length} still-claimed block(s): ${JSON.stringify(lost)}`,
+    );
   });
 
+  await page.close();
+}
+
+// --- returning to a LIVE rolling chat must be usable ------------------------
+// A rolling chat's PERSISTED binding is whichever block was current at its last
+// prompt (the router writes SessionID on a prompt, not on a rotation), so
+// selectChat resolved a lapsed block and set readonly — and nothing cleared it.
+// The composer said "Session is closed" while the header offered "Stop
+// renewing", on a session the user was paying for. Fixture: chat A's run is live
+// on block b5 while its persisted binding is the dead b3.
+{
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+  await drive(page, 'rolling-return-stays-usable', `http://localhost:${PORT}/?case=rolling-return-live`, async (p) => {
+    await p.waitForSelector('textarea', { timeout: 20000 });
+    // The drawer STAYS open after picking a chat, so it is opened once; clicking
+    // the history button again would toggle it shut.
+    await p.getByTitle('Chat history').click();
+    await p.waitForTimeout(300);
+    // Go to the plain chat, then back to the rolling one — the exact trip.
+    await p.getByText('Plain B', { exact: false }).first().click();
+    await p.waitForTimeout(600);
+    await p.getByText('Rolling A', { exact: false }).first().click();
+    await p.waitForTimeout(900);
+
+    const ta = p.locator('textarea').first();
+    const disabled = await ta.isDisabled();
+    const placeholder = (await ta.getAttribute('placeholder')) || '';
+    assert(
+      !/ReadOnly|Session is closed/i.test(placeholder),
+      `returned to a LIVE rolling session but the composer says: "${placeholder}"`,
+    );
+    assert(!disabled, 'composer is disabled on a live rolling session');
+  });
+
+  // The mirror clears readonly on a live block — but "the run is running" is NOT
+  // "this block is open". Economy mode leaves a real gap (REOPEN_DELAY_SEC plus
+  // fetchSession polling) where the run is running and sessionsByChat still
+  // holds the EXPIRED block. Clearing readonly there re-enables the composer
+  // over a dead session and the prompt goes out against it.
+  await drive(page, 'economy-gap-does-not-unlock-a-dead-block', `http://localhost:${PORT}/?case=rolling-return-gap`, async (p) => {
+    await p.waitForSelector('textarea', { timeout: 20000 });
+    await p.getByTitle('Chat history').click();
+    await p.waitForTimeout(300);
+    await p.getByText('Plain B', { exact: false }).first().click();
+    await p.waitForTimeout(600);
+    await p.getByText('Rolling A', { exact: false }).first().click();
+    await p.waitForTimeout(900);
+
+    const ta = p.locator('textarea').first();
+    const disabled = await ta.isDisabled();
+    if (!disabled) {
+      await ta.fill('hello');
+      await ta.press('Enter');
+      await p.waitForTimeout(700);
+    }
+    const sent = await p.evaluate(() => window.__sent || []);
+    const onDead = sent.filter((s) => s.session_id === '0xb5');
+    assert(
+      onDead.length === 0,
+      `prompt sent against the EXPIRED block during the economy gap: ${JSON.stringify(sent)}`,
+    );
+    assert(disabled, 'composer was unlocked while the run had no open block');
+  });
+
+  // Sitting INSIDE a chat whose own run is live, with ANOTHER run going in a
+  // never-prompted chat (chatC — live run, no drawer row). The stop-all must
+  // render alongside the per-chat Stop. Gating it on `!myRun?.running` hid it
+  // exactly here, leaving that second run unreachable and unstoppable — the case
+  // the fix exists for. The other drive block cannot see this: it stands in a
+  // chat with no run of its own, where both the old and new gates render.
+  await drive(page, 'stop-all-shows-even-inside-a-running-chat', `http://localhost:${PORT}/?case=rolling-return-live`, async (p) => {
+    await p.waitForSelector('textarea', { timeout: 20000 });
+    await p.getByTitle('Chat history').click();
+    await p.waitForTimeout(300);
+    await p.getByText('Rolling A', { exact: false }).first().click();
+    await p.waitForTimeout(800);
+    const body = await p.locator('body').innerText();
+    assert(
+      /Stop renewing/.test(body),
+      `per-chat stop missing inside a running chat: ${body.slice(0, 200)}`,
+    );
+    assert(
+      /Stop all renewing \(1\)/.test(body),
+      `stop-all hidden inside a running chat, so chatC's run is unreachable: ${body.slice(0, 300)}`,
+    );
+  });
+
+  // The run is live on a chat the user is NOT in, so a stop control must still
+  // be reachable — otherwise the only way out is the early-close penalty.
+  await drive(page, 'stop-control-reachable-from-another-chat', `http://localhost:${PORT}/?case=rolling-return-live`, async (p) => {
+    await p.waitForSelector('textarea', { timeout: 20000 });
+    await p.getByTitle('Chat history').click();
+    await p.waitForTimeout(250);
+    await p.getByText('Plain B', { exact: false }).first().click();
+    await p.waitForTimeout(600);
+    const body = await p.locator('body').innerText();
+    assert(
+      /Stop all renewing \(\d+\)/.test(body),
+      `no stop-all control while runs are live elsewhere (the per-chat "Stop renewing" does not count): ${body.slice(0, 300)}`,
+    );
+  });
+  await page.close();
+}
+
+// --- boot must not adopt a live run's paid block ----------------------------
+// Chat unmounts on every tab switch, so the boot effect re-runs on a routine
+// Wallet trip. It took openSessions[0] unconditionally — during a run that is
+// the run's own current block — and stapled it to a BRAND NEW chat id, so two
+// chats claimed one stake and the router wrote that to disk on the next prompt.
+{
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+  await drive(page, 'boot-does-not-adopt-a-live-run-block', `http://localhost:${PORT}/?case=boot-skips-run-block`, async (p) => {
+    await p.waitForSelector('textarea', { timeout: 20000 });
+    await p.waitForTimeout(900);
+
+    // Assert on what goes ON THE WIRE, not on rendered text. A first attempt
+    // grepped the DOM for the session id, which never appears there — so it
+    // passed against the unfixed code too. A test that cannot fail is worse than
+    // no test: it manufactures confidence. Send a prompt and read the header.
+    const ta = p.locator('textarea').first();
+    if (!(await ta.isDisabled())) {
+      await ta.fill('hello');
+      await ta.press('Enter');
+      await p.waitForTimeout(800);
+    }
+    const sent = await p.evaluate(() => window.__sent || []);
+    assert(sent.length === 1, `expected exactly one prompt, got ${sent.length} — a zero-send makes the theft check vacuous`);
+    const stolen = sent.filter(
+      (s) => s.session_id === '0xsessA' || s.session_id === '0xsessB',
+    );
+    assert(
+      stolen.length === 0,
+      `boot adopted a live run's block and billed to it: ${JSON.stringify(sent)}`,
+    );
+    assert(
+      (await p.locator('textarea').count()) > 0,
+      'app failed to initialise at all',
+    );
+  });
+  await page.close();
+}
+
+// --- the restore/boot ordering must not depend on cache warmth --------------
+// Two effects race on remount: the mount-restore (which puts the user back in
+// the single live rolling thread) and the boot init (which adopts an open
+// session into a BRAND NEW chat id). Which ran first flipped with react-query
+// cache state, so the restore fix was accidentally correct rather than correct
+// by design — and when boot won, the prompt went out under the run's block with
+// a chat id that exists nowhere. Both cache states must land in chatA.
+for (const [label, kase] of [
+  ['cold', 'restore-race-cold'],
+  ['warm', 'restore-race-warm'],
+]) {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+  await drive(page, `restore-wins-over-boot-${label}-cache`, `http://localhost:${PORT}/?case=${kase}`, async (p) => {
+    await p.waitForSelector('textarea', { timeout: 20000 });
+    await p.waitForTimeout(1200); // let both effects settle
+    // Assert on WHICH CHAT IS ACTIVE, not on a prompt round-trip. `data-active`
+    // is driven by `activeChat?.id`, which is precisely what the race decides,
+    // and it is present without needing a send to succeed — an earlier version
+    // keyed on the outgoing header and failed pre-fix with "no prompt was sent",
+    // a reason that says nothing about the defect and would also fire for
+    // unrelated harness trouble.
+    await p.getByTitle('Chat history').click();
+    await p.waitForTimeout(400);
+    const active = await p.evaluate(() =>
+      [...document.querySelectorAll('[data-active="true"]')]
+        .map((e) => e.innerText.trim().split('\n')[0])
+        .filter(Boolean),
+    );
+    assert(
+      active.includes('Rolling A'),
+      `${label} cache: the live rolling thread is not the active chat — active=${JSON.stringify(active)}. Boot adopted the run's block into a new thread.`,
+    );
+  });
   await page.close();
 }
 
