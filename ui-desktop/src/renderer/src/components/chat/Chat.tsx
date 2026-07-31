@@ -429,7 +429,27 @@ export const Chat = (props: ChatProps) => {
       }
       return res;
     }, []);
-    const openSessions = mappedSessions.filter((s) => !isClosed(s));
+    // A session a LIVE ROLLING RUN owns is not up for adoption. This effect used
+    // to take openSessions[0] unconditionally, which during a run is that run's
+    // current block, and staple it to a brand-new chat id — so two chats claimed
+    // one stake, and the router wrote that onto disk on the next prompt. Chat
+    // unmounts on every tab switch, so this fired on a routine trip to Wallet
+    // and back, not just at startup.
+    const ownedByRuns = new Set<string>();
+    Object.values(keepAlive.sessionIdsByChat).forEach((ids) =>
+      ids.forEach((id) => ownedByRuns.add(id)),
+    );
+    const openSessions = mappedSessions.filter(
+      (s) => !isClosed(s) && !ownedByRuns.has(s.Id),
+    );
+
+    // A restore already put the user in the rolling thread; don't overwrite it.
+    // The two effects race and the winner flipped with react-query cache warmth,
+    // which made the restore fix's correctness accidental rather than designed.
+    if (restoredOnceRef.current) {
+      setInitialized(true);
+      return;
+    }
 
     if (!openSessions.length) {
       useLocalModelChat();
@@ -901,6 +921,14 @@ export const Chat = (props: ChatProps) => {
       return;
     }
     setActiveSession(myRunSession);
+    // Clear readonly too. selectChat resolves a chat's PERSISTED binding, which
+    // for a rolling chat is whichever block was current at its last prompt — long
+    // lapsed — so returning to a live rolling thread set readonly and nothing
+    // ever cleared it. The composer said "Session is closed" while the header
+    // offered "Stop renewing", and the user could not type into a session they
+    // were actively paying to keep alive. If this run has a live block, the chat
+    // is by definition usable.
+    setIsReadonly(false);
     bindChatToSession(chat?.id, myRunSession.Id);
     const model = chainData?.models?.find(
       (m: any) => m.Id == myRunSession.ModelAgentId,
@@ -2152,6 +2180,22 @@ export const Chat = (props: ChatProps) => {
                 title="Stop auto-renewing this session (the current block runs out on its own)"
               >
                 <IconPlayerStopFilled size={16} /> Stop renewing
+              </HeaderBtn>
+            )}
+            {/* Runs elsewhere must be stoppable from HERE. A rolling chat has no
+                file until its first prompt, so it never appears in the drawer,
+                and the per-chat Stop above only renders inside that chat — a run
+                started and navigated away from before typing was unreachable and
+                unstoppable, leaving the Sessions-tab Close (the ~24h early-close
+                lock) as the only control. Stops scheduling only; every current
+                block still lapses naturally. */}
+            {!myRun?.running && keepAlive.runningCount > 0 && (
+              <HeaderBtn
+                onClick={() => keepAlive.stop()}
+                title={`Stop auto-renewing on ${keepAlive.runningCount} other chat(s). Their current blocks run out on their own — nothing is closed early.`}
+              >
+                <IconPlayerStopFilled size={16} /> Stop renewing (
+                {keepAlive.runningCount})
               </HeaderBtn>
             )}
             <HeaderBtn onClick={toggleDrawer} title="Chat history">

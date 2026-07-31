@@ -652,6 +652,74 @@ console.log('queries: rolling-run ownership of a closed session');
     ({ chatR: '0xb3' }).chatR !== '0xb2');
 }
 
+// ---- a stopped run's final block keeps its claim ---------------------------
+// Blocks are never closed early (that time-locks the stake), so when a run ends
+// its last block stays OPEN for up to a full block. Dropping the claim with the
+// run left that paid block adoptable by any unbound chat on the same model.
+console.log('');
+console.log('queries: claims survive a run ending');
+{
+  // publish() seeds sessionIdsByChat from the retained map, then overlays live
+  // runs. Replay that shape.
+  const publishedIds = (liveRuns, retained) => {
+    const out = {};
+    for (const [k, ids] of Object.entries(retained)) out[k] = [...ids];
+    for (const [k, ids] of Object.entries(liveRuns)) out[k] = [...ids];
+    return out;
+  };
+  const claimedFor = (published, exceptChatId) => {
+    const s = new Set();
+    for (const [cid, ids] of Object.entries(published)) {
+      if (cid !== exceptChatId) ids.forEach((i) => s.add(i));
+    }
+    return s;
+  };
+  const S = (id) => ({ Id: id, ModelAgentId: '0xmodelA', BidID: '0xbidP' });
+  const lastBlock = S('0xsessA3');
+
+  const afterStop = publishedIds({}, { chatA: ['0xsessA1', '0xsessA2', '0xsessA3'] });
+  ok('a stopped run still claims its final block',
+    claimedFor(afterStop, 'chatL').has('0xsessA3'));
+  ok('a legacy chat cannot adopt a stopped run\'s still-open block',
+    resolveChatSession([lastBlock], { modelId: '0xmodelA' },
+      claimedFor(afterStop, 'chatL')) === undefined);
+  ok('without retention it WOULD have been adopted (the bug)',
+    resolveChatSession([lastBlock], { modelId: '0xmodelA' },
+      claimedFor(publishedIds({}, {}), 'chatL'))?.Id === '0xsessA3');
+  ok('a live run overlays its retained entry rather than duplicating it',
+    Object.keys(publishedIds({ chatA: ['0xsessA4'] },
+      { chatA: ['0xsessA1'] })).length === 1);
+  ok('retaining an EXPIRED id is harmless — it matches no open session',
+    resolveChatSession([], { modelId: '0xmodelA' },
+      claimedFor(afterStop, 'chatL')) === undefined);
+}
+
+// ---- boot must not adopt a session a live run owns -------------------------
+// The boot effect took openSessions[0] unconditionally and stapled it to a NEW
+// chat id. During a run that is the run's current block, so two chats claimed
+// one stake — and Chat unmounts on every tab switch, so this fired on a routine
+// trip to Wallet and back.
+console.log('');
+console.log('queries: boot adoption skips live rolling blocks');
+{
+  const adoptable = (open, sessionIdsByChat) => {
+    const owned = new Set();
+    Object.values(sessionIdsByChat).forEach((ids) => ids.forEach((i) => owned.add(i)));
+    return open.filter((s) => !owned.has(s.Id));
+  };
+  const s1 = { Id: '0xrolling', ModelAgentId: '0xmodelA' };
+  const s2 = { Id: '0xplain', ModelAgentId: '0xmodelA' };
+
+  ok('a rolling run\'s block is not adoptable at boot',
+    adoptable([s1, s2], { chatA: ['0xrolling'] }).every((s) => s.Id !== '0xrolling'));
+  ok('an unowned session is still adoptable',
+    adoptable([s1, s2], { chatA: ['0xrolling'] })[0]?.Id === '0xplain');
+  ok('every session owned -> nothing adopted, boot falls through to local',
+    adoptable([s1], { chatA: ['0xrolling'] }).length === 0);
+  ok('no runs -> unchanged behaviour',
+    adoptable([s1, s2], {}).length === 2);
+}
+
 console.log('');
 console.log(`LOGIC CHECKS: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
