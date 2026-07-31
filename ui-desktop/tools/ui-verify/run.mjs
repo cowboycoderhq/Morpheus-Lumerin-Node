@@ -1127,6 +1127,59 @@ for (const [label, kase] of [
   await page.close();
 }
 
+// --- stop-all must NOT appear when the only run is the one you are in -------
+// Reported from a live pass: "Stop all renewing" always showed (1). Every
+// existing case has TWO runs, so none of them could see a miscount when there is
+// exactly one and it belongs to the current chat.
+{
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+  await drive(page, 'stop-all-hidden-when-only-your-own-run-is-live', `http://localhost:${PORT}/?case=stop-all-single-run`, async (p) => {
+    await p.waitForSelector('textarea', { timeout: 20000 });
+    await p.getByTitle('Chat history').click();
+    await p.waitForTimeout(300);
+    await p.getByText('Rolling A', { exact: false }).first().click();
+    await p.waitForTimeout(900);
+    const body = await p.locator('body').innerText();
+    assert(
+      /Stop renewing/.test(body),
+      `per-chat stop missing: ${body.slice(0, 200)}`,
+    );
+    assert(
+      !/Stop all renewing/.test(body),
+      `stop-all shown with no OTHER run live: ${body.slice(0, 300)}`,
+    );
+  });
+  await page.close();
+}
+
+// --- the double-stake notice must fire on the real New-chat flow ------------
+// Reported from a live pass: it never appears. Drives the actual path (header
+// New chat -> pick the model that already has open sessions) rather than
+// asserting on a hand-built state, because the state is what is suspect.
+{
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+  await drive(page, 'double-stake-notice-fires-on-new-chat', `http://localhost:${PORT}/?case=stop-all-single-run`, async (p) => {
+    await p.waitForSelector('textarea', { timeout: 20000 });
+    await p.getByText('New chat', { exact: false }).first().click();
+    await p.waitForTimeout(600);
+    // Pick the model inside the MODAL — the header also renders the model name,
+    // and .first() matched that instead.
+    await p.getByText('Test Model', { exact: false }).last().click();
+    await p.waitForTimeout(900);
+    const body = await p.locator('body').innerText();
+    // Diagnostic first: are we even on the stake screen?
+    assert(
+      /Select payment method|Stake MOR/i.test(body),
+      `not on the stake screen after New chat: ${body.slice(0, 400)}`,
+    );
+    assert(
+      /already have \d+ open session/i.test(body),
+      `no double-stake notice despite open sessions on this model: ${body.slice(0, 500)}`,
+    );
+  });
+  await page.close();
+}
+
 await browser.close();
 await server.close();
 

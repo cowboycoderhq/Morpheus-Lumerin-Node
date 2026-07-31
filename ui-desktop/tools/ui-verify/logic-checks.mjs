@@ -17,6 +17,7 @@ import {
   MIN_REQUEST_SECONDS,
   strideSeconds,
   blocksForDuration,
+  CLOSE_BUFFER_SEC,
 } from '../../src/renderer/src/components/keepalive/KeepAliveProvider.tsx';
 import {
   isSecureModel,
@@ -502,8 +503,13 @@ console.log('queries: blocksForDuration vs the scheduler stop condition');
     blocksForDuration(2 * MIN_REQUEST_SECONDS, true) === 3);
   ok('seamless max prices 103 opens (was 94)',
     blocksForDuration(maxSec, true) === 103);
-  ok('economy max prices 91 opens (was 94)',
-    blocksForDuration(maxSec, false) === 91);
+  // Economy's count moves with its stride (block + CLOSE_BUFFER_SEC), so derive
+  // it rather than pinning a literal that rots whenever the buffer changes. The
+  // load-bearing claim is that it differs from the naive ceil(target/block) = 94.
+  const econExpected =
+    Math.max(1, Math.ceil((maxSec - MIN_REQUEST_SECONDS) / strideSeconds(false)) + 1);
+  ok(`economy max prices ${econExpected} opens, not the naive 94`,
+    blocksForDuration(maxSec, false) === econExpected && econExpected !== 94);
   ok('a single block is 1 in both modes',
     blocksForDuration(MIN_REQUEST_SECONDS, true) === 1 &&
     blocksForDuration(MIN_REQUEST_SECONDS, false) === 1);
@@ -718,6 +724,36 @@ console.log('queries: adoption is refusable, orphans are surfaced');
   ok('an ended run\'s still-open block is not an orphan',
     !orphanedSessions(open, chats, {}, { chatOld: ['0xfree'] }).some((s) => s.Id === '0xfree'));
   ok('nothing open -> no orphans', orphanedSessions([], chats, {}, {}).length === 0);
+}
+
+
+// ---- economy really is 1x now ----------------------------------------------
+// It reserves one block's stake because it CLOSES each expired block itself (a
+// late close returns the stake in full, no 24h hold) and waits for the chain to
+// confirm before opening the next. The old code slept REOPEN_DELAY_SEC and
+// assumed the refund had landed; the only closer was the router's 1-minute
+// sweep, so a 1x wallet reverted on the first restake with block 1 paid for.
+console.log('');
+console.log('queries: economy stake reservation');
+{
+  const required = (blocks, overlap, perBlock) =>
+    (blocks > 1 && overlap ? 2 : 1) * perBlock;
+  const B = 0.305;
+
+  ok('economy multi-block reserves 1x', required(10, false, B) === B);
+  ok('seamless multi-block still reserves 2x', required(10, true, B) === 2 * B);
+  ok('a single block is 1x in both modes',
+    required(1, true, B) === B && required(1, false, B) === B);
+  ok('economy admits a run seamless would reject on the same wallet',
+    required(10, false, B) <= B && required(10, true, B) > B);
+
+  // The close must land AFTER expiry or it is an EARLY close: the hold scales
+  // with time already used, so a near-miss locks nearly the whole block for ~24h.
+  ok('the close buffer is positive — never fire at endsAt', CLOSE_BUFFER_SEC > 0);
+  ok('economy stride still prices the post-expiry gap',
+    strideSeconds(false) > MIN_REQUEST_SECONDS);
+  ok('seamless stride is still shorter than a block (it overlaps)',
+    strideSeconds(true) < MIN_REQUEST_SECONDS);
 }
 
 console.log('');
