@@ -41,7 +41,7 @@ The site is structured around **role-based journeys** (consumer / prosumer / pro
 | Chain ID | `8453` | `84532` |
 | Branch | `main` (`MAIN-*` releases) | `test` (`*-test` releases) |
 | MOR Token | `0x7431aDa8a591C955a994a21710752EF9b882b8e3` | `0x5C80Ddd187054E1E4aBBfFCD750498e81d34FfA3` |
-| Diamond Marketplace | `0x6aBE1d282f72B474E54527D93b979A4f64d3030a` | `0x6e4d0B775E3C3b02683A6F277Ac80240C4aFF930` |
+| Diamond Marketplace | `0x6aBE1d282f72B474E54527D93b979A4f64d3030a` | `0xA328196f2438DADA5ab729E39388D86896c27c85` |
 | Block Explorer | https://base.blockscout.com/ | https://base-sepolia.blockscout.com/ |
 
 You will need both **MOR** (for stake / fees / session payment) and **ETH on BASE** (for gas) in your wallet.

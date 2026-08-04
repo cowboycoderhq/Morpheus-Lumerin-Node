@@ -35,14 +35,22 @@ const (
 	// Session requests for the model would be rejected, so it is reported
 	// separately from a plain backend probe failure.
 	ModelHealthStatusTeeUnverified = "tee_unverified"
+	// ModelHealthStatusDegraded marks a model that is serving but at reduced
+	// capacity: emitted when a health probe fails with HTTP 429 (upstream
+	// throttled). It signals capacity risk, not failure: consumers treat it
+	// as serviceable under the permissive and preferred health policies;
+	// only the strict policy excludes it.
+	ModelHealthStatusDegraded = "degraded"
 
 	ModelHealthErrorTimeout     = "timeout"
 	ModelHealthErrorConnection  = "connection"
 	ModelHealthErrorBadResponse = "bad_response"
 	ModelHealthErrorRateLimited = "rate_limited"
 	ModelHealthErrorTypeLookup  = "model_type_lookup"
-	// ModelHealthErrorSessionErrors marks a model flipped to unhealthy by
-	// consecutive real-session prompt failures rather than a scheduled probe.
+	// ModelHealthErrorSessionErrors marks a model flipped to unhealthy — or
+	// to degraded, when the whole failure streak was upstream rate limiting
+	// (429) — by consecutive real-session prompt failures rather than a
+	// scheduled probe.
 	ModelHealthErrorSessionErrors = "session_errors"
 	// ModelHealthErrorTeeAttestation accompanies ModelHealthStatusTeeUnverified.
 	ModelHealthErrorTeeAttestation = "tee_attestation"
