@@ -121,7 +121,7 @@ In the **`-tee` image** this is hard-coded `false` at build time and **cannot be
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `DIAMOND_CONTRACT_ADDRESS` | mainnet `0x6aBE1d282f72B474E54527D93b979A4f64d3030a`; testnet `0x6e4d0B775E3C3b02683A6F277Ac80240C4aFF930` | Diamond marketplace contract |
+| `DIAMOND_CONTRACT_ADDRESS` | mainnet `0x6aBE1d282f72B474E54527D93b979A4f64d3030a`; testnet `0xA328196f2438DADA5ab729E39388D86896c27c85` | Diamond marketplace contract |
 | `MOR_TOKEN_ADDRESS` | mainnet `0x7431aDa8a591C955a994a21710752EF9b882b8e3`; testnet `0x5C80Ddd187054E1E4aBBfFCD750498e81d34FfA3` | MOR ERC-20 token |
 | `WALLET_PRIVATE_KEY` | (unset) | Wallet private key. Falls back to system keychain when unset. See precedence above. |
 
@@ -185,6 +185,22 @@ On provider nodes the proxy-router periodically probes every model from `models-
 | `MODEL_HEALTH_CHECK_PROBE_DELAY` | `2s` | Pause between per-model probes so many-model providers don't burst their upstream into a rate limit |
 | `MODEL_HEALTH_MAX_CONSECUTIVE_ERRORS` | `3` | Consecutive real-session prompt failures after which the model is reported `unhealthy` (`errorKind: session_errors`) immediately, without waiting for the next scheduled probe |
 
+## Session health policy (consumer)
+
+On consumer nodes, `SESSION_HEALTH_POLICY` controls how strictly the pre-open healthcheck pings gate provider selection when opening a session **by model ID** (the failover loop). Opening by a specific bid ID is unaffected.
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `SESSION_HEALTH_POLICY` | `permissive` | One of `permissive`, `preferred`, `strict` — see below |
+
+| Policy | Behavior |
+|--------|----------|
+| `permissive` | Default, same as previous releases: skip only providers that self-report the bid's model as `unhealthy`, `tee_unverified`, or `no_model_configured`. Providers with an unknown or missing report are still tried. |
+| `preferred` | When at least one provider reports the model `healthy` or `degraded`, only those providers are tried and unknown/missing reports are skipped. When none does, the open falls back to `permissive` so the model is not black-holed. |
+| `strict` | Only providers that report the model `healthy` are tried. `degraded` and unknown reports are excluded. |
+
+**Single-bid caveat** (`healthPolicySingleBid: permissive`, fixed): when the hard filters (omitted provider, own bids) leave a single candidate provider for the model, `preferred`/`strict` are forced to `permissive` for that open so the sole provider can still be tried — single-provider models must remain usable.
+
 ## TEE (Phase 1 + Phase 2 attestation)
 
 These are only consulted when at least one model in the marketplace is `tee`-tagged. Otherwise they are unused.
@@ -225,7 +241,7 @@ BLOCKSCOUT_API_URL=https://base.blockscout.com/api/v2
 
 # TESTNET (Base Sepolia)
 # ETH_NODE_CHAIN_ID=84532
-# DIAMOND_CONTRACT_ADDRESS=0x6e4d0B775E3C3b02683A6F277Ac80240C4aFF930
+# DIAMOND_CONTRACT_ADDRESS=0xA328196f2438DADA5ab729E39388D86896c27c85
 # MOR_TOKEN_ADDRESS=0x5C80Ddd187054E1E4aBBfFCD750498e81d34FfA3
 # BLOCKSCOUT_API_URL=https://base-sepolia.blockscout.com/api/v2
 ```

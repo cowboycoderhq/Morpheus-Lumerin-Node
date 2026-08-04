@@ -3,8 +3,8 @@ name: CI-CD
 # 
 # Branch Strategy:
 #   • dev: Build and test only (no deployment)
-#   • test: Build, test, and deploy to AWS DEV environment (Titan dev + Morpheus dev consumer node)
-#   • main: Build, test, create release, and deploy to AWS PRD environment (Titan lmn + Morpheus prd consumer/provider nodes)
+#   • test: Build, test, and deploy to AWS DEV (Titan dev + Morpheus C-Node + Morpheus P-Node + SecretVM test)
+#   • main: Build, test, create release, and deploy to AWS PRD (Titan lmn + Morpheus C/P-Nodes + SecretVM prod)
 #
 # Key Features:
 #   • Optimized Docker builds with GitHub Actions caching
@@ -1648,9 +1648,9 @@ jobs:
     # so existing TCP sessions are closed promptly. The ECS service and its task
     # continue to run; we are only manipulating LB membership.
     #
-    # `!cancelled()` + explicit result checks let this run on `test` (where both
-    # P-Node jobs are skipped — no dev provider node) while still requiring BOTH
-    # provider rolls to SUCCEED on `main` before the C-Node is touched.
+    # `!cancelled()` + explicit result checks: on `test`, P-Node-1 deploys DEV
+    # provider and P-Node-2 is skipped (HA is prd-only); on `main`, BOTH provider
+    # rolls must SUCCEED before the C-Node is touched.
     name: Drain Morpheus C-Node from NLB
     if: |
       !cancelled() &&
@@ -1775,8 +1775,8 @@ jobs:
     # NOTE on `needs` + skipped dependencies:
     # GitHub Actions' default job condition is implicit `success()`, which returns
     # false when ANY needed job was skipped. Both P-Node jobs are main-only (see their
-    # own `if`), so on a `test` deploy `Deploy-to-Morpheus-P-Node` and
-    # `Deploy-to-Morpheus-P-Node-2` are always skipped. Without an explicit `if` that
+    # own `if`), so on a `test` deploy `Deploy-to-Morpheus-P-Node-2` is skipped
+    # (HA is prd-only) while P-Node-1 deploys DEV. Without an explicit `if` that
     # tolerates those skips, the C-Node deploy gets skipped too — which is exactly what
     # bit us on the first v7 test run: the drain job ran and deregistered the C-Node,
     # then the actual deploy silently skipped, leaving dev without a replacement task.
@@ -2385,18 +2385,17 @@ jobs:
 
   Deploy-to-Morpheus-P-Node:
     name: Deploy to Morpheus Provider via GitHub
-    # First half of the one-at-a-time provider roll (P-Node-1, then P-Node-2).
-    # Main/prd only — there is no dev provider node. This NO LONGER depends on the
-    # C-Node drain: with two independent on-chain providers serving the same models,
-    # the C-Node stays live during provider rolls and the API Gateway fails traffic
-    # over to the surviving provider. The drain now runs AFTER both providers, right
-    # before the C-Node roll (see Drain-Morpheus-C-Node).
+    # P-Node-1 roll. On `test` → DEV provider (ecs-dev-morpheus-provider). On `main` →
+    # PRD provider (first half of the one-at-a-time HA roll; P-Node-2 follows).
+    # Does NOT depend on the C-Node drain: the C-Node stays live during provider
+    # rolls so API Gateway failover can keep traffic flowing. Drain runs AFTER
+    # providers, right before the C-Node roll (see Drain-Morpheus-C-Node).
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
       (needs.changes.outputs.proxy == 'true' || github.event_name == 'workflow_dispatch') &&
       (
-        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-        (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true' && github.event.inputs.create_deployment == 'true' && github.ref == 'refs/heads/main')
+        (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true' && github.event.inputs.create_deployment == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test'))
       )
     needs:
       - changes
@@ -2423,8 +2422,17 @@ jobs:
           BUILDTAG=${{ needs.Generate-Tag.outputs.tag_name }}
           BUILDIMAGE=${{ needs.Generate-Tag.outputs.image_name }}
           
-          # Provider node only exists in production environment
-          ENV="prd"
+          # Determine environment based on branch (same mapping as C-Node)
+          if [ "${{ github.ref_name }}" == "test" ]; then
+            ENV="dev"
+            HEALTH_ENDPOINT="https://providerapi.dev.mor.org/healthcheck"
+          elif [ "${{ github.ref_name }}" == "main" ]; then
+            ENV="prd"
+            HEALTH_ENDPOINT="https://providerapi.mor.org/healthcheck"
+          else
+            echo "❌ Unsupported branch for provider deployment: ${{ github.ref_name }}"
+            exit 1
+          fi
           
           echo "🚀 Deploying to Morpheus Provider AWS - Environment: $ENV"
           echo "📦 Container Image: $BUILDIMAGE:$BUILDTAG"
@@ -2566,9 +2574,7 @@ jobs:
             sleep $REMAINING
           fi
           
-          # Provider node health endpoint
-          HEALTH_ENDPOINT="https://providerapi.mor.org/healthcheck"
-          
+          # HEALTH_ENDPOINT set above from branch → env mapping
           echo "🔍 Verifying deployment version at: $HEALTH_ENDPOINT"
           
           # Wait for the service to be reachable and verify version

@@ -69,8 +69,9 @@ type TeeStatusProvider interface {
 }
 
 // DefaultMaxConsecutiveErrors is the number of consecutive real-session
-// prompt failures after which a model is flipped to unhealthy without
-// waiting for the next scheduled probe sweep.
+// prompt failures after which a model is flipped to unhealthy (or degraded,
+// when the whole streak is upstream rate limiting) without waiting for the
+// next scheduled probe sweep.
 const DefaultMaxConsecutiveErrors = 3
 
 // modelMeta caches the public on-chain facts about a model so each sweep
@@ -87,15 +88,16 @@ type Checker struct {
 	timeout    time.Duration
 	probeDelay time.Duration
 	// maxConsecutiveErrors is the threshold of consecutive session prompt
-	// failures that dynamically flips a model to unhealthy.
+	// failures that dynamically flips a model to unhealthy or degraded.
 	maxConsecutiveErrors int
 	log                  lib.ILogger
 
 	mu        sync.RWMutex
 	reports   map[string]system.ModelHealthReport
 	modelMeta map[string]modelMeta
-	// failures counts consecutive real-session prompt failures per model.
-	failures map[string]int
+	// failures tracks the consecutive real-session prompt failure streak per
+	// model, including whether the whole streak was upstream rate limiting.
+	failures map[string]failureStreak
 
 	// triggerCh carries manual re-check requests into the Run loop; buffered
 	// at 1 so triggers queue at most one extra sweep and can never overlap.
@@ -134,7 +136,7 @@ func NewChecker(deps Deps, interval, timeout, probeDelay time.Duration, maxConse
 		log:                  log.Named("MODEL_HEALTH"),
 		reports:              make(map[string]system.ModelHealthReport),
 		modelMeta:            make(map[string]modelMeta),
-		failures:             make(map[string]int),
+		failures:             make(map[string]failureStreak),
 		triggerCh:            make(chan struct{}, 1),
 	}
 }
@@ -421,13 +423,16 @@ func (c *Checker) checkModel(ctx context.Context, modelID common.Hash, bidID com
 
 	if err != nil {
 		c.log.Warnf("model %s: probe failed: %s", lib.Short(modelID), err)
-		report.Status = system.ModelHealthStatusUnhealthy
 		// 429 means the backend is up and correctly configured, just
-		// throttled right now — a materially different signal than a
-		// billing (402) or configuration (404) failure.
+		// throttled right now — capacity risk, not failure, and materially
+		// different from a billing (402) or configuration (404) problem.
+		// Reported as degraded so consumers still treat the model as
+		// serviceable (only the strict session health policy excludes it).
 		if report.HttpStatus == http.StatusTooManyRequests {
+			report.Status = system.ModelHealthStatusDegraded
 			report.ErrorKind = system.ModelHealthErrorRateLimited
 		} else {
+			report.Status = system.ModelHealthStatusUnhealthy
 			report.ErrorKind = classifyError(err)
 		}
 	} else {
@@ -546,21 +551,43 @@ func (c *Checker) setReport(report system.ModelHealthReport) {
 	c.reports[report.ModelID] = report
 }
 
-// ReportPromptFailure records a failed real-session prompt for the model.
-// After maxConsecutiveErrors failures in a row the model's health report is
-// flipped to unhealthy immediately, without waiting for the next scheduled
-// probe sweep, so consumers pinging before session open skip this provider.
-func (c *Checker) ReportPromptFailure(modelID common.Hash) {
+// failureStreak tracks consecutive real-session prompt failures for a model.
+type failureStreak struct {
+	count int
+	// rateLimitedOnly stays true while every failure in the current streak
+	// was an upstream 429 — a pure throttling streak flips the model to
+	// degraded (capacity risk) instead of unhealthy.
+	rateLimitedOnly bool
+}
+
+// ReportPromptFailure records a failed real-session prompt for the model;
+// upstreamStatus is the HTTP status returned by the backend (0 when the
+// failure never got an HTTP response). After maxConsecutiveErrors failures in
+// a row the model's health report is flipped immediately, without waiting for
+// the next scheduled probe sweep: to degraded when the whole streak was
+// upstream rate limiting (429), to unhealthy otherwise.
+func (c *Checker) ReportPromptFailure(modelID common.Hash, upstreamStatus int) {
 	id := modelID.Hex()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.failures[id]++
-	count := c.failures[id]
-	if count < c.maxConsecutiveErrors {
-		c.log.Warnf("model %s: session prompt failed (%d/%d consecutive)", lib.Short(modelID), count, c.maxConsecutiveErrors)
+	streak, ok := c.failures[id]
+	if !ok {
+		streak.rateLimitedOnly = true
+	}
+	streak.count++
+	streak.rateLimitedOnly = streak.rateLimitedOnly && upstreamStatus == http.StatusTooManyRequests
+	c.failures[id] = streak
+
+	if streak.count < c.maxConsecutiveErrors {
+		c.log.Warnf("model %s: session prompt failed (%d/%d consecutive)", lib.Short(modelID), streak.count, c.maxConsecutiveErrors)
 		return
+	}
+
+	status := system.ModelHealthStatusUnhealthy
+	if streak.rateLimitedOnly {
+		status = system.ModelHealthStatusDegraded
 	}
 
 	report, ok := c.reports[id]
@@ -569,19 +596,22 @@ func (c *Checker) ReportPromptFailure(modelID common.Hash) {
 		// if no sweep has reported on it yet.
 		report = system.ModelHealthReport{ModelID: id, HasActiveBid: true}
 	}
-	if report.Status != system.ModelHealthStatusUnhealthy {
-		c.log.Warnf("model %s: %d consecutive session prompt failures, marking unhealthy", lib.Short(modelID), count)
+	if report.Status != status {
+		c.log.Warnf("model %s: %d consecutive session prompt failures, marking %s", lib.Short(modelID), streak.count, status)
 	}
-	report.Status = system.ModelHealthStatusUnhealthy
+	report.Status = status
 	report.ErrorKind = system.ModelHealthErrorSessionErrors
+	if streak.rateLimitedOnly {
+		report.HttpStatus = http.StatusTooManyRequests
+	}
 	report.LastChecked = time.Now().Unix()
 	c.reports[id] = report
 }
 
 // ReportPromptSuccess records a successful real-session prompt: the failure
-// streak resets and, if the model was flipped to unhealthy by session errors,
-// it is healed right away (a real prompt succeeding is stronger evidence than
-// a probe).
+// streak resets and, if the model was flipped to unhealthy or degraded by
+// session errors, it is healed right away (a real prompt succeeding is
+// stronger evidence than a probe).
 func (c *Checker) ReportPromptSuccess(modelID common.Hash) {
 	id := modelID.Hex()
 
@@ -594,9 +624,11 @@ func (c *Checker) ReportPromptSuccess(modelID common.Hash) {
 	if !ok {
 		return
 	}
-	if report.Status == system.ModelHealthStatusUnhealthy && report.ErrorKind == system.ModelHealthErrorSessionErrors {
+	sessionFlipped := report.Status == system.ModelHealthStatusUnhealthy || report.Status == system.ModelHealthStatusDegraded
+	if sessionFlipped && report.ErrorKind == system.ModelHealthErrorSessionErrors {
 		report.Status = system.ModelHealthStatusHealthy
 		report.ErrorKind = ""
+		report.HttpStatus = 0
 		report.LastChecked = time.Now().Unix()
 	}
 	report.LastHealthy = time.Now().Unix()
