@@ -33,7 +33,12 @@ import {
   adoptableSessions,
   orphanedSessions,
 } from '../../src/renderer/src/components/chat/utils.js';
-import { buildModelsWithBids } from '../../src/renderer/src/store/queries.ts';
+import { buildModelsWithBids, buildModelsData } from '../../src/renderer/src/store/queries.ts';
+import {
+  getLiveSessionsByUser,
+  SESSION_PAGE_LIMIT,
+  SESSION_PAGE_BATCH,
+} from '../../src/renderer/src/store/utils/apiCallsHelper.tsx';
 import {
   parseDuration,
   durationSuggestions,
@@ -706,6 +711,231 @@ console.log('queries: a chained run stops at the length that was sold');
   ok('the default unit still prices a single minimum block as 1',
     planBlocks(MIN_REQUEST_SECONDS, true).length === 1 &&
     planBlocks(MIN_REQUEST_SECONDS, false).length === 1);
+}
+
+// ---- the model-registry snapshot --------------------------------------------
+// Measured against the local router: /blockchain/models takes 10.5 SECONDS while
+// every sibling call in the same composite is sub-second or instant. Promise.all
+// costs the slowest, so that one endpoint was the entire Chat load time.
+//
+// It is snapshot to disk because it is static. The danger in caching anything on
+// this screen is caching the wrong thing: a stale BALANCE decides what the user
+// believes they can afford to stake. So the checks below pin both halves — the
+// registry is served from disk, and the money figures never are.
+console.log('');
+console.log('queries: the model registry is snapshot, the money is not');
+{
+  const realFetch = globalThis.fetch;
+  const realLocalStorage = globalThis.localStorage;
+
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+
+  const calls = [];
+  let balanceValue = 'BALANCE-1';
+  let registryValue = [{ Id: 'm1', Name: 'First' }];
+  const client = {
+    getAuthHeaders: async () => ({}),
+    getTodaysBudget: async () => 'BUDGET',
+    getTokenSupply: async () => 'SUPPLY',
+    getBalances: async () => balanceValue,
+  };
+  globalThis.fetch = async (url) => {
+    const path = String(url).replace('http://r', '');
+    calls.push(path);
+    if (path === '/blockchain/models') {
+      return { ok: true, json: async () => ({ models: registryValue }) };
+    }
+    if (path === '/blockchain/providers') {
+      return { ok: true, json: async () => ({ providers: [] }) };
+    }
+    return { ok: true, json: async () => [] };
+  };
+
+  // First call: nothing on disk, so the registry must actually be fetched.
+  calls.length = 0;
+  const first = await buildModelsData('http://r', client);
+  ok('cold: the registry is fetched', calls.includes('/blockchain/models'));
+  ok('cold: models come back', first.models.some((m) => m.Id === 'm1'));
+
+  // Second call: served from the snapshot. The registry request still goes out
+  // (to refresh the snapshot) but is not waited on — what matters is that the
+  // caller did not block on it, which the value proves: it is the OLD list even
+  // though the endpoint now returns a different one.
+  registryValue = [{ Id: 'm2', Name: 'Second' }];
+  balanceValue = 'BALANCE-2';
+  const second = await buildModelsData('http://r', client);
+  ok('warm: the registry is served from the snapshot, not awaited',
+    second.models.some((m) => m.Id === 'm1'));
+
+  // The half that matters most: money is never snapshot.
+  ok('warm: the BALANCE is live, not cached', second.userBalances === 'BALANCE-2');
+  ok('warm: budget and supply are live', second.meta.budget === 'BUDGET' && second.meta.supply === 'SUPPLY');
+
+  // An aged-out snapshot must not be served.
+  store.set('morpheus.marketplaceModels.v1', JSON.stringify({
+    ts: Date.now() - 60 * 60 * 1000, models: [{ Id: 'ancient' }],
+  }));
+  const aged = await buildModelsData('http://r', client);
+  ok('an aged-out snapshot is refused, not served',
+    !aged.models.some((m) => m.Id === 'ancient'));
+
+  // Corrupt/empty snapshots must fall back rather than throw.
+  store.set('morpheus.marketplaceModels.v1', 'not json');
+  const corrupt = await buildModelsData('http://r', client);
+  ok('a corrupt snapshot falls back to the network', corrupt.models.length > 0);
+  store.set('morpheus.marketplaceModels.v1', JSON.stringify({ ts: Date.now(), models: [] }));
+  const empty = await buildModelsData('http://r', client);
+  ok('an empty snapshot is not treated as a valid answer', empty.models.length > 0);
+
+  globalThis.fetch = realFetch;
+  globalThis.localStorage = realLocalStorage;
+}
+
+// ---- the live-session window ------------------------------------------------
+// Opening Chat used to walk the user's ENTIRE session history serially — one
+// chain read per page — which measured at 19.8 SECONDS on a real wallet and was
+// the whole Chat load time.
+//
+// Two properties have to hold together, and they pull against each other:
+//   COMPLETE — every session that could still be OPEN must be returned, because
+//     a live session missing from the list renders its chat as sessionless and
+//     invites the user to pay for a second one.
+//   BOUNDED — it must not read the whole history to prove that.
+//
+// The time bound (pages arrive newest-opened first, so once a page predates
+// `now - cap*safety` everything older has ended) gives BOUNDED for old
+// histories. It gives nothing when every session is recent — which is exactly
+// the measured case — so the walk is also BATCHED, trading serial round trips
+// for concurrent ones. Both are exercised below, against the real walker.
+console.log('');
+console.log('sessions: the live window is bounded, batched and complete');
+{
+  const CAP = 7 * 24 * 60 * 60;
+  const DAY = 86400;
+  const now = Math.floor(Date.now() / 1000);
+  const ROUND = SESSION_PAGE_LIMIT * SESSION_PAGE_BATCH;
+
+  const installFetch = (history, counter) => {
+    globalThis.fetch = async (url) => {
+      counter.pages++;
+      const u = new URL(String(url), 'http://x');
+      const offset = Number(u.searchParams.get('offset'));
+      const limit = Number(u.searchParams.get('limit'));
+      return { json: async () => ({ sessions: history.slice(offset, offset + limit) }) };
+    };
+  };
+  const realFetch = globalThis.fetch;
+
+  // A long history that is mostly ANCIENT: the time bound should end it after a
+  // single round, without reading the rest.
+  {
+    const history = [];
+    for (let i = 0; i < 10; i++) {
+      history.push({ Id: `live${i}`, OpenedAt: now - 60 * i, EndsAt: now + 3600, ClosedAt: 0 });
+    }
+    while (history.length < ROUND * 5) {
+      const i = history.length;
+      history.push({ Id: `old${i}`, OpenedAt: now - 400 * DAY - i, EndsAt: now - 399 * DAY, ClosedAt: 1 });
+    }
+    const counter = { pages: 0 };
+    installFetch(history, counter);
+    const res = await getLiveSessionsByUser('http://r', '0xuser', {}, CAP);
+    const liveIds = history.filter((s) => s.EndsAt > now).map((s) => s.Id);
+    const gotIds = new Set(res.sessions.map((s) => s.Id));
+    ok('complete: every live session is in the window',
+      liveIds.every((id) => gotIds.has(id)));
+    ok(`bounded: stopped after one round (${counter.pages} pages, history is ${Math.ceil(history.length / SESSION_PAGE_LIMIT)})`,
+      counter.pages === SESSION_PAGE_BATCH);
+    ok('it reports there IS a tail', res.complete === false);
+    ok('the tail offset lines up with what was collected (no gap, no refetch)',
+      res.nextOffset === res.sessions.length);
+  }
+
+  // The measured case: EVERY session is recent, so the time bound can skip
+  // nothing. This is where batching alone does the work — the point is that the
+  // pages are read concurrently, not that fewer are read.
+  {
+    const history = [];
+    for (let i = 0; i < 1450; i++) {
+      history.push({ Id: `recent${i}`, OpenedAt: now - 60 * i, EndsAt: now - 60 * i + 305, ClosedAt: 1 });
+    }
+    history[0] = { Id: 'open-now', OpenedAt: now - 10, EndsAt: now + 3600, ClosedAt: 0 };
+    const counter = { pages: 0 };
+    installFetch(history, counter);
+    const res = await getLiveSessionsByUser('http://r', '0xuser', {}, CAP);
+    ok('an all-recent history is still returned complete',
+      res.sessions.length === history.length && res.complete === true);
+    ok('and the live one is in it', res.sessions.some((s) => s.Id === 'open-now'));
+    // The serial walk cost one round trip per page; batching costs one per
+    // ROUND. That ratio is the entire fix for the 19.8s case.
+    const serialTrips = Math.ceil(history.length / SESSION_PAGE_LIMIT);
+    const batchedTrips = Math.ceil(counter.pages / SESSION_PAGE_BATCH);
+    ok(`batched into ${batchedTrips} round trip(s) where serial paging needed ${serialTrips}`,
+      batchedTrips < serialTrips);
+  }
+
+  // A short history is walked to the end and reports no tail.
+  {
+    const history = [{ Id: 'a', OpenedAt: now, EndsAt: now + 60, ClosedAt: 0 }];
+    const counter = { pages: 0 };
+    installFetch(history, counter);
+    const res = await getLiveSessionsByUser('http://r', '0xuser', {}, CAP);
+    ok('a short history reports complete', res.complete === true);
+    ok('and returns everything', res.sessions.length === 1);
+    ok('one round was enough', counter.pages <= SESSION_PAGE_BATCH);
+  }
+
+  // The adversarial case the safety factor exists for: a session opened LONG ago
+  // that is somehow still open, because the cap was LOWERED after it opened.
+  //
+  // The layout is what makes this test mean anything. The bound is evaluated at
+  // the END of each round, so round 1 must end just past ONE cap (8 days) and
+  // the straggler must sit in round 2 (10 days) — inside cap*2, outside cap*1.
+  // An earlier version put it where BOTH bounds fetch, so it passed with the
+  // safety factor removed and proved nothing.
+  {
+    const history = [];
+    for (let i = 0; i < ROUND; i++) {
+      const age = Math.round((8 * DAY * i) / (ROUND - 1));
+      history.push({ Id: `r1_${i}`, OpenedAt: now - age, EndsAt: now - age + 300, ClosedAt: 1 });
+    }
+    history.push({ Id: 'stale-live', OpenedAt: now - 10 * DAY, EndsAt: now + 3600, ClosedAt: 0 });
+    while (history.length < ROUND * 3) {
+      const i = history.length;
+      history.push({ Id: `old${i}`, OpenedAt: now - 400 * DAY - i, EndsAt: now - 399 * DAY, ClosedAt: 1 });
+    }
+    const counter = { pages: 0 };
+    installFetch(history, counter);
+    const res = await getLiveSessionsByUser('http://r', '0xuser', {}, CAP);
+    ok('a still-open session past ONE cap is caught (this is the safety factor)',
+      res.sessions.some((s) => s.Id === 'stale-live'));
+    ok('and it still did not read the whole history',
+      counter.pages < Math.ceil(history.length / SESSION_PAGE_LIMIT));
+
+    const counter1 = { pages: 0 };
+    installFetch(history, counter1);
+    const narrow = await getLiveSessionsByUser('http://r', '0xuser', {}, CAP, 1);
+    ok('the fixture really does discriminate: factor 1 misses it',
+      !narrow.sessions.some((s) => s.Id === 'stale-live'));
+  }
+
+  // Degenerate inputs must not spin forever or throw.
+  {
+    installFetch([], { pages: 0 });
+    const res = await getLiveSessionsByUser('http://r', '0xuser', {}, CAP);
+    ok('an empty history is complete and empty',
+      res.complete === true && res.sessions.length === 0);
+    const none = await getLiveSessionsByUser('', '', {}, CAP);
+    ok('no url/user returns an empty complete window',
+      none.complete === true && none.sessions.length === 0);
+  }
+
+  globalThis.fetch = realFetch;
 }
 
 // ---- typed session lengths --------------------------------------------------
