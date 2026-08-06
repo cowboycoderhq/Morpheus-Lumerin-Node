@@ -17,6 +17,8 @@ import {
   MIN_REQUEST_SECONDS,
   strideSeconds,
   blocksForDuration,
+  planBlocks,
+  OVERLAP_SEC,
   CLOSE_BUFFER_SEC,
 } from '../../src/renderer/src/components/keepalive/KeepAliveProvider.tsx';
 import {
@@ -32,6 +34,12 @@ import {
   orphanedSessions,
 } from '../../src/renderer/src/components/chat/utils.js';
 import { buildModelsWithBids } from '../../src/renderer/src/store/queries.ts';
+import {
+  parseDuration,
+  durationSuggestions,
+  formatDurationLong,
+  formatDurationShort,
+} from '../../src/renderer/src/utils/duration.ts';
 
 let pass = 0;
 let fail = 0;
@@ -459,24 +467,38 @@ console.log('queries: sortModelsForPicker (picker ordering)');
 // ---- rolling-session block accounting --------------------------------------
 // blocksForDuration prices the run; scheduleNext decides when to stop opening.
 // They are twins: if they disagree, the affordability gate quotes one number and
-// the wallet pays another. They DID disagree — the old count assumed blocks tile
-// end-to-end when seamless overlaps by OVERLAP_SEC, so a 2-block purchase opened
-// 3 and a 94-block one opened 103. A comment is not enough to hold that; this
-// re-derives the count by walking the scheduler's ACTUAL rule
-// (`endsAt >= targetEndTime` stops) and asserts the formula agrees at every
-// slider position in both modes.
+// the wallet pays another.
+//
+// Honest about what this is: `walk` re-derives the count from the scheduler's
+// rule, so it is a MIRROR of planBlocks, not an independent oracle — it catches
+// the two drifting apart, which is the failure that has actually happened twice
+// here, but it cannot tell you the shared rule is wrong. The bounds asserted in
+// "a chained run stops at the length that was sold" below are the independent
+// part: they constrain the OUTCOME (how far past/short of the ask the run may
+// stay staked) rather than re-deriving the count.
+//
+// The rule changed once already: blocks were assumed to tile end-to-end when
+// seamless overlaps by OVERLAP_SEC (a 2-block purchase opened 3). It changed
+// again when adversarial review found the last block was always full-size, so an
+// 8-day ask stayed staked ~14 days. Both fixes are pinned below.
 console.log('');
 console.log('queries: blocksForDuration vs the scheduler stop condition');
 {
-  const walk = (targetSec, overlap) => {
-    const stride = strideSeconds(overlap);
-    let t = 0, opens = 0;
+  const walk = (targetSec, overlap, unit = MIN_REQUEST_SECONDS) => {
+    let endsAt = Math.max(
+      MIN_REQUEST_SECONDS,
+      Math.min(unit, Math.max(targetSec, MIN_REQUEST_SECONDS)),
+    );
+    let opens = 1;
     for (;;) {
+      // Stop when what is left is shorter than the shortest session the chain
+      // sells — covering it would mean staking a whole further block.
+      if (targetSec - endsAt < MIN_REQUEST_SECONDS) return { opens, coverTo: endsAt };
+      const fireAt = overlap ? endsAt - OVERLAP_SEC : endsAt + CLOSE_BUFFER_SEC;
+      const next = Math.max(MIN_REQUEST_SECONDS, Math.min(unit, targetSec - fireAt));
+      endsAt = fireAt + next;
       opens++;
-      const endsAt = t + MIN_REQUEST_SECONDS;
-      if (endsAt >= targetSec) return { opens, coverTo: endsAt };
-      t += stride;
-      if (opens > 500) return { opens, coverTo: endsAt }; // runaway guard
+      if (opens > 5000) return { opens, coverTo: endsAt }; // runaway guard
     }
   };
   const maxSec =
@@ -485,34 +507,303 @@ console.log('queries: blocksForDuration vs the scheduler stop condition');
     const mode = overlap ? 'seamless' : 'economy';
     let mismatch = null;
     let uncovered = null;
+    let overshot = null;
     for (let sec = MIN_REQUEST_SECONDS; sec <= maxSec; sec += MIN_REQUEST_SECONDS) {
       const w = walk(sec, overlap);
       if (blocksForDuration(sec, overlap) !== w.opens) {
         mismatch ??= { sec, priced: blocksForDuration(sec, overlap), opened: w.opens };
       }
-      // The run must actually reach the duration the slider sold.
-      if (w.coverTo < sec) uncovered ??= { sec, coverTo: w.coverTo };
+      // Coverage may now fall SHORT by less than one contract minimum (the
+      // dropped remainder) — but never by more, and never long by more.
+      if (sec - w.coverTo >= MIN_REQUEST_SECONDS) uncovered ??= { sec, coverTo: w.coverTo };
+      if (w.coverTo - sec >= MIN_REQUEST_SECONDS) overshot ??= { sec, coverTo: w.coverTo };
     }
-    ok(`${mode}: priced blocks == blocks actually opened, every slider position`,
+    ok(`${mode}: priced blocks == blocks actually opened, every length`,
       mismatch === null, mismatch && JSON.stringify(mismatch));
-    ok(`${mode}: the run covers the duration the slider sold`,
+    ok(`${mode}: the run covers the length sold, to within one contract minimum`,
       uncovered === null, uncovered && JSON.stringify(uncovered));
+    ok(`${mode}: the run never stays staked a whole block past the ask`,
+      overshot === null, overshot && JSON.stringify(overshot));
   }
-  // The specific regressions the reviewer measured against the real provider.
-  ok('seamless 2-block purchase prices 3 opens (was 2)',
-    blocksForDuration(2 * MIN_REQUEST_SECONDS, true) === 3);
-  ok('seamless max prices 103 opens (was 94)',
-    blocksForDuration(maxSec, true) === 103);
-  // Economy's count moves with its stride (block + CLOSE_BUFFER_SEC), so derive
-  // it rather than pinning a literal that rots whenever the buffer changes. The
-  // load-bearing claim is that it differs from the naive ceil(target/block) = 94.
-  const econExpected =
-    Math.max(1, Math.ceil((maxSec - MIN_REQUEST_SECONDS) / strideSeconds(false)) + 1);
-  ok(`economy max prices ${econExpected} opens, not the naive 94`,
-    blocksForDuration(maxSec, false) === econExpected && econExpected !== 94);
+  // The overlap used to cost a whole extra block here: a 2-block purchase
+  // opened 3, because the 25s the overlap left uncovered pulled in a full third
+  // block. It now stops 25s short instead — a rounding the user cannot feel,
+  // against a third stake they certainly could.
+  ok('a 2-block ask is 2 blocks, not 3 (the overlap no longer buys one)',
+    blocksForDuration(2 * MIN_REQUEST_SECONDS, true) === 2);
+  ok('and the shortfall is exactly the overlap, nothing more',
+    2 * MIN_REQUEST_SECONDS - walk(2 * MIN_REQUEST_SECONDS, true).coverTo === OVERLAP_SEC);
+  // Counts are derived, never pinned as literals: the old 103/92 encoded the
+  // full-size-final-block behaviour that adversarial review found was costing
+  // users a whole extra block of lockup. The load-bearing claim is that the
+  // count is the walked one AND differs from the naive ceil(target/block) = 94.
+  for (const overlap of [true, false]) {
+    const mode = overlap ? 'seamless' : 'economy';
+    const walked = walk(maxSec, overlap).opens;
+    ok(`${mode} max prices ${walked} opens, not the naive 94`,
+      blocksForDuration(maxSec, overlap) === walked && walked !== 94);
+  }
   ok('a single block is 1 in both modes',
     blocksForDuration(MIN_REQUEST_SECONDS, true) === 1 &&
     blocksForDuration(MIN_REQUEST_SECONDS, false) === 1);
+}
+
+// ---- the same accounting at the SEVEN-DAY block unit -------------------------
+// The block unit is a parameter now: a session shorter than the chain's cap is
+// bought outright as ONE block of exactly that length, and only a longer span
+// chains cap-sized blocks. The twin invariant above has to hold at that unit
+// too, or a "2 years" plan prices a different number of week-long stakes than
+// it opens — and each of those is orders of magnitude larger than a 305s one.
+console.log('');
+console.log('queries: block accounting at the 7-day cap unit');
+{
+  const CAP = 7 * 24 * 60 * 60;
+  // Same rule as the scheduler: last block cut to the remainder, sub-minimum
+  // remainders dropped rather than rounded up to a whole week.
+  const walk = (targetSec, overlap, unit) => {
+    let endsAt = Math.max(
+      MIN_REQUEST_SECONDS,
+      Math.min(unit, Math.max(targetSec, MIN_REQUEST_SECONDS)),
+    );
+    let opens = 1;
+    for (;;) {
+      if (targetSec - endsAt < MIN_REQUEST_SECONDS) return { opens, coverTo: endsAt };
+      const fireAt = overlap ? endsAt - OVERLAP_SEC : endsAt + CLOSE_BUFFER_SEC;
+      const next = Math.max(MIN_REQUEST_SECONDS, Math.min(unit, targetSec - fireAt));
+      endsAt = fireAt + next;
+      opens++;
+      if (opens > 5000) return { opens, coverTo: endsAt }; // runaway guard
+    }
+  };
+  for (const overlap of [true, false]) {
+    const mode = overlap ? 'seamless' : 'economy';
+    let mismatch = null;
+    let uncovered = null;
+    // A year of week-long blocks, stepped by the day — dense enough to catch an
+    // off-by-one at a boundary without walking two years of seconds.
+    for (let sec = CAP; sec <= 366 * 24 * 60 * 60; sec += 24 * 60 * 60) {
+      const w = walk(sec, overlap, CAP);
+      if (blocksForDuration(sec, overlap, CAP) !== w.opens) {
+        mismatch ??= { sec, priced: blocksForDuration(sec, overlap, CAP), opened: w.opens };
+      }
+      // A dropped remainder may leave the run short — by seconds, never by a
+      // block. The bound is the claim; exact coverage is not achievable once
+      // sub-minimum remainders are (correctly) refused.
+      if (sec - w.coverTo >= MIN_REQUEST_SECONDS) uncovered ??= { sec, coverTo: w.coverTo };
+    }
+    ok(`${mode} @7d: priced blocks == blocks actually opened`,
+      mismatch === null, mismatch && JSON.stringify(mismatch));
+    ok(`${mode} @7d: the run covers the length sold, to within one contract minimum`,
+      uncovered === null, uncovered && JSON.stringify(uncovered));
+  }
+  // A session AT or UNDER the cap is one block — the whole point of the change.
+  // If this ever prices >1, a 1-day session silently became a chain of stakes.
+  ok('a session at the cap is exactly one block',
+    blocksForDuration(CAP, true, CAP) === 1 &&
+    blocksForDuration(CAP, false, CAP) === 1);
+  ok('a 1-day session bought as one block prices 1',
+    blocksForDuration(86400, true, 86400) === 1 &&
+    blocksForDuration(86400, false, 86400) === 1);
+  // 2 years is the operator's own example. It must be a finite, sane plan.
+  const twoYears = blocksForDuration(2 * 365 * 24 * 60 * 60, false, CAP);
+  ok(`2 years chains ${twoYears} week-long sessions (>100, <120)`,
+    twoYears > 100 && twoYears < 120);
+  // The default argument is what keeps every pre-existing caller correct.
+  ok('blockSeconds defaults to the 305s floor',
+    blocksForDuration(3600, true) === blocksForDuration(3600, true, MIN_REQUEST_SECONDS) &&
+    strideSeconds(true) === strideSeconds(true, MIN_REQUEST_SECONDS));
+}
+
+// ---- a chained run must not stay staked past what was asked for --------------
+// Adversarial review finding (HIGH): the final block used to be a full cap-sized
+// one, so an 8-day ask committed MOR for ~14 days and a 14-day ask bought THREE
+// week-long stakes because a 25-second overlap remainder pulled in another whole
+// block. The user's escape from that is an early close, which time-locks stake
+// for ~24h — so the overshoot is not merely idle capital, it is expensive to undo.
+//
+// The rule now: cut the last block to the remainder, and DROP a remainder shorter
+// than the contract minimum rather than round it up to a whole block.
+console.log('');
+console.log('queries: a chained run stops at the length that was sold');
+{
+  const CAP = 7 * 24 * 60 * 60;
+  const DAY = 24 * 60 * 60;
+  // Where the run's cover actually ends, walking the same rule the scheduler
+  // walks (planBlocks returns the lengths; this re-derives the wall-clock end).
+  const coverEnd = (targetSec, overlap, unit) => {
+    const lens = planBlocks(targetSec, overlap, unit);
+    let endsAt = lens[0];
+    for (let i = 1; i < lens.length; i++) {
+      const fireAt = overlap ? endsAt - OVERLAP_SEC : endsAt + CLOSE_BUFFER_SEC;
+      endsAt = fireAt + lens[i];
+    }
+    return endsAt;
+  };
+
+  // Scanned at BOTH units and every second in the small-unit range, not just
+  // whole days at the cap. Re-review caught the earlier version overclaiming
+  // "0s worst case": economy can genuinely overshoot by up to CLOSE_BUFFER_SEC
+  // at the 305s unit (targetSec - fireAt lands at 297..304 and is lifted to
+  // 305). The claim that matters is the BOUND — under one contract minimum —
+  // not a zero, so scan wide enough to see the real worst case and assert that.
+  for (const overlap of [true, false]) {
+    const mode = overlap ? 'seamless' : 'economy';
+    let worst = { sec: 0, over: -Infinity, unit: 0 };
+    const see = (sec, unit) => {
+      const over = coverEnd(sec, overlap, unit) - sec;
+      if (over > worst.over) worst = { sec, over, unit };
+    };
+    // Whole days from just past the cap to two years, at the 7-day unit.
+    for (let sec = CAP + DAY; sec <= 730 * DAY; sec += DAY) see(sec, CAP);
+    // Every second across several blocks at the 305s unit — this is where the
+    // close-buffer overshoot actually lives.
+    for (let sec = MIN_REQUEST_SECONDS; sec <= 4000; sec += 1) {
+      see(sec, MIN_REQUEST_SECONDS);
+    }
+    ok(`${mode}: never staked a whole block past the ask (worst ${worst.over}s at unit ${worst.unit})`,
+      worst.over < MIN_REQUEST_SECONDS, JSON.stringify(worst));
+  }
+
+  // The arithmetic behind a UI defect re-review found: just past the cap the
+  // remainder is under the contract minimum and gets dropped, so the plan is
+  // still ONE block. "Longer than one session" and "renews" are different
+  // questions in a 304-second window, and the UI must ask the second one.
+  ok('just past the cap is still a single block',
+    blocksForDuration(CAP + 1, true, CAP) === 1 &&
+    blocksForDuration(CAP + MIN_REQUEST_SECONDS - 1, true, CAP) === 1);
+  ok('a full contract minimum past the cap does chain',
+    blocksForDuration(CAP + MIN_REQUEST_SECONDS, true, CAP) === 2);
+
+  // The two cases the reviewer measured, by name.
+  ok('8 days is 2 blocks, not 2 blocks running 14 days',
+    planBlocks(8 * DAY, true, CAP).length === 2 &&
+    coverEnd(8 * DAY, true, CAP) === 8 * DAY);
+  ok('14 days seamless is 2 week-blocks, not 3',
+    planBlocks(14 * DAY, true, CAP).length === 2);
+  ok('the 25s remainder is dropped, not rounded up to another week',
+    14 * DAY - coverEnd(14 * DAY, true, CAP) === OVERLAP_SEC);
+  // Under-delivery is bounded too: stopping early is the cheap direction, but it
+  // must be seconds, never hours.
+  ok('a dropped remainder is under 5 minutes short, never more',
+    14 * DAY - coverEnd(14 * DAY, true, CAP) < MIN_REQUEST_SECONDS);
+
+  // The last block really is shorter — the fix, not just the count.
+  const eightDay = planBlocks(8 * DAY, true, CAP);
+  ok('the final block is the remainder, not a full unit',
+    eightDay[0] === CAP && eightDay[1] < CAP && eightDay[1] === 8 * DAY - (CAP - OVERLAP_SEC));
+
+  // A session inside the cap is untouched by any of this.
+  ok('a session inside the cap is still exactly one full-length block',
+    planBlocks(DAY, true, DAY).length === 1 &&
+    planBlocks(DAY, true, DAY)[0] === DAY &&
+    coverEnd(DAY, true, DAY) === DAY);
+  ok('every planned block is at least the contract minimum',
+    planBlocks(2 * 365 * DAY, false, CAP).every((l) => l >= MIN_REQUEST_SECONDS));
+  ok('blocksForDuration is just the plan length',
+    blocksForDuration(8 * DAY, true, CAP) === planBlocks(8 * DAY, true, CAP).length);
+
+  // The 305s path the old rolling behaviour used must be unchanged.
+  ok('the default unit still prices a single minimum block as 1',
+    planBlocks(MIN_REQUEST_SECONDS, true).length === 1 &&
+    planBlocks(MIN_REQUEST_SECONDS, false).length === 1);
+}
+
+// ---- typed session lengths --------------------------------------------------
+// This parser turns text into a number that is multiplied into a stake, so its
+// failure mode is financial, not cosmetic. The cases below pin the two ways it
+// could quietly cost money: guessing a missing unit, and confusing two units
+// that share a prefix.
+console.log('');
+console.log('duration: parsing a typed session length');
+{
+  const sec = (s) => {
+    const r = parseDuration(s);
+    return r.ok ? r.seconds : null;
+  };
+  ok('"1 day" = 86400', sec('1 day') === 86400);
+  ok('"2 years" = 2 * 365d', sec('2 years') === 2 * 365 * 86400);
+  ok('"90m" = 5400', sec('90m') === 5400);
+  ok('"1.5 hours" = 5400', sec('1.5 hours') === 5400);
+  ok('"8 hours" = 28800', sec('8 hours') === 28800);
+  ok('case and spacing are irrelevant',
+    sec(' 1 DAY ') === 86400 && sec('1day') === 86400);
+  ok('every alias of a unit agrees',
+    sec('1 y') === sec('1 yr') && sec('1 yr') === sec('1 year'));
+
+  // The prefix trap: 'm' is minutes and 'mo' is months. Getting this wrong is a
+  // 43,200x error in the stake, which is why matching is exact-alias only.
+  ok('"5 m" is five MINUTES', sec('5 m') === 300);
+  ok('"5 mo" is five MONTHS', sec('5 mo') === 5 * 30 * 86400);
+
+  // A bare number is refused, not assumed. "5" meaning minutes when the user
+  // meant days (or the reverse) is a 288x error nobody would catch.
+  const bare = parseDuration('5');
+  ok('a bare number does not parse', bare.ok === false);
+  ok('a bare number reads as incomplete, not wrong', bare.incomplete === true);
+  ok('mid-word units read as incomplete', parseDuration('2 ye').incomplete === true);
+  ok('a real non-unit is an error, not incomplete',
+    parseDuration('2 bananas').ok === false &&
+    parseDuration('2 bananas').incomplete === false);
+  ok('junk does not parse', parseDuration('soon').ok === false);
+  ok('zero does not parse', parseDuration('0 days').ok === false);
+  ok('negatives do not parse', parseDuration('-1 day').ok === false);
+  ok('past the 10-year ceiling does not parse',
+    parseDuration('11 years').ok === false &&
+    parseDuration('10 years').ok === true);
+
+  // Suggestions complete the unit; they never constrain the field.
+  const s2 = durationSuggestions('2 m');
+  ok('"2 m" suggests both minutes and months',
+    s2.includes('2 minutes') && s2.includes('2 months'));
+  ok('suggestions are whole phrases (a datalist replaces the whole value)',
+    s2.every((x) => /^2 [a-z]+$/.test(x)));
+  ok('a scalar of 1 suggests singular units',
+    durationSuggestions('1 d').includes('1 day'));
+  ok('an empty field still offers a vocabulary',
+    durationSuggestions('').length > 0);
+  ok('every suggestion parses back to a real duration',
+    durationSuggestions('3 ').every((x) => parseDuration(x).ok));
+
+  ok('formatDurationLong reads back what was typed',
+    formatDurationLong(86400) === '1 day' &&
+    formatDurationLong(2 * 365 * 86400) === '2 years' &&
+    formatDurationLong(305) === '5 minutes 5 seconds');
+
+  // EXACT, not a summary. A capped unit count quietly dropped up to 24 hours of
+  // a length the user is paying to stake for. Re-add the seconds the words name
+  // and they must come back to the input exactly, for every value.
+  {
+    const UNIT_SEC = {
+      year: 365 * 86400, years: 365 * 86400,
+      month: 30 * 86400, months: 30 * 86400,
+      day: 86400, days: 86400,
+      hour: 3600, hours: 3600,
+      minute: 60, minutes: 60,
+      second: 1, seconds: 1,
+    };
+    const readBack = (text) => {
+      const parts = text.split(' ');
+      let total = 0;
+      for (let i = 0; i < parts.length; i += 2) {
+        total += Number(parts[i]) * UNIT_SEC[parts[i + 1]];
+      }
+      return total;
+    };
+    let lossy = null;
+    for (const sec of [
+      305, 86400, 2 * 365 * 86400, 62535888, 98668799,
+      // 1.983 years and 3y1mo16d — the two the reviewer measured as lossy.
+      Math.round(1.983 * 365 * 86400), 7 * 86400 + 1, 31536000 - 1,
+    ]) {
+      if (readBack(formatDurationLong(sec)) !== sec) {
+        lossy ??= { sec, text: formatDurationLong(sec), readBack: readBack(formatDurationLong(sec)) };
+      }
+    }
+    ok('the echo names every second it stakes (no silent truncation)',
+      lossy === null, lossy && JSON.stringify(lossy));
+  }
+  ok('formatDurationShort is compact',
+    formatDurationShort(28800) === '8h' && formatDurationShort(305) === '5m 5s');
 }
 
 // ---- chat -> session binding (parallel sessions) ---------------------------

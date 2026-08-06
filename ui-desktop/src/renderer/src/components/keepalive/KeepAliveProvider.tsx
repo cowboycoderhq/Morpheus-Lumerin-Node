@@ -12,9 +12,18 @@ import selectors from '../../store/selectors';
 import { withClient } from '../../store/hocs/clientContext';
 import { ToastsContext } from '../toasts';
 
-// A rolling ("keep-alive") session chains 6-minute stakes to the same model so a
-// user stays in inference for a chosen window while only ~one 6-minute stake is
-// ever locked. This lives ABOVE the tab router (mounted in Router.tsx) so the
+// Runs a session of a chosen length against one model.
+//
+// The length the user asks for sets the STAKE: the router derives the stake from
+// the duration we send, so a 1-day session is simply a 1-day open. When the ask
+// fits inside the chain's per-session cap (getMaxSessionDuration — 7 days at
+// present) that is the whole story: ONE block, opened once, no restaking.
+//
+// Only a span LONGER than the cap has to be chained, because the chain will not
+// sell a longer session at any stake — `SessionRouter.getSessionEnd` clamps the
+// duration and the surplus stake just sits there. Those spans chain cap-sized
+// blocks, and everything below about overlap, refunds and never closing early is
+// what makes that chaining safe. This lives ABOVE the tab router (mounted in Router.tsx) so the
 // restaking keeps going even when the user leaves the Chat tab — the whole point
 // of "keep-alive". Chat consumes this context for its badge and to route
 // inference to the current block.
@@ -50,22 +59,78 @@ export const REOPEN_DELAY_SEC = CLOSE_BUFFER_SEC; // kept: strideSeconds still p
 // seamless (measured: 2 priced, 3 opened) and over-counts economy (94 priced, 91
 // opened). Every consumer that needs a block COUNT must go through
 // blocksForDuration so the affordability gate prices what the loop actually opens.
-export const strideSeconds = (overlap: boolean): number =>
-  overlap
-    ? MIN_REQUEST_SECONDS - OVERLAP_SEC
-    : MIN_REQUEST_SECONDS + REOPEN_DELAY_SEC;
+//
+// `blockSeconds` is the length of ONE staked block and defaults to the 305s
+// floor. It is a parameter rather than a constant because the chain caps a
+// single session (getMaxSessionDuration, 7 days at present): a session SHORTER
+// than the cap is bought outright as a one-block run of exactly that length,
+// and only a span LONGER than the cap has to be chained — out of cap-sized
+// blocks, not 305s ones. Same loop, same fund-safety rules, different unit.
+export const strideSeconds = (
+  overlap: boolean,
+  blockSeconds: number = MIN_REQUEST_SECONDS,
+): number =>
+  overlap ? blockSeconds - OVERLAP_SEC : blockSeconds + REOPEN_DELAY_SEC;
 
-// Blocks needed to cover targetSec. Block 1 covers MIN_REQUEST_SECONDS; each
-// further block advances one stride. Mirrors scheduleNext's stop condition
-// (`endsAt >= targetEndTime`) exactly — if one changes, the other must.
+// Ceiling on a single setTimeout. Node/Chromium store the delay in a signed
+// 32-bit int; anything above 2^31-1 ms silently becomes 1ms — which here would
+// turn a long wait into a tight loop that opens a full-size stake per iteration.
+// Long waits are armed in chunks below this instead.
+export const MAX_TIMER_MS = 2_000_000_000;
+
+/**
+ * The blocks a run will actually open, in order, with their lengths.
+ *
+ * Two rules make this different from a naive ceil(target / blockSeconds), and
+ * both exist because the alternative costs real money:
+ *
+ *  - The LAST block is cut to the remainder. A full-size final block is the
+ *    difference between "8 days" costing eight days of lockup and costing
+ *    fourteen — the surplus buys time the user did not ask for and cannot get
+ *    back without an early close (which time-locks stake for ~24h).
+ *  - A remainder shorter than the contract minimum is DROPPED, not rounded up
+ *    to a whole block. Covering the last 25 seconds of a 14-day ask would
+ *    otherwise stake for another entire week.
+ *
+ * The scheduler mirrors this exactly (see scheduleNext). They are twins: pricing
+ * that disagrees with the loop is the wallet paying a number the user was never
+ * shown.
+ */
+export const planBlocks = (
+  targetSec: number,
+  overlap: boolean,
+  blockSeconds: number = MIN_REQUEST_SECONDS,
+): number[] => {
+  const unit = Math.max(
+    MIN_REQUEST_SECONDS,
+    Math.min(blockSeconds, Math.max(targetSec, MIN_REQUEST_SECONDS)),
+  );
+  const lengths = [unit];
+  let endsAt = unit;
+  // Bounded so a pathological input cannot spin here. 10 years of 5-minute
+  // blocks is the worst case the typed-length ceiling permits.
+  for (let guard = 0; guard < 200000; guard++) {
+    if (targetSec - endsAt < MIN_REQUEST_SECONDS) {
+      break;
+    }
+    const fireAt = overlap ? endsAt - OVERLAP_SEC : endsAt + CLOSE_BUFFER_SEC;
+    const next = Math.max(
+      MIN_REQUEST_SECONDS,
+      Math.min(unit, targetSec - fireAt),
+    );
+    lengths.push(next);
+    endsAt = fireAt + next;
+  }
+  return lengths;
+};
+
+// How many blocks a run costs. This is what the affordability gate prices and
+// what the UI promises, so it must equal what the loop opens.
 export const blocksForDuration = (
   targetSec: number,
   overlap: boolean,
-): number =>
-  Math.max(
-    1,
-    Math.ceil((targetSec - MIN_REQUEST_SECONDS) / strideSeconds(overlap)) + 1,
-  );
+  blockSeconds: number = MIN_REQUEST_SECONDS,
+): number => planBlocks(targetSec, overlap, blockSeconds).length;
 
 export interface KeepAliveStatus {
   running: boolean;
@@ -80,6 +145,13 @@ interface KeepAliveRun extends KeepAliveStatus {
   isDirectPay: boolean;
   bidId: string | null; // fixed provider for every block, or null = router picks
   overlap: boolean; // true = seamless (open N+1 before N ends, 2x stake); false = economy (sequential, 1x, small gap)
+  // Length of ONE block of this run. A run whose target fits inside the chain's
+  // per-session cap has blockSeconds === its whole target and opens exactly one
+  // block; only a longer span chains cap-sized blocks.
+  blockSeconds: number;
+  // Length of the NEXT block, which is the remainder rather than a full unit
+  // once the run is nearly done. Set by scheduleNext, read by tick.
+  nextBlockSeconds: number;
   id: number; // monotonic run token; guards against a stale tick acting on a new run
   // Per-run timer. This used to be one module-level ref, which is precisely what
   // made runs mutually exclusive: a second run's schedule overwrote the first's
@@ -99,11 +171,15 @@ interface KeepAliveRun extends KeepAliveStatus {
 export interface StartKeepAliveOpts {
   modelId: string;
   chatId: string;
-  // SECONDS, not minutes. The slider steps in whole 305s blocks, so a minutes
-  // round-trip (sec/60 here, *60 there) reintroduced float error: (16165/60)*60
-  // = 16165.000000000002, which shifted the block count by one at one slider
-  // position out of 94. Seconds are exact.
+  // SECONDS, not minutes. A minutes round-trip (sec/60 here, *60 there)
+  // reintroduces float error: (16165/60)*60 = 16165.000000000002, which shifted
+  // the block count by one at one length out of 94 when this was a slider.
+  // Seconds are exact, and a typed "2 years" makes the range far wider still.
   totalSeconds: number;
+  // Length of one staked block. Defaults to the 305s floor (the old rolling
+  // behaviour). Pass the whole target to buy a single session outright, or the
+  // chain's per-session cap to chain the longest blocks the chain will sell.
+  blockSeconds?: number;
   isDirectPay: boolean;
   // MOR one block of this run stakes. Recorded so the provider can tell a new
   // run's affordability gate what the existing runs still need.
@@ -317,13 +393,16 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       .catch((e: any) => console.warn('keep-alive: bind not persisted', e));
   };
 
-  // Open ONE 6-minute block (replicates withChatState.onOpenSession's router call,
-  // reusable outside the Chat component). With a bidId, stakes against that
-  // specific provider; without, the router picks one. Returns the session id.
+  // Open ONE block of `blockSeconds` (replicates withChatState.onOpenSession's
+  // router call, reusable outside the Chat component). With a bidId, stakes
+  // against that specific provider; without, the router picks one. The router
+  // derives the STAKE from this duration, which is what makes the typed session
+  // length the thing that sets the stake. Returns the session id.
   const openBlock = async (
     modelId: string,
     isDirectPay: boolean,
     bidId: string | null,
+    blockSeconds: number = MIN_REQUEST_SECONDS,
   ) => {
     const failover = await client.getFailoverSetting();
     const authHeaders = await client.getAuthHeaders();
@@ -334,7 +413,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       method: 'POST',
       body: JSON.stringify({
         failover: failover?.isEnabled || false,
-        sessionDuration: MIN_REQUEST_SECONDS,
+        sessionDuration: blockSeconds,
         directPayment: isDirectPay,
       }),
       headers: authHeaders,
@@ -409,6 +488,44 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     return false;
   };
 
+  // Arm a timer that may be days away.
+  //
+  // setTimeout stores its delay in a signed 32-bit int: anything past ~24.9 days
+  // silently becomes 1ms. At the 305s block unit that could never happen, but the
+  // block unit is the chain's per-session cap now — an owner raising it (or a
+  // wrong-contract read returning a uint128 max) would turn a long wait into a
+  // tight loop opening a FULL-SIZE stake per iteration until the wallet empties.
+  // Wait in chunks instead, re-checking run identity at every hop so a stopped or
+  // superseded run never wakes up.
+  const armTimer = (
+    run: KeepAliveRun,
+    key: string,
+    delayMs: number,
+    fire: () => void,
+  ) => {
+    const myId = run.id;
+    const hop = (remaining: number) => {
+      const live = runsRef.current!.get(key);
+      if (!live || live.id !== myId) {
+        return;
+      }
+      const slice = Math.min(Math.max(0, remaining), MAX_TIMER_MS);
+      live.timer = setTimeout(() => {
+        const still = runsRef.current!.get(key);
+        if (!still || still.id !== myId) {
+          return;
+        }
+        const left = remaining - slice;
+        if (left > 0) {
+          hop(left);
+          return;
+        }
+        fire();
+      }, slice);
+    };
+    hop(delayMs);
+  };
+
   // Forward-declared so tick and scheduleNext can reference each other.
   const scheduleNextRef = useRef<(key: string, session: any) => void>(() => {});
 
@@ -423,6 +540,14 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     // block the user never asked for. With several runs that is one wasted stake
     // each, silently, on wake. Re-check at spend time, not only at plan time.
     if (Math.floor(Date.now() / 1000) >= run.targetEndTime) {
+      stop(key);
+      return;
+    }
+    // The same count cap scheduleNext applies, re-checked at SPEND time. A timer
+    // armed before the last block landed can still be in flight, and the whole
+    // point of the cap is that no amount of clock skew or latency can make a run
+    // open more stakes than were priced and disclosed.
+    if (run.openedSessionIds.length >= run.total) {
       stop(key);
       return;
     }
@@ -457,7 +582,14 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
           return;
         }
       }
-      const newId = await openBlock(run.modelId, run.isDirectPay, run.bidId);
+      const newId = await openBlock(
+        run.modelId,
+        run.isDirectPay,
+        run.bidId,
+        // The remainder, not a full unit — scheduleNext sized it. Opening the
+        // full unit here is what made an 8-day ask lock MOR for fourteen.
+        run.nextBlockSeconds || run.blockSeconds,
+      );
       if (!newId) {
         throw new Error('no session id returned');
       }
@@ -507,22 +639,42 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       stop(key);
       return;
     }
-    // This block already covers the target: no more restakes. Test the block's
-    // OWN expiry, not `nowSec + MIN_REQUEST_SECONDS` — the next block would start
-    // at `fireAt` (one stride away), not one full block away, so the old form
-    // under-counted seamless by OVERLAP_SEC per block and kept opening: a 2-block
-    // purchase ran 3 blocks, a 94-block one ran 103. This predicate is the twin of
-    // blocksForDuration; changing either alone re-opens that gap.
+    // Three independent reasons to stop opening. Each is a spend the user did
+    // not agree to, so they are all checked before any restake.
+    //
+    //  (a) COUNT. Never open more blocks than the affordability gate priced.
+    //      This is the hard one, and it is what makes a single-block session
+    //      truly single: (b) below compares a CHAIN timestamp against a LOCAL
+    //      deadline, so a local clock running slightly fast — or a block that
+    //      the contract truncated a second short — made a 1-day session open a
+    //      SECOND full-length stake. The gate had approved 1x, the disclosure
+    //      promised one stake, and the wallet paid twice. A count that cannot
+    //      be reached by any amount of skew is the fix; the clock comparison
+    //      alone never could be.
+    //  (b) COVERED. This block already reaches the target.
+    //  (c) REMAINDER TOO SMALL. What is left is shorter than the shortest
+    //      session the chain sells, so covering it would mean staking a whole
+    //      further block for a few seconds of time. Stopping a hair early is
+    //      strictly cheaper than that, and honest: the plan priced it this way.
+    //
+    // This predicate is the twin of planBlocks; changing either alone puts the
+    // quote and the wallet back out of step.
     //
     // DON'T drop the session here — the current block keeps serving until it
-    // lapses, and for a single-block (minimum-duration) run this IS the only
-    // block. Keep the status live until it actually ends, then clear. (Clearing
-    // immediately bounced a 5-minute min-duration session back to the picker.)
-    if (endsAt >= run.targetEndTime) {
+    // lapses, and for a single-block run this IS the only block. Keep the status
+    // live until it actually ends, then clear. (Clearing immediately bounced a
+    // 5-minute min-duration session back to the picker.)
+    const openedSoFar = run.openedSessionIds.length;
+    const remainingSec = run.targetEndTime - endsAt;
+    if (
+      openedSoFar >= run.total ||
+      remainingSec < MIN_REQUEST_SECONDS ||
+      endsAt >= run.targetEndTime
+    ) {
       const clearDelayMs = Math.max(0, (endsAt - nowSec) * 1000);
       const myId = run.id;
       clearRunTimer(run);
-      run.timer = setTimeout(() => {
+      armTimer(run, key, clearDelayMs, () => {
         // Identity-checked: a NEW run may have been started on this same chat
         // during the wait, and clearing by key alone would delete that live run.
         const dying = runsRef.current!.get(key);
@@ -534,7 +686,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
           runsRef.current!.delete(key);
           publish();
         }
-      }, clearDelayMs);
+      });
       return;
     }
     // Seamless: open N+1 just BEFORE N ends (overlap → gapless, 2x stake).
@@ -546,11 +698,18 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     const fireAt = run.overlap
       ? endsAt - OVERLAP_SEC
       : endsAt + CLOSE_BUFFER_SEC;
+    // Cut the NEXT block to what is actually still needed. A run whose last
+    // block is full-size stakes for time nobody asked for — at the 7-day unit
+    // that is up to a week of a large stake locked past the end of the session.
+    run.nextBlockSeconds = Math.max(
+      MIN_REQUEST_SECONDS,
+      Math.min(run.blockSeconds, run.targetEndTime - fireAt),
+    );
     const delayMs = Math.max(0, (fireAt - nowSec) * 1000);
     clearRunTimer(run);
-    run.timer = setTimeout(() => {
+    armTimer(run, key, delayMs, () => {
       void tick(key);
-    }, delayMs);
+    });
   };
   scheduleNextRef.current = scheduleNext;
 
@@ -559,6 +718,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       modelId,
       chatId,
       totalSeconds,
+      blockSeconds = MIN_REQUEST_SECONDS,
       isDirectPay,
       bidId = null,
       overlap = true,
@@ -579,7 +739,13 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
         return next;
       });
       const myId = ++runCounterRef.current;
-      const total = blocksForDuration(totalSeconds, overlap);
+      // A block never runs longer than the target: buying a 5-minute session
+      // must not open a 7-day one because the caller passed the cap as the unit.
+      const unit = Math.max(
+        MIN_REQUEST_SECONDS,
+        Math.min(blockSeconds, totalSeconds),
+      );
+      const total = blocksForDuration(totalSeconds, overlap, unit);
       const targetEndTime = Math.floor(Date.now() / 1000) + totalSeconds;
       runsRef.current!.set(chatId, {
         running: true,
@@ -591,6 +757,8 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
         isDirectPay,
         bidId,
         overlap,
+        blockSeconds: unit,
+        nextBlockSeconds: unit,
         id: myId,
         timer: null,
         openedSessionIds: [],
@@ -600,7 +768,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
 
       let firstSession: any = null;
       try {
-        const firstId = await openBlock(modelId, isDirectPay, bidId);
+        const firstId = await openBlock(modelId, isDirectPay, bidId, unit);
         if (!firstId) {
           throw new Error('no session id returned');
         }

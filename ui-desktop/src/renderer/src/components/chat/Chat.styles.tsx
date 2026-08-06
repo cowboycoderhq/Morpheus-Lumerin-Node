@@ -97,6 +97,15 @@ export const ChatHistoryContainer = styled.div`
   width: 100%;
 `;
 
+// Top-anchored, NOT vertically centred.
+//
+// Centring means every height change inside the card moves its contents both
+// up and down — so typing "1 month", which legitimately needs more text than
+// "1 hour" (it becomes a chained plan), dragged the whole panel, including the
+// field being typed into. Anchored to the top, growth only ever pushes
+// downward: the provider row and the length field stay exactly where they are
+// while the explanation below them grows. Content appearing below the cursor is
+// what a reader expects; content sliding out from under it is not.
 export const ChatIntroContainer = styled.div`
   width: 100%;
   flex: 1 1 auto;
@@ -104,8 +113,9 @@ export const ChatIntroContainer = styled.div`
   overflow-y: auto;
   margin-bottom: 20px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  padding-top: 2.4rem;
 `;
 
 export const ChatIntroInner = styled.div`
@@ -204,40 +214,182 @@ export const KeepAliveLabel = styled.span`
   margin-right: 0.2rem;
 `;
 
-export const SessionLengthSlider = styled.input.attrs({ type: 'range' })`
+// The length is TYPED, not dragged. A slider cannot span 5 minutes to years
+// without becoming useless at one end, and the value here is a money input —
+// it multiplies straight into a stake — so it gets a field the user can read
+// back and check, not a thumb position they have to trust.
+//
+// Solid fill, no glass or glow: this is a money surface (repo invariant).
+export const SessionLengthInput = styled.input.attrs({
+  type: 'text',
+  inputMode: 'text',
+  autoComplete: 'off',
+  spellCheck: false,
+})<{ $invalid?: boolean }>`
   flex: 1;
-  min-width: 120px;
-  height: 4px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: ${(p) => p.theme.colors.brandTint(0.25)};
-  border-radius: ${(p) => p.theme.radii.pill};
-  outline: none;
-  cursor: pointer;
-
-  &::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: ${(p) => p.theme.colors.morMain};
-    border: 2px solid ${(p) => p.theme.colors.brandTint(0.85)};
-    cursor: pointer;
-  }
-  &:focus-visible {
-    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.5)};
-    outline-offset: 4px;
-  }
-`;
-
-export const SessionLengthValue = styled.span`
-  min-width: 68px;
-  text-align: right;
+  min-width: 140px;
+  max-width: 220px;
+  padding: 0.45rem 0.7rem;
   font-family: inherit;
   font-size: ${(p) => p.theme.type.sm};
   font-weight: 600;
-  color: ${(p) => p.theme.colors.morMain};
+  /* Plain high-contrast text, NOT the brand accent. The accent is a saturated
+     cyan under Jarvis; on text the user is actively typing and re-reading it is
+     genuinely hard to look at. Accent belongs on chrome and emphasis, not on
+     the glyphs of an input. */
+  color: ${(p) => p.theme.colors.moneySurfaceText};
+  background: ${(p) => p.theme.colors.brandTint(0.08)};
+  border: 1px solid
+    ${(p) =>
+      p.$invalid ? p.theme.colors.warning : p.theme.colors.brandTint(0.35)};
+  border-radius: ${(p) => p.theme.radii.pill};
+  outline: none;
+
+  &::placeholder {
+    color: ${(p) => p.theme.colors.textSecondary};
+    font-weight: 400;
+  }
+  &:focus-visible {
+    border-color: ${(p) => p.theme.colors.morMain};
+    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.5)};
+    outline-offset: 2px;
+  }
+`;
+
+// The parsed length, read back. A quiet confirmation, not a headline — same
+// reasoning as the input above: this sits inches from the field and competing
+// with it in saturated accent is what made the row hard to read.
+//
+// ALWAYS rendered, even when there is nothing to say. Mounting it only when the
+// length parses meant it appeared and vanished between keystrokes ("1 d" ->
+// "1 da" -> "1 day"), resizing the row and shoving the field sideways mid-type.
+export const SessionLengthValue = styled.span`
+  flex: 0 0 auto;
+  min-width: 96px;
+  font-family: inherit;
+  font-size: ${(p) => p.theme.type.sm};
+  font-weight: 600;
+  color: ${(p) => p.theme.colors.textSecondary};
+`;
+
+// --- Unit completion --------------------------------------------------------
+// A hand-built menu rather than a native <datalist>. The datalist is drawn by
+// the browser's own chrome: it cannot take the theme's colours at all, so under
+// either variant it dropped a stock light-grey OS list into the middle of a
+// themed money surface. It also offers no keyboard completion hook, and Tab
+// should finish the unit.
+//
+// Money surface, so it uses the SOLID money tokens — never glass or glow.
+export const SessionLengthField = styled.div`
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 140px;
+  max-width: 220px;
+`;
+
+export const SessionLengthMenu = styled.ul`
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+  background: ${(p) => p.theme.colors.moneySurfaceBg};
+  border: 1px solid ${(p) => p.theme.colors.moneySurfaceBorder};
+  border-radius: ${(p) => p.theme.radii.md};
+  box-shadow: ${(p) => p.theme.shadows.elevated};
+`;
+
+export const SessionLengthOption = styled.li<{ $active?: boolean }>`
+  padding: 0.35rem 0.6rem;
+  border-radius: ${(p) => p.theme.radii.sm};
+  font-size: ${(p) => p.theme.type.sm};
+  font-weight: ${(p) => (p.$active ? 600 : 400)};
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  /* Selection is carried by the WASH, not by recolouring the glyphs — the
+     accent-on-text version was hard to read for the same reason the input was. */
+  color: ${(p) => p.theme.colors.moneySurfaceText};
+  background: ${(p) =>
+    p.$active ? p.theme.colors.brandTint(0.18) : 'transparent'};
+
+  &:hover {
+    background: ${(p) => p.theme.colors.brandTint(0.1)};
+  }
+`;
+
+// A slot that keeps its space whether or not its notice applies.
+//
+// The partial-affordability warning depends on the typed length (a longer
+// session is affordable from fewer providers), so it appeared and vanished
+// between keystrokes — three lines of text popping in and out of a vertically
+// centred card, which moves everything above AND below it. Reserving the space
+// costs a few rem of quiet panel; not reserving it moves the page under the
+// user's hands while they type a number that spends money.
+export const ReservedNotice = styled.div<{ $shown?: boolean }>`
+  visibility: ${(p) => (p.$shown ? 'visible' : 'hidden')};
+`;
+
+// A provider chip's stake figure, which now moves with the typed length
+// ("0.305" -> "86.40" -> "604.80"). Left to size itself it changed every chip's
+// width on each keystroke, re-wrapping the whole provider row ABOVE the field
+// and jolting the field itself down the page. Fixed width, right-aligned: the
+// number changes, the layout does not.
+export const ChipStake = styled.span`
+  display: inline-block;
+  min-width: 6ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+`;
+
+// The Tab affordance. Carried as text — a completion the user cannot discover
+// is the same as no completion.
+export const SessionLengthOptionHint = styled.span`
+  font-size: ${(p) => p.theme.type.xs};
+  color: ${(p) => p.theme.colors.textSecondary};
+  white-space: nowrap;
+`;
+
+// What the typed length actually costs and when the MOR comes back. The stake
+// is refundable collateral, not a fee — but it IS locked for the whole session,
+// so the amount and its return time are the two facts the choice turns on.
+// The slot reserves its height. This text changes on nearly every keystroke —
+// "Type how long…" (1 line) -> "Pricing this length…" -> the stake disclosure
+// (2-3 lines) — and letting it size to its content made the whole page below
+// jump with each character. Reserving three lines absorbs every transition
+// except crossing the cap into a chained plan, which is a real, rare change of
+// state and should be visible.
+export const SessionLengthNote = styled.div`
+  font-size: ${(p) => p.theme.type.sm};
+  color: ${(p) => p.theme.colors.textSecondary};
+  text-align: center;
+  line-height: 1.5;
+  margin: 0.2rem 0 0.5rem;
+  /* Sized for the TALLEST thing this slot ever says (the chained-plan
+     explanation), so the note itself never changes height — not for the
+     shortest, which made it grow by three lines mid-word. The cost is some
+     quiet space under a short message; the alternative is the page moving
+     while a money figure is being typed. */
+  min-height: 7.5em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+`;
+
+// Carried by the TEXT; colour only reinforces it — money surfaces never state
+// anything by colour alone.
+export const SessionLengthError = styled(SessionLengthNote)`
+  color: ${(p) => p.theme.colors.warning};
+  font-weight: 500;
 `;
 
 export const KeepAliveChip = styled.button.attrs({ type: 'button' })<{

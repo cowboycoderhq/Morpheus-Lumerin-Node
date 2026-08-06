@@ -63,8 +63,16 @@ import {
   KeepAliveRow,
   KeepAliveLabel,
   KeepAliveChip,
-  SessionLengthSlider,
+  SessionLengthInput,
+  SessionLengthField,
+  SessionLengthMenu,
+  SessionLengthOption,
+  SessionLengthOptionHint,
+  ChipStake,
+  ReservedNotice,
   SessionLengthValue,
+  SessionLengthNote,
+  SessionLengthError,
 } from './Chat.styles';
 import withChatState from '../../store/hocs/withChatState';
 import { abbreviateAddress } from '../../utils';
@@ -96,6 +104,15 @@ import {
   useKeepAlive,
   blocksForDuration,
 } from '../keepalive/KeepAliveProvider';
+import {
+  parseDuration,
+  durationSuggestions,
+  formatDurationLong,
+} from '../../utils/duration';
+import {
+  getMaxSessionSeconds,
+  FALLBACK_MAX_SESSION_SECONDS,
+} from '../../utils/marketplace';
 import ImageViewer from 'react-simple-image-viewer';
 import { ChatData, HistoryMessage } from './interfaces';
 import { formatMor } from '../../utils/coinValue';
@@ -264,17 +281,23 @@ export const Chat = (props: ChatProps) => {
     );
   };
 
-  // --- Keep-alive (auto-restake) --------------------------------------------
-  // Target total minutes for a rolling session; 0 = off (a single auto-sized
-  // session, the existing behaviour). When > 0, the app chains 6-minute stakes
-  // to cover the window while only ~one increment is ever locked. The restake
-  // LOOP itself lives in KeepAliveProvider (above the tab router) so it survives
-  // navigating away from Chat; this component only drives + reflects it.
-  // Session length in SECONDS, chosen on the slider. Floor is 5:05 (300s
-  // contract minimum + 5s cushion for the stake→duration truncation); max 8h.
-  const [keepAliveTargetSec, setKeepAliveTargetSec] = useState(5 * 60 + 5);
-  // Restake strategy: 'seamless' overlaps blocks (gapless, needs ~2x a block's
-  // stake free) or 'economy' restakes sequentially (1x stake, small gap).
+  // --- Session length --------------------------------------------------------
+  // The user TYPES a length ("1 day", "2 years") and that length sets the stake:
+  // the router derives the stake from the duration we open with. Free text with
+  // an optional unit completion — parseDuration accepts every alias, the
+  // datalist is a convenience and never a constraint.
+  // Defaults to the shortest session the chain sells. The length now sets the
+  // stake, so the default IS a default spend — anything longer would silently
+  // make the untouched path cost more than the control it replaced.
+  const [sessionLengthInput, setSessionLengthInput] = useState('5 minutes');
+  // Unit completion. Open only while the user is actually typing — a menu that
+  // springs open on focus would sit over the Stake button for no reason.
+  const [lengthMenuOpen, setLengthMenuOpen] = useState(false);
+  const [lengthMenuIndex, setLengthMenuIndex] = useState(0);
+  // Restake strategy, and it only matters ABOVE the chain's per-session cap —
+  // below the cap a session is one block and there is nothing to rotate. Kept in
+  // state (not derived) so a user who set it for a long session keeps their
+  // choice while they edit the number.
   const [restakeMode, setRestakeMode] = useState<'seamless' | 'economy'>(
     'seamless',
   );
@@ -602,17 +625,108 @@ export const Chat = (props: ChatProps) => {
   };
 
   const MIN_REQUEST_SECONDS = 5 * 60 + 5; // 305s = 300s contract floor + 5s cushion for stake→duration truncation
+  // SessionStorage.MIN_SESSION_DURATION — what the chain actually refuses below.
+  const CONTRACT_MIN_SESSION_SECONDS = 5 * 60;
 
-  const formatDuration = (totalSec: number) => {
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = Math.floor(totalSec % 60);
-    return (
-      [h ? `${h}h` : '', m ? `${m}m` : '', s ? `${s}s` : '']
-        .filter(Boolean)
-        .join(' ') || '0s'
-    );
+  // The chain's ceiling on ONE session (`getMaxSessionDuration`, 7 days at the
+  // time of writing). Read, never hardcoded — it is owner-settable, and a stale
+  // copy would quote a stake for time the chain will not sell. Cached for the
+  // hour: it does not move, but it can, and a keystroke must not cost a round
+  // trip. Falls back to the deployment value if no ETH node is reachable.
+  const maxSessionQuery = useQuery({
+    queryKey: queryKeys.maxSessionSeconds,
+    staleTime: 60 * 60_000,
+    queryFn: async () => {
+      const cfg: any = await props.client.getProxyRouterDerivedConfig();
+      const rpcUrl = cfg?.DerivedConfig?.EthNodeURLs?.[0] ?? '';
+      return getMaxSessionSeconds(rpcUrl, props.config?.chain?.diamondAddress);
+    },
+  });
+  const maxSessionSeconds =
+    maxSessionQuery.data ?? FALLBACK_MAX_SESSION_SECONDS;
+
+  // What the typed text means, in one place. Everything downstream — the note,
+  // the chips, the affordability gate, the open itself — reads THIS, so the
+  // number the user is shown and the number that gets staked cannot diverge.
+  const parsedLength = parseDuration(sessionLengthInput);
+  const askedSec = parsedLength.ok ? parsedLength.seconds : 0;
+  // Below the contract's 5-minute floor the chain reverts with SessionTooShort().
+  // Say so here rather than letting the user pay gas to find out. The test is
+  // the CONTRACT's 300s, not the app's 305s: "5 minutes" is the most natural way
+  // to ask for the minimum, and refusing it with "the shortest session is 5
+  // minutes" would be a UI arguing with itself.
+  const belowFloor = parsedLength.ok && askedSec < CONTRACT_MIN_SESSION_SECONDS;
+  const sessionLengthValid = parsedLength.ok && !belowFloor;
+  // What is actually opened. The extra 5s is the cushion that keeps the
+  // stake→duration truncation from landing back under the contract minimum.
+  const requestedSec = Math.max(askedSec, MIN_REQUEST_SECONDS);
+  // One block is the whole ask, unless the ask exceeds what the chain will sell
+  // in a single session — then blocks are cap-sized and get chained.
+  const isChainedSession = requestedSec > maxSessionSeconds;
+  const sessionBlockSeconds = isChainedSession
+    ? maxSessionSeconds
+    : requestedSec;
+  // How many blocks this really is. NOT the same question as "is it longer than
+  // the cap": just past the cap the remainder is smaller than the contract
+  // minimum, so it is dropped and the plan is still ONE block. Asking
+  // isChainedSession instead put the UI 304 seconds out of step with the
+  // affordability gate — it offered a renewal mode for a plan with no renewals
+  // and claimed twice the stake was needed, turning away solvent users. Every
+  // "does this renew?" decision reads this count.
+  const sessionBlockCount = blocksForDuration(
+    requestedSec,
+    restakeMode === 'seamless',
+    sessionBlockSeconds,
+  );
+  const sessionRenews = sessionBlockCount > 1;
+  // Unit completions for what has been typed. Capped so the menu cannot grow
+  // tall enough to sit over the Stake button beneath it.
+  const lengthSuggestions = durationSuggestions(sessionLengthInput).slice(0, 5);
+  const activeSuggestion =
+    lengthMenuOpen && lengthSuggestions.length
+      ? lengthSuggestions[
+          Math.min(lengthMenuIndex, lengthSuggestions.length - 1)
+        ]
+      : null;
+
+  const acceptLengthSuggestion = (value: string) => {
+    setSessionLengthInput(value);
+    setLengthMenuOpen(false);
+    setLengthMenuIndex(0);
   };
+
+  // Tab finishes the unit. Deliberately only when the menu is OPEN: with it
+  // closed, Tab keeps its normal meaning and moves focus, so the completion
+  // stays an offer rather than a thing the field forces on you.
+  const onLengthKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      setLengthMenuOpen(false);
+      return;
+    }
+    if (!lengthSuggestions.length) {
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      setLengthMenuOpen(true);
+      setLengthMenuIndex((i) => {
+        const n = lengthSuggestions.length;
+        const next = e.key === 'ArrowDown' ? i + 1 : i - 1 + n;
+        return next % n;
+      });
+      return;
+    }
+    if ((e.key === 'Tab' || e.key === 'Enter') && activeSuggestion) {
+      e.preventDefault();
+      acceptLengthSuggestion(activeSuggestion);
+    }
+  };
+
+  const lengthErrorText = belowFloor
+    ? `The network's shortest session is 5 minutes.`
+    : parsedLength.ok || parsedLength.incomplete
+      ? ''
+      : parsedLength.error;
 
   const calculateAcceptableDuration = (
     pricePerSecond: number,
@@ -829,16 +943,29 @@ export const Chat = (props: ChatProps) => {
     }
   };
 
-  // Start a rolling session that keeps the user in inference for `totalMinutes`
-  // by chaining 6-minute stakes to the same model. The restake LOOP runs in
-  // KeepAliveProvider (above the tab router) so it survives leaving Chat; here we
-  // only gate affordability, seed a fresh chat thread, and hand off to it.
-  const startRolling = async (isDirectPay: boolean) => {
+  // Open a session of the typed length. The length sets the stake: the router
+  // derives the stake from the duration, so this is one open of `requestedSec`
+  // whenever that fits the chain's per-session cap, and a chain of cap-sized
+  // blocks when it does not. The loop runs in KeepAliveProvider (above the tab
+  // router) so it survives leaving Chat; here we only gate affordability, seed a
+  // fresh chat thread, and hand off to it.
+  const startSession = async (isDirectPay: boolean) => {
     // Re-entrancy guard: a rapid double-click must not open two first blocks.
     // NOT gated on "some run is active" any more — starting a rolling session
     // while other chats roll is the point. startRolling always seeds a brand-new
     // chat id, so it can never collide with an existing run.
     if (startingRollingRef.current) {
+      return;
+    }
+    // The button is disabled on an invalid length, but the length is the number
+    // that becomes a stake — re-check it here rather than trusting a disabled
+    // attribute to be the only path in.
+    if (!sessionLengthValid) {
+      props.toasts.toast(
+        'error',
+        lengthErrorText ||
+          'Enter a session length — for example “30 minutes”, “1 day” or “2 years”.',
+      );
       return;
     }
     startingRollingRef.current = true;
@@ -886,22 +1013,32 @@ export const Chat = (props: ChatProps) => {
         // router still rejects an unaffordable open, this gate is the early one.
         console.warn('keep-alive: balance refresh failed, using cached', e);
       }
-      const aff = getStakeAffordability(model.bids, freeMor);
+      const aff = getStakeAffordability(
+        model.bids,
+        freeMor,
+        sessionBlockSeconds,
+      );
       const blockPrice = chosenBid
         ? Number(chosenBid.PricePerSecond)
         : aff.priceForDuration;
-      // Each block stakes only the 6-minute floor; you need ~2x that free so the
-      // next block can open while the current one is still staked (the overlap
-      // that keeps inference gapless).
+      // A block stakes for its OWN length, and that length is now the typed
+      // session (up to the chain's cap) rather than a fixed 6-minute floor —
+      // which is the whole point of the change: the length sets the stake. A
+      // one-block session locks this once; a chained one locks it per block,
+      // twice over at each seamless rotation.
       const perBlockStake = Number(
-        calculateStake(blockPrice, MIN_REQUEST_SECONDS / 60),
+        calculateStake(blockPrice, sessionBlockSeconds / 60),
       );
       // Blocks do NOT tile end-to-end (seamless overlaps, economy gaps), so the
       // count must come from blocksForDuration — the twin of the loop's stop
-      // condition. Pricing it as ceil(target / MIN_REQUEST_SECONDS) understated
+      // condition. Pricing it as ceil(target / blockSeconds) understated
       // seamless by 50% at 2 blocks (2 priced, 3 opened) and ~10% at the max.
       const overlap = restakeMode === 'seamless';
-      const blockCount = blocksForDuration(keepAliveTargetSec, overlap);
+      const blockCount = blocksForDuration(
+        requestedSec,
+        overlap,
+        sessionBlockSeconds,
+      );
       // A single block never restakes, so it only ever locks 1x.
       //
       // Seamless needs 2x: block N+1 opens BEFORE N expires, so two stakes are
@@ -937,10 +1074,10 @@ export const Chat = (props: ChatProps) => {
         props.toasts.toast(
           'error',
           otherRunsNeed > 0
-            ? `Not enough MOR to add another rolling session — your ${keepAlive.runningCount} running session(s) still need about ${formatMor(otherRunsNeed, 18) ?? '—'} MOR to keep renewing. Stop one, or add MOR.`
+            ? `Not enough MOR for a session of ${formatDurationLong(askedSec)} — your ${keepAlive.runningCount} running session(s) still need about ${formatMor(otherRunsNeed, 18) ?? '—'} MOR. Stop one, shorten this session, or add MOR.`
             : needsTwo
-              ? 'Not enough MOR for a rolling session — you need about twice a 5-minute stake free. Shorten the session to a single block, or add MOR.'
-              : 'Not enough MOR for a session — you need about one 5-minute stake free. Add MOR and try again.',
+              ? `Not enough MOR for a session of ${formatDurationLong(askedSec)} — it renews every ${formatDurationLong(sessionBlockSeconds)} and needs about twice one renewal's stake (${formatMor(perBlockStake, 18) ?? '—'} MOR) free. Switch to Economy, shorten it, or add MOR.`
+              : `Not enough MOR for a session of ${formatDurationLong(askedSec)} — it needs about ${formatMor(perBlockStake, 18) ?? '—'} MOR staked. Shorten the session, or add MOR.`,
         );
         return;
       }
@@ -954,7 +1091,8 @@ export const Chat = (props: ChatProps) => {
       await keepAlive.start({
         modelId: model.Id,
         chatId,
-        totalSeconds: keepAliveTargetSec,
+        totalSeconds: requestedSec,
+        blockSeconds: sessionBlockSeconds,
         isDirectPay,
         bidId: chosenBid ? chosenBid.Id : null,
         overlap,
@@ -1790,14 +1928,23 @@ export const Chat = (props: ChatProps) => {
   // gate on the CHEAPEST provider (you may stake as long as at least one provider
   // is affordable) and surface how many of the model's providers you can afford.
   //
-  // A provider is "affordable" when its minimum stake — its price for the
-  // 6-minute session floor — is within balance. The session duration is sized off
-  // the priciest AFFORDABLE provider (`priceForDuration`), so whichever affordable
-  // provider the router matches, the stake still fits within balance. The router
-  // independently skips any provider the wallet can't cover
-  // (OpenSessionByModelId in proxy-router), so the client's "affordable set" and
-  // the provider the router actually picks stay consistent.
-  const getStakeAffordability = (bids: any[], balance: number) => {
+  // A provider is "affordable" when its stake for the length being bought is
+  // within balance. That length is a PARAMETER now that the user types it: a
+  // wallet that can fund six minutes usually cannot fund a year, and judging
+  // affordability at the old fixed 6-minute floor would light up a Stake button
+  // whose open then reverts — after the user has paid gas to find out.
+  //
+  // The session duration is sized off the priciest AFFORDABLE provider
+  // (`priceForDuration`), so whichever affordable provider the router matches,
+  // the stake still fits within balance. The router independently skips any
+  // provider the wallet can't cover (OpenSessionByModelId in proxy-router), so
+  // the client's "affordable set" and the provider the router actually picks
+  // stay consistent.
+  const getStakeAffordability = (
+    bids: any[],
+    balance: number,
+    durationSec: number = MIN_REQUEST_SECONDS,
+  ) => {
     const prices = (bids ?? [])
       .map((b: any) => Number(b.PricePerSecond))
       .filter((p) => Number.isFinite(p) && p > 0);
@@ -1812,8 +1959,7 @@ export const Chat = (props: ChatProps) => {
     if (!prices.length || !Number(meta.supply) || !Number(meta.budget)) {
       return empty;
     }
-    const minStakeFor = (price: number) =>
-      calculateStake(price, MIN_REQUEST_SECONDS / 60);
+    const minStakeFor = (price: number) => calculateStake(price, durationSec / 60);
     const affordablePrices = prices.filter((p) => balance >= minStakeFor(p));
     const minPrice = Math.min(...prices);
     // Priciest provider we can still afford; falls back to the cheapest so the
@@ -1938,8 +2084,28 @@ export const Chat = (props: ChatProps) => {
     const affordability = getStakeAffordability(
       selectedModel?.bids,
       Number(balances.mor),
+      sessionBlockSeconds,
     );
     const stakeKnown = affordability.known;
+    // What one block of the chosen length costs, priced exactly as startSession
+    // prices it — pinned provider if one is chosen, else the priciest affordable
+    // one (the provider the router would size against). The disclosure and the
+    // gate must quote the SAME number; two formulas is how they drift.
+    const previewBid = selectedProviderBidId
+      ? (selectedModel?.bids ?? []).find(
+          (b: any) => b.Id == selectedProviderBidId,
+        )
+      : null;
+    const stakePreviewWei = stakeKnown
+      ? Number(
+          calculateStake(
+            previewBid
+              ? Number(previewBid.PricePerSecond)
+              : affordability.priceForDuration,
+            sessionBlockSeconds / 60,
+          ),
+        )
+      : 0;
     const isEnoughFunds = stakeKnown && affordability.affordableCount >= 1;
     // You can afford SOME but not ALL providers — the session will match one of
     // the affordable ones; tell the user how many that is.
@@ -1969,7 +2135,23 @@ export const Chat = (props: ChatProps) => {
       Number(balances.mor) >= requiredStakeForDirectPay;
     // When neither path is affordable, offer a way forward (add MOR) instead of
     // two dead, greyed-out buttons.
-    const cannotPayAtAll = stakeKnown && !isEnoughFunds && !isEnoughFundsForDirectPay;
+    //
+    // Asked at the SHORTEST session the chain sells, never at the typed length.
+    // This branch replaces the ENTIRE panel — including the length field itself —
+    // so wiring it to the typed length meant that typing a duration you could not
+    // afford yanked the input out from under the cursor mid-keystroke. "Can I use
+    // this model at all?" is a question about the minimum; "can I afford THIS
+    // length?" is answered by the disclosure and the disabled Stake button, which
+    // is where an answer belongs that changes with every character.
+    const floorAffordability = getStakeAffordability(
+      selectedModel?.bids,
+      Number(balances.mor),
+      MIN_REQUEST_SECONDS,
+    );
+    const cannotPayAtAll =
+      floorAffordability.known &&
+      floorAffordability.affordableCount < 1 &&
+      !isEnoughFundsForDirectPay;
 
     return (
       <>
@@ -2026,22 +2208,36 @@ export const Chat = (props: ChatProps) => {
                       existing session instead.
                     </ChatIntroInnerText>
                   )}
+                  {/* The direction of causation is the whole change: the length
+                      is chosen and the stake follows it. The old copy said the
+                      reverse ("session will last ... depending on the amount you
+                      stake"), and promised a 24h claim — which is what happens
+                      after an EARLY close, not after a session that runs out. */}
+                  {/* Reference prices for THIS model, not a ceiling. Calling the
+                      day figure "max" read as a limit — and sat two lines above
+                      a 604.80 MOR quote for a longer session, which is the page
+                      disagreeing with itself about money. */}
                   <ChatIntroInnerText>
-                    Stake MOR to get a free compute. Session will last from 5 mins
-                    up to 24 hours depending on the amount you stake (min:{' '}
-                    {formatMor(requiredStake.min, 18) ?? '…'} MOR, max:{' '}
-                    {formatMor(requiredStake.max, 18) ?? '…'} MOR). You can claim
-                    your stake in 24h.
+                    Stake MOR for compute. You set the length above and the stake
+                    follows it — this model costs about{' '}
+                    {formatMor(requiredStake.min, 18) ?? '…'} MOR for 5 minutes,
+                    or {formatMor(requiredStake.max, 18) ?? '…'} MOR for a day.
+                    The stake is collateral, not a fee — it is locked for the
+                    session and returned when it ends.
                   </ChatIntroInnerText>
-                  {partiallyAffordable && (
+                  {/* Always mounted, hidden when it does not apply — the notice
+                      tracks the typed length, so conditional mounting made three
+                      lines pop in and out between keystrokes. `visibility` keeps
+                      the space AND keeps hidden text out of the a11y tree. */}
+                  <ReservedNotice $shown={partiallyAffordable}>
                     <ChatIntroWarningText>
                       Heads up: your MOR balance covers{' '}
-                      {affordability.affordableCount} of{' '}
-                      {affordability.totalProviders} providers for this model.
-                      Your session will use one of the providers you can afford
-                      — add more MOR to unlock the rest.
+                      {partiallyAffordable ? affordability.affordableCount : 0}{' '}
+                      of {affordability.totalProviders} providers for this
+                      model. Your session will use one of the providers you can
+                      afford — add more MOR to unlock the rest.
                     </ChatIntroWarningText>
-                  )}
+                  </ReservedNotice>
                   <KeepAliveRow>
                     <KeepAliveLabel>Provider</KeepAliveLabel>
                     <KeepAliveChip
@@ -2061,17 +2257,20 @@ export const Chat = (props: ChatProps) => {
                           : status === 'disconnected'
                             ? '#f87171'
                             : '#9ca3af';
+                      // Price the chip at the length the user actually typed —
+                      // a fixed 6-minute quote next to a "1 day" field is the
+                      // wrong number in the one place it must be right.
                       const stakeWei = Number(
                         calculateStake(
                           Number(bid.PricePerSecond),
-                          MIN_REQUEST_SECONDS / 60,
+                          sessionBlockSeconds / 60,
                         ),
                       );
-                      // Can't afford even one 6-minute block from this provider.
+                      // Can't afford this provider at the chosen length.
                       const unaffordable =
                         Number.isFinite(stakeWei) &&
                         stakeWei > Number(balances.mor);
-                      const stake6m = formatMor(stakeWei, 18);
+                      const stakeForLength = formatMor(stakeWei, 18);
                       return (
                         <KeepAliveChip
                           key={bid.Id}
@@ -2081,7 +2280,9 @@ export const Chat = (props: ChatProps) => {
                             !unaffordable && setSelectedProviderBidId(bid.Id)
                           }
                           title={`${bid.Provider} · ${status ?? 'unknown'}${
-                            unaffordable ? " · can't afford a block" : ''
+                            unaffordable
+                              ? " · can't afford this length"
+                              : ''
                           }`}
                         >
                           <span
@@ -2096,60 +2297,172 @@ export const Chat = (props: ChatProps) => {
                             }}
                           />
                           {providerLabel(bid.Provider)}
-                          {stake6m ? ` · ${stake6m}` : ''}
+                          {stakeForLength ? (
+                            <>
+                              {' · '}
+                              <ChipStake>{stakeForLength}</ChipStake>
+                            </>
+                          ) : null}
                         </KeepAliveChip>
                       );
                     })}
                   </KeepAliveRow>
                   <KeepAliveRow>
                     <KeepAliveLabel>Session length</KeepAliveLabel>
-                    <SessionLengthSlider
-                      min={MIN_REQUEST_SECONDS}
-                      max={
-                        Math.floor((8 * 60 * 60) / MIN_REQUEST_SECONDS) *
-                        MIN_REQUEST_SECONDS
-                      }
-                      step={MIN_REQUEST_SECONDS}
-                      value={keepAliveTargetSec}
-                      onChange={(e) =>
-                        setKeepAliveTargetSec(Number(e.target.value))
-                      }
-                    />
+                    {/* Free text with an OPTIONAL completion. Every alias parses
+                        ("2y", "2 yrs", "2 years"); the menu only saves typing
+                        and Tab finishes the unit — neither constrains the field.
+                        Hand-built rather than a native <datalist> because that
+                        is drawn by browser chrome: unstyleable, so it dropped a
+                        stock OS list into a themed money surface, and it gives
+                        no hook for Tab completion. */}
+                    <SessionLengthField>
+                      <SessionLengthInput
+                        value={sessionLengthInput}
+                        $invalid={!!lengthErrorText}
+                        aria-label="Session length"
+                        aria-invalid={!!lengthErrorText}
+                        aria-autocomplete="list"
+                        aria-expanded={lengthMenuOpen}
+                        role="combobox"
+                        placeholder="e.g. 1 day"
+                        onChange={(e) => {
+                          setSessionLengthInput(e.target.value);
+                          setLengthMenuOpen(true);
+                          setLengthMenuIndex(0);
+                        }}
+                        onKeyDown={onLengthKeyDown}
+                        onBlur={() => setLengthMenuOpen(false)}
+                      />
+                      {lengthMenuOpen && lengthSuggestions.length > 0 && (
+                        <SessionLengthMenu role="listbox">
+                          {lengthSuggestions.map((s) => {
+                            const active = s === activeSuggestion;
+                            return (
+                              <SessionLengthOption
+                                key={s}
+                                role="option"
+                                aria-selected={active}
+                                $active={active}
+                                // mouseDown, not click: click fires after blur,
+                                // and blur closes the menu — so the option would
+                                // be gone before the click landed on it.
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  acceptLengthSuggestion(s);
+                                }}
+                              >
+                                <span>{s}</span>
+                                {active && (
+                                  <SessionLengthOptionHint>
+                                    Tab
+                                  </SessionLengthOptionHint>
+                                )}
+                              </SessionLengthOption>
+                            );
+                          })}
+                        </SessionLengthMenu>
+                      )}
+                    </SessionLengthField>
+                    {/* Echo what was ASKED for, not the 5s-cushioned value we
+                        open with — "5 minutes 5 seconds" reads as the app
+                        correcting a number the user got right. Always mounted so
+                        the row keeps its width between keystrokes. */}
                     <SessionLengthValue>
-                      {formatDuration(keepAliveTargetSec)}
+                      {sessionLengthValid ? formatDurationLong(askedSec) : ''}
                     </SessionLengthValue>
                   </KeepAliveRow>
-                  <KeepAliveRow>
-                    <KeepAliveLabel>Restaking</KeepAliveLabel>
-                    <KeepAliveChip
-                      $active={restakeMode === 'seamless'}
-                      onClick={() => setRestakeMode('seamless')}
-                    >
-                      Seamless
-                    </KeepAliveChip>
-                    <KeepAliveChip
-                      $active={restakeMode === 'economy'}
-                      onClick={() => setRestakeMode('economy')}
-                    >
-                      Economy · 1× stake
-                    </KeepAliveChip>
-                  </KeepAliveRow>
-                  <ChatIntroInnerText style={{ marginTop: '0.4rem' }}>
-                    {restakeMode === 'seamless'
-                      ? 'Seamless: blocks overlap so inference never pauses. Needs ~2× a 5-minute stake free (only ~one block is locked at a time). Stop anytime; each block’s stake returns when it lapses.'
-                      : 'Economy: each block is closed as soon as it expires and the stake is recycled into the next one, so only ~1× a 5-minute stake is ever committed — at the cost of a pause (up to a minute) at each restake while the refund confirms. Stop anytime.'}
-                  </ChatIntroInnerText>
+                  {lengthErrorText ? (
+                    <SessionLengthError>{lengthErrorText}</SessionLengthError>
+                  ) : (
+                    /* The stake is refundable collateral, not a fee — but it is
+                       locked for the whole session, so the amount and when it
+                       comes back are the two facts this choice turns on. State
+                       both, in MOR, before anything is signed. */
+                    <SessionLengthNote>
+                      {!sessionLengthValid ? (
+                        'Type how long you want the session to run — the length sets the stake.'
+                      ) : !stakeKnown ? (
+                        // Never quote a number before the marketplace figures
+                        // that price it have loaded. formatMor(0) renders "0",
+                        // so the un-loaded state used to read as a free session.
+                        'Pricing this length…'
+                      ) : sessionRenews ? (
+                        <>
+                          Longer than the network allows in one session, so it
+                          runs as{' '}
+                          <strong>{sessionBlockCount} sessions</strong> of up to{' '}
+                          {formatDurationLong(sessionBlockSeconds)}, staking
+                          about {formatMor(stakePreviewWei, 18) ?? '…'} MOR each
+                          and returning it when that session ends.{' '}
+                          {/* Mode-accurate AND count-accurate: claiming "only
+                              one is staked at a time" directly above the
+                              Seamless card's "needs about twice one session's
+                              stake" was the page contradicting itself on a
+                              money figure; claiming the two-at-once cost for a
+                              plan that never renews was the same error again,
+                              in the other direction. */}
+                          {restakeMode === 'seamless'
+                            ? 'Two are briefly staked at once at each renewal (see below).'
+                            : 'Only one is staked at a time.'}{' '}
+                          Each is priced again when it opens, so this is a plan,
+                          not a purchase — and it lasts only as long as the app
+                          keeps running.
+                        </>
+                      ) : (
+                        <>
+                          Stakes about{' '}
+                          <strong>
+                            {formatMor(stakePreviewWei, 18) ?? '…'} MOR
+                          </strong>
+                          , locked until the session ends and then returned in
+                          full. Ending it early returns the unused part at once
+                          and holds the rest for about a day.
+                        </>
+                      )}
+                    </SessionLengthNote>
+                  )}
+                  {/* Renewing only exists when the plan actually has more than
+                      one block. A session that runs to its end and stops has
+                      nothing to rotate, so offering the choice would be asking
+                      the user to decide something with no effect — and just past
+                      the cap, "longer than one session" and "more than one
+                      block" are NOT the same question (see sessionBlockCount). */}
+                  {sessionRenews && (
+                    <>
+                      <KeepAliveRow>
+                        <KeepAliveLabel>Renewing</KeepAliveLabel>
+                        <KeepAliveChip
+                          $active={restakeMode === 'seamless'}
+                          onClick={() => setRestakeMode('seamless')}
+                        >
+                          Seamless · 2× stake
+                        </KeepAliveChip>
+                        <KeepAliveChip
+                          $active={restakeMode === 'economy'}
+                          onClick={() => setRestakeMode('economy')}
+                        >
+                          Economy · 1× stake
+                        </KeepAliveChip>
+                      </KeepAliveRow>
+                      <ChatIntroInnerText style={{ marginTop: '0.4rem' }}>
+                        {restakeMode === 'seamless'
+                          ? `Seamless: the next session opens before the current one ends, so inference never pauses. Needs about twice one session's stake free at each renewal. Stop anytime; each stake returns when its session lapses.`
+                          : `Economy: each session is closed the moment it expires and that same stake is recycled into the next, so only about one session's stake is ever committed — at the cost of a pause (up to a minute) at each renewal while the refund confirms. Stop anytime.`}
+                      </ChatIntroInnerText>
+                    </>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'center' }}>
                     <ChatIntroButton
-                      onClick={() => startRolling(false)}
-                      disabled={!isEnoughFunds}
+                      onClick={() => startSession(false)}
+                      disabled={!isEnoughFunds || !sessionLengthValid}
                     >
                       Stake MOR
                     </ChatIntroButton>
                   </div>
                   <ChatIntroInnerText>
                     Pay with your MOR tokens directly — the session length is
-                    limited only by your MOR balance (independent of the slider).
+                    limited only by your MOR balance, not by the length above.
                   </ChatIntroInnerText>
                   <div style={{ display: 'flex', justifyContent: 'center' }}>
                     <ChatIntroButton

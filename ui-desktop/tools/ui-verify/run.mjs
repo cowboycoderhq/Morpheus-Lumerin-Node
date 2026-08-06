@@ -587,8 +587,8 @@ const browser = await chromium.launch();
     // the dearest (1e16): 2e15 * 1440min * 60 = 172.8 MOR. If a refactor ever
     // sizes off the dearest again this reads 864.00 and fails — which is the
     // exact regression the design exists to prevent.
-    assert(/max:\s*172\.80 MOR/.test(text), `stake ceiling not sized off the priciest AFFORDABLE provider: ${text.slice(0, 400)}`);
-    assert(/min:\s*0\.305 MOR/.test(text), `stake floor not the cheapest provider's min-block floor: ${text.slice(0, 400)}`);
+    assert(/172\.80 MOR for a day/.test(text), `stake ceiling not sized off the priciest AFFORDABLE provider: ${text.slice(0, 400)}`);
+    assert(/0\.305 MOR for 5 minutes/.test(text), `stake floor not the cheapest provider's min-block floor: ${text.slice(0, 400)}`);
 
     // Rendering the warning must not open anything on-chain.
     const opened = await p.evaluate(() => window.__opened.length);
@@ -603,7 +603,7 @@ const browser = await chromium.launch();
     await pickModel(p);
     const text = await intro(p);
     assert(!/covers \d+ of \d+ providers/.test(text), `warned about partial affordability when ALL providers are affordable: ${text.slice(0, 400)}`);
-    assert(/max:\s*864\.00 MOR/.test(text), `ceiling did not rise to the dearest provider once affordable: ${text.slice(0, 400)}`);
+    assert(/864\.00 MOR for a day/.test(text), `ceiling did not rise to the dearest provider once affordable: ${text.slice(0, 400)}`);
   });
 
   // Below the cheapest provider's floor there is nothing to warn about — the
@@ -616,6 +616,309 @@ const browser = await chromium.launch();
     const opened = await p.evaluate(() => window.__opened.length);
     assert(opened === 0, `onOpenSession fired ${opened}x (must be 0)`);
   });
+
+  // Typing must not move the page — measured where the typed length actually
+  // CROSSES an affordability boundary. That needs several providers at
+  // different prices, which is this fixture and not the single-provider
+  // session-length one (there, "covers N of M" can never fire, so an earlier
+  // version of this check passed while measuring nothing).
+  //
+  // Prices 1e15 / 2e15 / 1e16 with supply/budget = 1 and a 10 MOR balance:
+  // at 5 minutes all three floors (0.305 / 0.61 / 3.05) clear, so no notice;
+  // at 1 hour they cost 3.6 / 7.2 / 36, so only two are affordable and the
+  // three-line "covers 2 of 3 providers" notice appears. Mounting it
+  // conditionally moved everything above and below it, mid-keystroke, inside a
+  // vertically centred card.
+  await drive(page, 'affordability-notice-does-not-move-the-page',
+    `http://localhost:${PORT}/?case=chat-affordability&bal=10000000000000000000`, async (p) => {
+    await pickModel(p);
+    const field = p.getByLabel('Session length');
+    const anchor = p.getByText('Stake MOR', { exact: true }).first();
+
+    await field.click();
+    await field.fill('');
+    await p.waitForTimeout(150);
+
+    const ys = [];
+    for (const ch of '1 hour') {
+      await p.keyboard.type(ch);
+      await p.waitForTimeout(80);
+      const box = await anchor.boundingBox();
+      if (box) ys.push(box.y);
+    }
+    const spread = Math.max(...ys) - Math.min(...ys);
+    assert(spread <= 2,
+      `the page moved ${spread.toFixed(1)}px while typing across an affordability boundary (samples: ${ys.map((y) => y.toFixed(1)).join(', ')})`);
+
+    // The boundary really was crossed — otherwise this measures nothing. This
+    // is the assertion an earlier, vacuous version of the case lacked.
+    const text = await intro(p);
+    assert(/covers 2 of 3 providers/.test(text),
+      `the fixture did not cross an affordability boundary, so the check is vacuous: ${text.slice(0, 400)}`);
+  });
+
+  await page.close();
+}
+
+// --- session-length: the typed length IS the stake --------------------------
+// The change this pins: length used to be a slider driving a chain of 305s
+// stakes; it is now typed, and the length sets the stake directly. Two things
+// can silently go wrong and cost real MOR — the quoted stake drifting from the
+// staked one, and a session inside the chain's cap quietly becoming a CHAIN of
+// stakes instead of one. Both are asserted on the arguments Chat actually hands
+// the engine, not on prose.
+//
+// Fixture (see the case): one provider at 1e15 wei/s, supply/budget = 1, so
+// stake(T) = T x 1e15 wei. 305s -> 0.305 MOR, 86,400s -> 86.40, 604,800s -> 604.80.
+{
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+  const pickModel = async (p) => {
+    await p.waitForSelector('text=Select payment method', { timeout: 20000 });
+    await p.getByText('New chat', { exact: false }).first().click();
+    await p.getByText('Test Model', { exact: false }).first().click();
+    await p.waitForTimeout(500);
+  };
+  const setLength = async (p, text) => {
+    await p.getByLabel('Session length').fill(text);
+    await p.waitForTimeout(200);
+  };
+  const body = (p) => p.locator('body').innerText();
+  const URL_ = `http://localhost:${PORT}/?case=session-length`;
+
+  // The DEFAULT must be the cheapest session the chain sells. The length is now
+  // a spend, so a friendlier default ("1 hour") would have made the untouched
+  // path 12x costlier than the slider it replaced.
+  await drive(page, 'session-length-defaults-to-the-floor', URL_, async (p) => {
+    await pickModel(p);
+    const text = await body(p);
+    assert(/Stakes about\s*0\.305 MOR/.test(text), `default length did not quote the 5-minute floor stake: ${text.slice(0, 500)}`);
+    assert(/returned in full/.test(text), `the disclosure did not say the stake comes back: ${text.slice(0, 500)}`);
+    await p.screenshot({ path: `${SHOTS}/session-length-default.png` });
+  });
+
+  // A day is inside the 7-day cap, so it is ONE stake of exactly a day — the
+  // core claim of the whole change. If blockSeconds ever comes back as 305 here,
+  // the app has silently reverted to rolling.
+  await drive(page, 'session-length-under-the-cap-is-one-stake', URL_, async (p) => {
+    await pickModel(p);
+    await setLength(p, '1 day');
+    const text = await body(p);
+    assert(/Stakes about\s*86\.40 MOR/.test(text), `1 day did not quote 86.40 MOR: ${text.slice(0, 500)}`);
+    assert(!/Renewing/.test(text), 'offered a renewal mode for a session that never renews');
+
+    await p.getByText('Stake MOR', { exact: true }).first().click();
+    await p.waitForTimeout(400);
+    const started = await p.evaluate(() => window.__started);
+    assert(started.length === 1, `expected one start, got ${started.length}`);
+    assert(started[0].totalSeconds === 86400, `totalSeconds was ${started[0].totalSeconds}, want 86400`);
+    assert(started[0].blockSeconds === 86400, `blockSeconds was ${started[0].blockSeconds} — a 1-day session must be ONE block, not a chain`);
+  });
+
+  // Past the cap the chain will not sell a longer session at any stake, so the
+  // length becomes a PLAN of cap-sized ones — and only then is the renewal mode
+  // a real choice.
+  await drive(page, 'session-length-past-the-cap-chains-7-day-blocks', URL_, async (p) => {
+    await pickModel(p);
+    await setLength(p, '2 years');
+    const text = await body(p);
+    assert(/105 sessions.{0,12}of up to 7 days/s.test(text), `2 years did not describe its plan: ${text.slice(0, 600)}`);
+    assert(/604\.80 MOR/.test(text), `the per-session stake was not quoted: ${text.slice(0, 600)}`);
+    assert(/Renewing/.test(text), 'a chained session did not offer the renewal mode');
+    assert(/priced again when it opens/.test(text), 'did not disclose that later blocks re-price');
+
+    await p.getByText('Stake MOR', { exact: true }).first().click();
+    await p.waitForTimeout(400);
+    const started = await p.evaluate(() => window.__started);
+    assert(started.length === 1, `expected one start, got ${started.length}`);
+    assert(started[0].totalSeconds === 2 * 365 * 86400, `totalSeconds was ${started[0].totalSeconds}`);
+    assert(started[0].blockSeconds === 604800, `blockSeconds was ${started[0].blockSeconds}, want the 7-day cap`);
+  });
+
+  // The page must not move while you type into it.
+  //
+  // Reported from the running app: "the page is jerking all over the place".
+  // Three things resized per keystroke — the parsed-length echo mounted and
+  // unmounted, the note below swapped between one and three lines, and the
+  // per-provider stake figures changed width and re-wrapped the chip row ABOVE
+  // the field, which shoved the field itself down the page. All three are now
+  // space-reserved; this measures it rather than trusting it.
+  await drive(page, 'session-length-typing-does-not-move-the-page', URL_, async (p) => {
+    await pickModel(p);
+    const field = p.getByLabel('Session length');
+    const anchor = p.getByText('Stake MOR', { exact: true }).first();
+
+    await field.click();
+    await field.fill('');
+    await p.waitForTimeout(150);
+
+    // Type a realistic length one character at a time, sampling the position of
+    // a fixed landmark below the field after every keystroke.
+    const ys = [];
+    const xs = [];
+    for (const ch of '1 day') {
+      await p.keyboard.type(ch);
+      await p.waitForTimeout(60);
+      const box = await anchor.boundingBox();
+      const fieldBox = await field.boundingBox();
+      if (box) ys.push(box.y);
+      if (fieldBox) xs.push(fieldBox.x);
+    }
+
+    const spread = (arr) => Math.max(...arr) - Math.min(...arr);
+    // A couple of pixels of sub-pixel rounding is fine; anything more is the
+    // layout actually shifting under the user's hands.
+    assert(ys.length > 0 && spread(ys) <= 2,
+      `the page moved ${spread(ys).toFixed(1)}px vertically while typing (samples: ${ys.map((y) => y.toFixed(1)).join(', ')})`);
+    assert(xs.length > 0 && spread(xs) <= 2,
+      `the field moved ${spread(xs).toFixed(1)}px horizontally while typing (samples: ${xs.map((x) => x.toFixed(1)).join(', ')})`);
+  });
+
+  // The hardest case: typing a length that CROSSES the chain's per-session cap.
+  //
+  // "1 month" legitimately needs more words than "1 hour" — it stops being one
+  // stake and becomes a plan of chained ones, with a renewal mode to choose. So
+  // the page cannot be kept the same height, and pretending otherwise would mean
+  // hiding something the user is paying for. What CAN be guaranteed is that the
+  // growth happens below the cursor: the field being typed into must not move.
+  //
+  // Note the transition lands mid-word — "1 m" is one minute, "1 mo" is one
+  // month — so this is a single keystroke flipping the panel from an error state
+  // to a multi-session plan.
+  await drive(page, 'session-length-crossing-the-cap-does-not-move-the-field', URL_, async (p) => {
+    await pickModel(p);
+    const field = p.getByLabel('Session length');
+    await field.click();
+    await field.fill('');
+    await p.waitForTimeout(150);
+
+    const ys = [];
+    for (const ch of '1 month') {
+      await p.keyboard.type(ch);
+      await p.waitForTimeout(80);
+      const box = await field.boundingBox();
+      if (box) ys.push(box.y);
+    }
+    const spread = Math.max(...ys) - Math.min(...ys);
+    assert(spread <= 2,
+      `the field moved ${spread.toFixed(1)}px while typing across the cap (samples: ${ys.map((y) => y.toFixed(1)).join(', ')})`);
+
+    // It really did become a chained plan — otherwise nothing was crossed.
+    const text = await body(p);
+    assert(/sessions/.test(text) && /Renewing/.test(text),
+      `"1 month" did not become a chained plan, so the check is vacuous: ${text.slice(0, 400)}`);
+  });
+
+  // Tab finishes the unit, and the menu is OURS (themed), not the browser's.
+  // A native <datalist> cannot take the theme's colours and offers no keyboard
+  // completion hook, so both halves of this are the reason it was replaced.
+  await drive(page, 'session-length-tab-completes-the-unit', URL_, async (p) => {
+    await pickModel(p);
+    const field = p.getByLabel('Session length');
+    await field.click();
+    await field.fill('');
+    await field.type('2 d', { delay: 20 });
+    await p.waitForTimeout(200);
+
+    // The menu is a real element in OUR DOM — a datalist would not be.
+    const menu = p.locator('[role="listbox"]');
+    assert(await menu.count() === 1, 'no themed completion menu rendered');
+    const optionText = (await menu.locator('[role="option"]').allInnerTexts()).join('|');
+    assert(/2 days/.test(optionText), `menu did not offer the unit completion: ${optionText}`);
+
+    // Themed, not stock OS chrome: its background must be the money surface
+    // token, which is near-black in both variants — never a default white.
+    const bg = await menu.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const [r, g, b] = bg.match(/\d+/g).map(Number);
+    assert(r + g + b < 200, `completion menu is not using the themed money surface (got ${bg})`);
+
+    await p.keyboard.press('Tab');
+    await p.waitForTimeout(150);
+    assert(await field.inputValue() === '2 days', `Tab did not finish the unit (field is "${await field.inputValue()}")`);
+
+    // And the completion is an OFFER: with the menu dismissed, Tab goes back to
+    // meaning "move focus" rather than editing the field.
+    await field.click();
+    await field.fill('');
+    await field.type('3 h', { delay: 20 });
+    await p.keyboard.press('Escape');
+    await p.keyboard.press('Tab');
+    await p.waitForTimeout(150);
+    assert(await field.inputValue() === '3 h', `Escape did not make Tab stop completing (field is "${await field.inputValue()}")`);
+    await p.screenshot({ path: `${SHOTS}/session-length-tab-complete.png` });
+  });
+
+  // Just past the cap the remainder is under the contract minimum, so it is
+  // dropped and the plan is STILL one block. Re-review caught the UI asking
+  // "longer than one session?" instead of "does it renew?", which disagreed with
+  // the affordability gate for 304 seconds' worth of typeable lengths: it
+  // offered a renewal mode for a plan with no renewals and claimed twice the
+  // stake was needed, turning away users who could in fact afford it.
+  await drive(page, 'session-length-no-renewal-ui-for-a-single-block', URL_, async (p) => {
+    await pickModel(p);
+    await setLength(p, '10081 minutes'); // 7 days + 1 minute
+    const text = await body(p);
+    assert(!/Renewing/.test(text), `offered a renewal mode for a plan that is still one block: ${text.slice(0, 600)}`);
+    assert(!/1 sessions/.test(text), `described a single block as a multi-session plan: ${text.slice(0, 600)}`);
+    assert(!/Two are briefly staked/.test(text), `claimed the 2x overlap cost for a plan that never renews: ${text.slice(0, 600)}`);
+
+    // And one contract minimum further, it really does chain.
+    await setLength(p, '10086 minutes'); // 7 days + 6 minutes — past the drop threshold
+    const chained = await body(p);
+    assert(/Renewing/.test(chained), `a genuinely chained plan lost its renewal mode: ${chained.slice(0, 600)}`);
+  });
+
+  // Unparseable text must stake NOTHING. The button is the only path a user has,
+  // so a disabled-looking button that still fires is the failure that matters.
+  await drive(page, 'session-length-refuses-junk', URL_, async (p) => {
+    await pickModel(p);
+    await setLength(p, 'soon');
+    const text = await body(p);
+    assert(/isn’t a unit of time|Enter a length like/.test(text), `junk length produced no error: ${text.slice(0, 500)}`);
+    await p.getByText('Stake MOR', { exact: true }).first().click({ force: true });
+    await p.waitForTimeout(300);
+    const started = await p.evaluate(() => window.__started.length);
+    assert(started === 0, `an unparseable length still started ${started} session(s)`);
+  });
+
+  // A bare number is refused rather than guessed. "5" meaning minutes when the
+  // user meant days is a 288x error in the stake and nobody would catch it.
+  await drive(page, 'session-length-refuses-a-bare-number', URL_, async (p) => {
+    await pickModel(p);
+    await setLength(p, '5');
+    await p.getByText('Stake MOR', { exact: true }).first().click({ force: true });
+    await p.waitForTimeout(300);
+    const started = await p.evaluate(() => window.__started.length);
+    assert(started === 0, `a unit-less number still started ${started} session(s)`);
+  });
+
+  // Under the contract floor the chain reverts with SessionTooShort(). Say so
+  // before the user pays gas to discover it.
+  await drive(page, 'session-length-refuses-under-the-floor', URL_, async (p) => {
+    await pickModel(p);
+    await setLength(p, '1 minute');
+    const text = await body(p);
+    assert(/shortest session is 5 minutes/.test(text), `a 1-minute session was not refused: ${text.slice(0, 500)}`);
+    await p.getByText('Stake MOR', { exact: true }).first().click({ force: true });
+    await p.waitForTimeout(300);
+    const started = await p.evaluate(() => window.__started.length);
+    assert(started === 0, `a sub-floor length still started ${started} session(s)`);
+  });
+
+  // "5 minutes" is the natural way to ask for the minimum, and the app opens at
+  // 305s for its truncation cushion. It must ACCEPT the ask rather than argue
+  // that 5 minutes is under the 5-minute minimum.
+  await drive(page, 'session-length-accepts-the-exact-minimum', URL_, async (p) => {
+    await pickModel(p);
+    await setLength(p, '5 minutes');
+    const text = await body(p);
+    assert(!/shortest session/.test(text), `"5 minutes" was refused as too short: ${text.slice(0, 500)}`);
+    await p.getByText('Stake MOR', { exact: true }).first().click();
+    await p.waitForTimeout(400);
+    const started = await p.evaluate(() => window.__started);
+    assert(started.length === 1, `"5 minutes" did not start a session`);
+    assert(started[0].blockSeconds === 305, `opened at ${started[0].blockSeconds}s — the 5s cushion above the 300s floor is what keeps truncation from reverting it`);
+  });
+
   await page.close();
 }
 
@@ -796,6 +1099,55 @@ const browser = await chromium.launch();
     assert(picked === 0, `sort selected a model (${picked}x, must be 0)`);
     await p.screenshot({ path: `${SHOTS}/model-picker-sort.png` });
   });
+  await page.close();
+}
+
+// --- a session inside the cap is ONE stake, through the REAL loop ------------
+// Adversarial review's structural criticism of the other session-length cases:
+// they stub the keep-alive context, so they pin the ARGUMENTS Chat passes and
+// never the loop that spends the MOR. This drives the real provider, with the
+// chain rigged to report each session ending 30s SHORT of the ask — the exact
+// condition (clock skew / mining latency / stake→duration truncation) under
+// which a "1 day, one stake" session used to quietly open a SECOND day-long
+// stake the user was never quoted and the gate never approved.
+{
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  const url = `http://localhost:${PORT}/?case=single-stake-never-restakes`;
+  const DAY = 24 * 60 * 60;
+  const CAP = 7 * DAY;
+
+  await drive(page, 'a-session-inside-the-cap-opens-exactly-one-stake', url, async (p) => {
+    await p.waitForSelector('[data-testid="start-one-day"]', { timeout: 20000 });
+    await p.getByTestId('start-one-day').click();
+    // Generously past the point where a restake would have fired: the virtual
+    // clock collapses a day into milliseconds, so a second open would already
+    // have happened many times over.
+    await p.waitForTimeout(1500);
+
+    const opens = JSON.parse(await p.getByTestId('opens').innerText());
+    assert(opens.length === 1, `a 1-day session opened ${opens.length} stakes — it must open exactly 1 (${JSON.stringify(opens)})`);
+    assert(opens[0].sessionDuration === DAY, `the single stake was for ${opens[0].sessionDuration}s, want ${DAY}`);
+    await p.screenshot({ path: `${SHOTS}/single-stake-never-restakes.png` });
+  });
+
+  // The other half of the same fix: past the cap it DOES chain, and the final
+  // block is the remainder. A full-size final block is what made an 8-day ask
+  // stay staked for ~14 days.
+  await drive(page, 'a-chained-run-cuts-its-last-block-to-the-remainder', url, async (p) => {
+    await p.waitForSelector('[data-testid="start-eight-days"]', { timeout: 20000 });
+    await p.getByTestId('start-eight-days').click();
+    await p.waitForTimeout(2500);
+
+    const opens = JSON.parse(await p.getByTestId('opens').innerText());
+    assert(opens.length === 2, `8 days should chain 2 blocks, got ${opens.length} (${JSON.stringify(opens)})`);
+    assert(opens[0].sessionDuration === CAP, `first block was ${opens[0].sessionDuration}s, want the ${CAP}s cap`);
+    assert(opens[1].sessionDuration < CAP, `the LAST block was a full ${opens[1].sessionDuration}s cap-block — that is the ~6 extra days of lockup this fix removes`);
+    // It covers the ask without running past it: block 2 starts at the overlap
+    // point, so its length is the remainder from there.
+    const total = opens[1].atSec + opens[1].sessionDuration - opens[0].atSec;
+    assert(Math.abs(total - 8 * DAY) < 300, `the run covers ${total}s against an 8-day (${8 * DAY}s) ask`);
+  });
+
   await page.close();
 }
 
