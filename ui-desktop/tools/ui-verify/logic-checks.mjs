@@ -39,6 +39,9 @@ import {
   planBlocks,
   OVERLAP_SEC,
   CLOSE_BUFFER_SEC,
+  reserveWei,
+  requiredFreeStake,
+  peakBlockStakes,
 } from '../../src/renderer/src/components/keepalive/KeepAliveProvider.tsx';
 import {
   isSecureModel,
@@ -180,19 +183,44 @@ console.log('queries: earlyCloseLock (the Close button warning)');
     `real session: returns ~2.6728 MOR (got ${weiToMor(atClose.returnedWei, 4)})`,
     weiToMor(atClose.returnedWei, 4) === '2.6728',
   );
-  // The lock is the ONLY thing the user can avoid, and waiting is how.
   ok('real session: nothing is lost — locked + returned == stake',
     atClose.lockedWei + atClose.returnedWei === BigInt(REAL.Stake));
   // startOfDay(1784262509) = 1784246400 -> unlock 1784332800
   ok('real session: unlock is startOfDay(close) + 1 day', atClose.unlockAt === 1784332800);
 
-  // The good path: waiting until endsAt locks NOTHING. This is the asymmetry
-  // the warning exists to tell the user about, so it must be pinned.
+  // Running to the end locks EVERYTHING — the opposite of what this block used
+  // to assert. It pinned "closing AT endsAt locks nothing", from the vendored
+  // contract's `if (!isClosingLate_)` guard. Measured on Base mainnet
+  // 2026-08-06, the deployed Diamond has no such guard: two sessions run to
+  // their full 1799s and closed 3s and 31s LATE returned 0.0156 of 28.1569 MOR
+  // (0.06%) and pushed the rest onto userStakesOnHold, matched to the wei
+  // against the hold delta at the closing block. A session that used all its
+  // time has nothing unused to refund.
   const atEnd = earlyCloseLock(REAL, 1784262688);
-  ok('closing AT endsAt locks nothing', atEnd.known && !atEnd.isEarly && atEnd.lockedWei === 0n);
-  ok('closing at endsAt returns the whole stake', atEnd.returnedWei === BigInt(REAL.Stake));
+  ok('closing AT endsAt locks the WHOLE stake', atEnd.known && atEnd.lockedWei === BigInt(REAL.Stake));
+  ok('closing at endsAt returns nothing', atEnd.returnedWei === 0n);
+  ok('closing at endsAt is not flagged early', !atEnd.isEarly);
   const after = earlyCloseLock(REAL, 1784262688 + 999);
-  ok('closing AFTER endsAt locks nothing', !after.isEarly && after.lockedWei === 0n);
+  ok('closing AFTER endsAt still locks the whole stake', after.lockedWei === BigInt(REAL.Stake));
+  ok('closing after endsAt does not report negative time-to-end', after.secondsUntilEnd === 0);
+  ok('waiting locks MORE than closing early, never less', atEnd.lockedWei > atClose.lockedWei);
+
+  // THE BOUNDARY the check above cannot reach: endsAt+999 is still inside the
+  // same UTC day. The lock covers only the part of the session lying in the
+  // day the close lands in, so a close on a LATER UTC day locks NOTHING and
+  // refunds in full — max(openedAt, startOfDay) then exceeds min(endsAt, now).
+  //
+  // Not a guess. Measured on Base mainnet 2026-08-07: three sessions that ended
+  // 2026-08-06T04:14Z and were closed 2026-08-07T00:08Z returned 50000.0000 of
+  // 50000.0000 MOR staked, hold delta exactly 0. They also did NOT revert,
+  // which rules out the underflow this expression would suffer if the deployed
+  // contract were the vendored one minus its guard.
+  const nextDay = earlyCloseLock(REAL, 1784332800 + 483); // past the next UTC midnight
+  ok('a close on the NEXT UTC day locks nothing', nextDay.known && nextDay.lockedWei === 0n);
+  ok('a close on the next UTC day refunds in full',
+    nextDay.returnedWei === BigInt(REAL.Stake));
+  ok('the same-day/next-day split is real, not a rounding artefact',
+    atEnd.lockedWei === BigInt(REAL.Stake) && nextDay.lockedWei === 0n);
 
   // Monotonic: the longer you wait (within the session) the more is locked.
   const early = earlyCloseLock(REAL, 1784262329 + 30);
@@ -230,13 +258,16 @@ console.log('queries: nextStakeReleaseAt (the On Hold tile clock)');
   ok('at the release second -> null',
     nextStakeReleaseAt([REAL], 1784332800) === null);
 
-  // Closed LATE (>= endsAt) locks nothing, so it never contributes a date.
+  // Closed LATE (>= endsAt) locks the WHOLE stake, so it very much contributes
+  // a date. This pair used to assert the opposite ("no release, locks nothing"),
+  // which meant the On Hold tile had no clock for exactly the closes the app
+  // performs most — every naturally-expired block is a late close.
   const late = { ...REAL, ClosedAt: 1784262688 };
-  ok('closed at endsAt -> no release (locks nothing)',
-    nextStakeReleaseAt([late], 1784262600) === null);
+  ok('closed at endsAt -> releases at startOfDay(close) + 1 day',
+    nextStakeReleaseAt([late], 1784262600) === 1784332800);
   const later = { ...REAL, ClosedAt: 1784262999 };
-  ok('closed after endsAt -> no release',
-    nextStakeReleaseAt([later], 1784262600) === null);
+  ok('closed after endsAt -> still a release date',
+    nextStakeReleaseAt([later], 1784262600) === 1784332800);
 
   // Still open (ClosedAt 0) -> nothing on hold from it.
   ok('open session -> no release',
@@ -1549,69 +1580,106 @@ console.log('queries: adoption is refusable, orphans are surfaced');
 }
 
 
-// ---- economy really is 1x now ----------------------------------------------
-// It reserves one block's stake because it CLOSES each expired block itself (a
-// late close returns the stake in full, no 24h hold) and waits for the chain to
-// confirm before opening the next. The old code slept REOPEN_DELAY_SEC and
-// assumed the refund had landed; the only closer was the router's 1-minute
-// sweep, so a 1x wallet reverted on the first restake with block 1 paid for.
+// ---- a renewing run is 2x in BOTH modes -------------------------------------
+// This block used to assert the opposite — that sequential ("economy") mode
+// reserves 1x, because it closes each expired block and recycles that stake
+// into the next one. Measured on Base mainnet 2026-08-06, the deployed Diamond
+// does not do that: a late close returns only the UNUSED remainder (~0.06% of a
+// block that ran to its end) and holds the used portion until the end of the
+// UTC day. There is nothing to recycle, so both modes need new MOR per renewal.
 console.log('');
-console.log('queries: economy stake reservation');
+console.log('queries: renewal stake reservation');
 {
-  const required = (blocks, overlap, perBlock) =>
-    (blocks > 1 && overlap ? 2 : 1) * perBlock;
+  // requiredFreeStake is the REAL predicate Chat.startRolling gates on, imported
+  // rather than re-typed. It takes no mode argument at all now, which is the
+  // structural form of "the mode cannot change the price".
+  const CAP = 604800; // the deployed 7-day cap
+  const required = (blocks, perBlock, blockSec = CAP) =>
+    requiredFreeStake(blocks, perBlock, 0, blockSec);
   const B = 0.305;
 
-  ok('economy multi-block reserves 1x', required(10, false, B) === B);
-  ok('seamless multi-block still reserves 2x', required(10, true, B) === 2 * B);
-  ok('a single block is 1x in both modes',
-    required(1, true, B) === B && required(1, false, B) === B);
-  ok('economy admits a run seamless would reject on the same wallet',
-    required(10, false, B) <= B && required(10, true, B) > B);
+  ok('a renewing run at the 7-day cap reserves 2x', required(10, B) === 2 * B);
+  ok('a single block is 1x', required(1, B) === B);
+  ok('two blocks already count as renewing', required(2, B) === 2 * B);
+  ok('the predicate has no mode parameter to disagree about',
+    requiredFreeStake.length === 4);
+  ok('other runs\' commitments add on top',
+    requiredFreeStake(1, B, 2 * B, CAP) === 3 * B);
 
-  // The close must land AFTER expiry or it is an EARLY close: the hold scales
-  // with time already used, so a near-miss locks nearly the whole block for ~24h.
+  // The cap is OWNER-SETTABLE and read live. A flat 2x silently under-reserves
+  // the moment it drops below a day, because several blocks' holds then overlap
+  // inside one 24h window: the gate approves, block 1 is paid for, and a later
+  // block reverts. Peaks below were cross-checked against a simulation of
+  // planBlocks + the hold window.
+  ok('a 1-day cap peaks at 3x, not 2x', peakBlockStakes(7, 86400) === 3);
+  ok('a 12-hour cap peaks at 4x', peakBlockStakes(15, 43200) === 4);
+  ok('a 1-hour cap peaks at 26x — a flat 2x would under-reserve 13-fold',
+    peakBlockStakes(170, 3600) === 26);
+  ok('the peak never exceeds the blocks actually opened',
+    peakBlockStakes(3, 3600) === 3);
+  ok('a short cap makes the gate demand more, not the same',
+    required(170, B, 3600) > required(170, B, CAP));
+  // Fail closed on a block size we cannot price rather than assuming 2x.
+  ok('an unpriceable block size reserves for every block',
+    peakBlockStakes(9, 0) === 9 && peakBlockStakes(9, NaN) === 9);
+
+  // The close must still land AFTER expiry. It does not free the stake either
+  // way, but an EARLY close forfeits the unused remainder it would have
+  // refunded, and reopening before the chain settles the old block reverts.
   ok('the close buffer is positive — never fire at endsAt', CLOSE_BUFFER_SEC > 0);
-  ok('economy stride still prices the post-expiry gap',
+  ok('sequential stride still prices the post-expiry gap',
     strideSeconds(false) > MIN_REQUEST_SECONDS);
   ok('seamless stride is still shorter than a block (it overlaps)',
     strideSeconds(true) < MIN_REQUEST_SECONDS);
 }
 
 
-// ---- the overlap reserve counts SEAMLESS runs only -------------------------
+// ---- the reserve counts EVERY live run, mode-independent -------------------
 // Reported from a live pass: three running sessions blocked a new one on a
 // wallet with plenty spare, and the error read "3.067758097729243e+21 MOR".
-// Two bugs in one line. Economy recycles its own stake (it closes each expired
-// block and reuses it), so it must reserve nothing; and the figure is WEI, so
-// printing it beside the word MOR yields nonsense.
+// The wei-printed-as-MOR half of that was a real bug and stays fixed. The other
+// half — "economy recycles its own stake, so exclude it" — was a fix built on a
+// contract that is not deployed, and it under-reserved: a sequential run needs
+// its next block's stake as new money, because the previous one is held to the
+// end of the UTC day. Excluding it let the gate approve unfundable runs.
 console.log('');
-console.log('queries: overlap reserve excludes economy runs');
+console.log('queries: the reserve counts every live run');
 {
   const B = 305000000000000000n; // one block's stake, in WEI
+  // reserveWei is the REAL function committedOverlapWei delegates to. It works
+  // in Number wei (that is what perBlockStakeWei carries), so compare in Number.
   const reserve = (runs, exceptChatId) =>
-    Object.entries(runs).reduce(
-      (t, [k, r]) =>
-        !r.running || k === exceptChatId || !r.overlap ? t : t + r.perBlockStakeWei,
-      0n,
-    );
+    BigInt(Math.round(reserveWei(Object.entries(runs), exceptChatId)));
 
-  const threeEconomy = {
-    a: { running: true, overlap: false, perBlockStakeWei: B },
-    b: { running: true, overlap: false, perBlockStakeWei: B },
-    c: { running: true, overlap: false, perBlockStakeWei: B },
-  };
-  ok('three economy runs reserve NOTHING', reserve(threeEconomy) === 0n);
+  // A run with blocks still to open. total=3, opened=1 -> two left.
+  const live = (overlap) => ({
+    running: true, overlap, perBlockStakeWei: B, total: 3, openedSessionIds: ['a'],
+  });
 
-  const mixed = {
-    a: { running: true, overlap: true, perBlockStakeWei: B },
-    b: { running: true, overlap: false, perBlockStakeWei: B },
-    c: { running: true, overlap: true, perBlockStakeWei: B },
+  const threeSequential = { a: live(false), b: live(false), c: live(false) };
+  ok('three sequential runs reserve 3x, not nothing',
+    reserve(threeSequential) === 3n * B);
+
+  const mixed = { a: live(true), b: live(false), c: live(true) };
+  ok('all three live runs reserve, whatever their mode', reserve(mixed) === 3n * B);
+  ok('the asking chat is excluded', reserve(mixed, 'a') === 2n * B);
+  ok('a stopped run reserves nothing regardless of mode',
+    reserve({ a: { ...live(true), running: false } }) === 0n &&
+    reserve({ a: { ...live(false), running: false } }) === 0n);
+
+  // A run with NO blocks left reserves nothing: its stake is already out of the
+  // wallet and it will never open another. This is not an edge case — a session
+  // inside the chain cap is a ONE-block run, i.e. every ordinary session, and
+  // charging each one a phantom block made a second session demand double.
+  const terminal = {
+    a: { running: true, overlap: true, perBlockStakeWei: B, total: 1, openedSessionIds: ['x'] },
   };
-  ok('only the two seamless runs reserve', reserve(mixed) === 2n * B);
-  ok('the asking chat is excluded', reserve(mixed, 'a') === B);
-  ok('a stopped seamless run reserves nothing',
-    reserve({ a: { running: false, overlap: true, perBlockStakeWei: B } }) === 0n);
+  ok('a run on its last block reserves nothing', reserve(terminal) === 0n);
+  ok('a run with one block left still reserves',
+    reserve({ a: { running: true, overlap: true, perBlockStakeWei: B, total: 2, openedSessionIds: ['x'] } }) === B);
+  // Unknown shape must err toward reserving, never toward approving.
+  ok('a run with no plan recorded still reserves',
+    reserve({ a: { running: true, perBlockStakeWei: B } }) === B);
 
   // The units bug, pinned with the figure actually observed in the app rather
   // than an invented one: the reserve is WEI, so printing it beside the word

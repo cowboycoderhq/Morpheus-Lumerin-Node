@@ -6,16 +6,22 @@ import { ChatHistory } from '../../../../src/renderer/src/components/chat/ChatHi
 
 // The Close button, on the real ChatHistory.
 //
-// Closing a session EARLY does not spend the stake — it time-locks part of it
-// for a day (SessionRouter._rewardUserAfterClose). Close used to be ONE click
-// with no warning, and a real user closed a 6-minute session at 3 minutes and
-// watched ~2.7 MOR go unreachable for 24h (session 0xc78d14…, 2026-07-16).
+// Closing a session does not spend the stake — it time-locks the part you used
+// until the end of the UTC day (SessionRouter._rewardUserAfterClose). Close used
+// to be ONE click with no warning, and a real user closed a 6-minute session at
+// 3 minutes and watched ~2.7 MOR go unreachable for a day (session 0xc78d14…,
+// 2026-07-16).
 //
 // The fixture IS that session, to the wei: stake 5.360550 MOR, opened 1784262329,
 // ends 1784262688 (359s). `?at=` sets the clock, so the case can stand at a
 // chosen moment inside or past the session:
 //   at=1784262509  -> 180s in, the operator's real close  -> locks 2.6877 MOR
-//   at=1784262688  -> exactly endsAt                      -> locks nothing
+//   at=1784262688  -> exactly endsAt                      -> locks the LOT
+//
+// That last line used to read "locks nothing", from the vendored contract's
+// `if (!isClosingLate_)` guard. The deployed Diamond has no such guard —
+// measured on Base mainnet 2026-08-06 — so running a session to its end locks
+// the whole stake, and the panel must not advise waiting as a way to avoid it.
 const REAL_SESSION = {
   Id: '0xc78d14e43e9802cd063f32b0513a3e5049c5f0c8d5ab190636e18b661bf63796',
   ModelName: 'arcee trinity',

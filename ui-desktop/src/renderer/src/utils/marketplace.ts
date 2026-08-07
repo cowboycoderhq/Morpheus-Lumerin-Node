@@ -323,23 +323,36 @@ export function sortModelsForPicker<T extends SortableModel>(
   });
 }
 
-// ---- Early-close lock -----------------------------------------------------
-// Closing a session BEFORE it ends does not spend your stake — it TIME-LOCKS
-// part of it. SessionRouter._rewardUserAfterClose:
+// ---- Close lock -----------------------------------------------------------
+// Closing a session does not spend your stake — it TIME-LOCKS the part you
+// actually used, until the end of the UTC day, after which the proxy-router's
+// StakeClaimer sweeps it home. Only the UNUSED remainder comes back at once.
 //
-//   isClosingLate_ = closedAt >= endsAt
-//   if (!isClosingLate_) {
-//       userDuration_    = min(endsAt, closedAt) - max(openedAt, startOfDay(closedAt))
-//       userInitialLock_ = userDuration_ * pricePerSecond
-//       userStakeToLock_ = userStake.min(stipendToStake(userInitialLock_, startOfDay(closedAt)))
-//       userStakesOnHold[user].push(OnHold(userStakeToLock_, startOfDay(closedAt) + 1 days))
-//   }
+//   userDuration_    = min(endsAt, closedAt) - max(openedAt, startOfDay(closedAt))
+//   userInitialLock_ = userDuration_ * pricePerSecond
+//   userStakeToLock_ = userStake.min(stipendToStake(userInitialLock_, startOfDay(closedAt)))
+//   userStakesOnHold[user].push(OnHold(userStakeToLock_, startOfDay(closedAt) + 1 days))
 //   userAmountToWithdraw_ = userStake - userStakeToLock_    // returned NOW
 //
-// Let it run to endsAt instead and isClosingLate_ is true: NOTHING is locked.
-// That asymmetry is the whole reason this warning exists — a real user closed a
-// 6-minute session at 3 minutes and watched ~2.7 MOR disappear for a day with
-// no warning at all (2026-07-16).
+// THIS APPLIES TO EVERY CLOSE, INCLUDING NATURAL EXPIRY. The vendored
+// smart-contracts/ copy (last touched 2024-12-10) wraps the lock in
+// `if (!isClosingLate_)`, so letting a session run to endsAt would return the
+// stake in full. The DEPLOYED Diamond does not do that, and the Diamond is
+// upgradeable — the vendored source is 18 months stale and must not be trusted
+// as a description of mainnet.
+//
+// Measured on Base mainnet 2026-08-06 (public sessions, not the operator's):
+// two sessions of stake 28.1569 MOR, each run to its full 1799s and closed 3s
+// and 31s AFTER endsAt — a late close under any reading — returned 0.0156 MOR
+// (0.06%) to the user and pushed 28.1413 MOR onto userStakesOnHold. The hold
+// delta matched the withheld amount to the wei at the closing block, on both.
+// Four more late closes across three other wallets showed the same 0.05–0.08%.
+//
+// So the shape is: run it to the end and you lock ~everything until end of day;
+// close it at half time and you lock ~half. There is no timing that avoids the
+// lock — earlier only means a bigger immediate refund of time you did not buy.
+// A real user closed a 6-minute session at 3 minutes and watched ~2.7 MOR
+// disappear for a day with no warning at all (2026-07-16).
 //
 // WHY PROPORTIONAL, AND WHEN IT IS EXACT: the lock is
 // stipendToStake(userDuration * price), and the stake itself was
@@ -374,13 +387,19 @@ type SessionLike = {
 export type EarlyCloseLock = {
   /** false when the session lacks the fields to price a close — show no number */
   known: boolean;
-  /** true when closing NOW would lock part of the stake */
+  /**
+   * true when this close lands BEFORE the session's end time. Does NOT mean
+   * "this is the close that locks stake" — every close locks the used portion.
+   * Test `lockedWei > 0n` for that.
+   */
   isEarly: boolean;
+  /** the used portion, held until `unlockAt` */
   lockedWei: bigint;
+  /** the unused remainder, back in the wallet in the closing tx */
   returnedWei: bigint;
   /** unix seconds; the lock releases at startOfDay(now) + 1 day */
   unlockAt: number;
-  /** unix seconds; wait until this and nothing is locked */
+  /** unix seconds; the session's own end time. Waiting for it locks MORE, not less. */
   endsAt: number;
   secondsUntilEnd: number;
 };
@@ -426,19 +445,13 @@ export function earlyCloseLock(
   const startOfDay = now - (now % BigInt(DAY));
   const unlockAt = Number(startOfDay) + DAY;
 
-  // Closing at or after endsAt locks nothing — the good path.
-  if (now >= endsAt) {
-    return {
-      known: true,
-      isEarly: false,
-      lockedWei: 0n,
-      returnedWei: stake,
-      unlockAt,
-      endsAt: Number(endsAt),
-      secondsUntilEnd: 0,
-    };
-  }
-
+  // NO early return for `now >= endsAt`. There used to be one, returning
+  // "locks nothing, full stake back", on the vendored contract's
+  // `if (!isClosingLate_)` guard. The deployed Diamond has no such guard: a
+  // session closed after its end time locks the whole billed window. The
+  // general path below already handles it — `to` clamps at endsAt, so a late
+  // close prices the full duration and lands on ~the entire stake, which is
+  // exactly what the chain does (see the measurements above).
   const fullDuration = endsAt - openedAt;
   // Mirrors userDuration_: clamped to this UTC day, and never negative.
   const from = openedAt > startOfDay ? openedAt : startOfDay;
@@ -451,12 +464,16 @@ export function earlyCloseLock(
 
   return {
     known: true,
-    isEarly: true,
+    // Literal meaning only: is this close before the session's end time. It no
+    // longer decides whether anything is locked (`lockedWei > 0n` does) —
+    // waiting for expiry locks MORE, not less.
+    isEarly: now < endsAt,
     lockedWei: locked,
     returnedWei: stake - locked,
     unlockAt,
     endsAt: Number(endsAt),
-    secondsUntilEnd: Number(endsAt - now),
+    // Never negative once the session has already ended.
+    secondsUntilEnd: now < endsAt ? Number(endsAt - now) : 0,
   };
 }
 
@@ -501,7 +518,11 @@ export function stakeReleaseSchedule(
     // earlyCloseLock priced at the moment of close gives this session's real
     // historical lock and its unlockAt (startOfDay(closedAt)+1day).
     const at = earlyCloseLock(s, Number(closedAt));
-    if (!at.known || !at.isEarly || at.lockedWei <= 0n) continue; // late / nothing
+    // Gate on "did it lock anything", NOT on isEarly. Gating on isEarly dropped
+    // every LATE close from the schedule, and a late close is what a session
+    // that runs to its end produces — i.e. the tile had no clock for the most
+    // common case, and under-reported the held total to boot.
+    if (!at.known || at.lockedWei <= 0n) continue;
     if (at.unlockAt <= now) continue; // matured — auto-claimer's, and maybe popped
     byDay.set(at.unlockAt, (byDay.get(at.unlockAt) ?? 0n) + at.lockedWei);
   }

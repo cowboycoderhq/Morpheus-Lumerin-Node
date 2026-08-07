@@ -161,10 +161,12 @@ const HistoryEntry = ({
   );
 };
 
-// Closing early does not spend the stake — it time-locks part of it for a day,
-// and letting the session run to its end locks nothing at all. The user cannot
-// know either fact from the button, so state both, with the real figure. A live
-// session lost ~2.7 MOR to this silence on 2026-07-16.
+// Closing does not spend the stake — it time-locks the part of the session that
+// falls inside the UTC day of the close, until the end of that day. Running to
+// the end does NOT avoid that (measured against the deployed Diamond,
+// 2026-08-06); it locks more, because more of the session has been used. The
+// user cannot know any of this from the button, so state it with the real
+// figure. A live session lost ~2.7 MOR to this silence on 2026-07-16.
 const CloseSessionConfirm = ({
   session,
   onCancel,
@@ -184,28 +186,34 @@ const CloseSessionConfirm = ({
 
   return (
     <components.ConfirmPanel data-testid="close-session-confirm">
-      {lock.known && lock.isEarly ? (
+      {/* The condition is "does this close lock anything", NOT "is it early".
+          It used to be lock.isEarly, paired with a hint telling the user to
+          wait for the end time and avoid the lock. On the deployed contract
+          that advice is backwards: waiting locks MORE, because the lock is on
+          the time you USED. There is no timing that avoids it. */}
+      {lock.known && lock.lockedWei > 0n ? (
         <>
           <components.ConfirmText>
             Closing now locks{' '}
             <components.ConfirmLockAmount>
               {weiToMor(lock.lockedWei, 4)} MOR
             </components.ConfirmLockAmount>{' '}
-            until {when(lock.unlockAt)}. You get{' '}
+            until {when(lock.unlockAt)}, when it returns automatically. You get{' '}
             {weiToMor(lock.returnedWei, 4)} MOR back right away — nothing is
             lost, but the locked part is unreachable until then.
           </components.ConfirmText>
           <components.ConfirmHint>
-            Wait until {when(lock.endsAt)} and the session closes itself with
-            nothing locked.
+            {lock.isEarly
+              ? `Letting it run to ${when(lock.endsAt)} does not avoid this — the lock covers the time you use, so a full session locks the full stake. Closing early is what frees the unused part now.`
+              : 'This session has already reached its end time, so the whole stake counts as used.'}
           </components.ConfirmHint>
         </>
       ) : (
-        // Either the session has already run its course (closing locks nothing)
-        // or it cannot be priced. Never invent a figure on a money surface.
+        // Nothing to lock (a session that never billed), or unpriceable.
+        // Never invent a figure on a money surface.
         <components.ConfirmText>
           {lock.known
-            ? 'This session has already reached its end time, so closing it now locks nothing — your full stake is returned.'
+            ? 'Closing this session locks nothing — your full stake is returned.'
             : 'Close this session? Its stake could not be priced, so the amount held back cannot be shown here.'}
         </components.ConfirmText>
       )}
@@ -214,13 +222,13 @@ const CloseSessionConfirm = ({
           data-testid="close-session-confirm-btn"
           onClick={onConfirm}
         >
-          {lock.known && lock.isEarly ? 'Close & lock' : 'Close session'}
+          {lock.known && lock.lockedWei > 0n ? 'Close & lock' : 'Close session'}
         </components.CloseBtn>
         <components.CancelBtn
           data-testid="close-session-cancel-btn"
           onClick={onCancel}
         >
-          {lock.known && lock.isEarly ? 'Keep it open' : 'Cancel'}
+          {lock.known && lock.lockedWei > 0n ? 'Keep it open' : 'Cancel'}
         </components.CancelBtn>
       </components.ConfirmActions>
     </components.ConfirmPanel>

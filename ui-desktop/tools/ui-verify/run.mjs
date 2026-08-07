@@ -757,6 +757,24 @@ const browser = await chromium.launch();
     assert(/Renewing/.test(text), 'a chained session did not offer the renewal mode');
     assert(/priced again when it opens/.test(text), 'did not disclose that later blocks re-price');
 
+    // The disclosure must quote the number the GATE enforces — twice one
+    // block's stake at the 7-day cap, i.e. 1,209.60 MOR — not the sum of all
+    // 105 blocks. It used to say the stakes "ACCUMULATE across renewals and do
+    // not come back between them", which reads as needing 105x and contradicted
+    // the refusal message thirty lines away in the same component. A block's
+    // hold clears at the end of the day it closed, six days before the next one
+    // opens, so the wallet never carries more than two.
+    // 2 x 604.80 = 1209.60, which formatMor renders as "1,210" — above 1000 it
+    // rounds to whole MOR (coinValue.tsx:35).
+    assert(
+      /1,210 MOR/.test(text),
+      `the plan did not quote the peak the gate enforces (2 x 604.80): ${text.slice(0, 600)}`,
+    );
+    assert(
+      !/ACCUMULATE/i.test(text),
+      `the plan still claims stakes accumulate across renewals: ${text.slice(0, 600)}`,
+    );
+
     await p.getByText('Stake MOR', { exact: true }).first().click();
     await p.waitForTimeout(400);
     const started = await p.evaluate(() => window.__started);
@@ -1005,9 +1023,24 @@ const browser = await chromium.launch();
     const panel = await p.locator('[data-testid="close-session-confirm"]').innerText();
     assert(/2\.6877 MOR/.test(panel), `confirm did not state the locked amount: ${panel}`);
     assert(/2\.6728 MOR/.test(panel), `confirm did not state what comes back: ${panel}`);
-    // The escape hatch is the whole point: waiting costs nothing.
-    assert(/nothing locked/i.test(panel), `confirm did not say waiting locks nothing: ${panel}`);
     assert(/nothing is lost/i.test(panel), `confirm did not say the MOR is not lost: ${panel}`);
+    // There is NO escape hatch, and the panel must not invent one. This used to
+    // assert /nothing locked/ — the panel telling the user to wait for the end
+    // time and avoid the lock entirely. On the deployed contract waiting locks
+    // MORE (measured, Base mainnet 2026-08-06), so that advice was backwards.
+    assert(
+      /does not avoid this/i.test(panel),
+      `confirm did not say that waiting fails to avoid the lock: ${panel}`,
+    );
+    assert(
+      !/nothing locked/i.test(panel),
+      `confirm still promises a lock-free wait: ${panel}`,
+    );
+    // And it must say the locked part comes back on its own, since it does.
+    assert(
+      /returns automatically/i.test(panel),
+      `confirm did not say the locked MOR returns automatically: ${panel}`,
+    );
 
     // Backing out must not close it.
     await p.getByTestId('close-session-cancel-btn').click();
@@ -1026,9 +1059,11 @@ const browser = await chromium.launch();
     await p.screenshot({ path: `${SHOTS}/close-session-warns.png` });
   });
 
-  // At/after endsAt the contract locks NOTHING. Claiming a lock here would be a
-  // lie that pushes users into keeping dead sessions open.
-  await drive(page, 'close-session-late-locks-nothing', `http://localhost:${PORT}/?case=close-session&at=1784262688`, async (p) => {
+  // At/after endsAt the row offers no Close button at all, so no lock warning
+  // should appear either. (The comment here used to say the contract locks
+  // NOTHING past endsAt — it locks everything; that is why this case is now
+  // about the ABSENCE of an affordance, not about a lock-free close.)
+  await drive(page, 'close-session-ended-shows-no-lock-warning', `http://localhost:${PORT}/?case=close-session&at=1784262688`, async (p) => {
     await p.waitForSelector('text=Sessions', { timeout: 20000 });
     await p.getByText('Sessions', { exact: false }).first().click();
     // isClosed() treats now >= EndsAt as closed, so the row offers no Close

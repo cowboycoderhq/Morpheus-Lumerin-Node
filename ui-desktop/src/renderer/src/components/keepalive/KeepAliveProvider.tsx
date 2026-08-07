@@ -28,28 +28,48 @@ import { ToastsContext } from '../toasts';
 // of "keep-alive". Chat consumes this context for its badge and to route
 // inference to the current block.
 //
-// Fund-safety (verified against SessionRouter.sol):
-// - Never programmatically CLOSE a block. Closing before EndsAt time-locks most
-//   of the stake for ~24h. Each block expires naturally (the router's
-//   SessionExpiryHandler closes it after EndsAt) → full stake returned, no hold.
-//   Stop only stops scheduling; the current block lapses on its own.
+// Fund-safety (measured against the DEPLOYED Diamond on Base, 2026-08-06/07 —
+// NOT against the vendored smart-contracts/ copy, which is from 2024-12-10 and
+// describes a contract that is no longer what runs):
+//
+// The lock covers the part of the session that falls inside the UTC day the
+// close lands in:
+//     locked ≈ stake × (min(endsAt, closedAt) − max(openedAt, startOfDay(closedAt)))
+//                      ────────────────────────────────────────────────────────
+//                                     endsAt − openedAt
+// released at startOfDay(closedAt) + 1 day, then swept home by the router's
+// StakeClaimer. Consequences, each measured:
+// - A block closed on the SAME UTC day it ran returns almost nothing now: a
+//   28.1569 MOR block run to its end and closed 3–31s late returned 0.0156 MOR
+//   and held 28.1413. There is no "close it late and it is free" path; that was
+//   the vendored contract's `if (!isClosingLate_)` guard, which is not deployed.
+// - A block closed on a LATER UTC day than it ended returns the stake IN FULL,
+//   because none of the session lies inside the closing day (three closes of
+//   50000.0000 MOR, hold delta exactly 0). It does not revert.
+// - So nothing recycles between chained blocks: block N's stake is held while
+//   block N+1 opens, and comes back by the end of the day N closed.
 // - Open block N+1 shortly BEFORE N expires (OVERLAP_SEC) so inference never
-//   drops. Peak lockup ~2x a 6-min stake during the overlap, then back to 1x.
+//   drops. Peak commitment is 2x a block's stake for any renewing run, in BOTH
+//   restake modes — see requiredFreeStake, which also handles the case where the
+//   chain's cap is short enough that several blocks' holds overlap.
 
 export const MIN_REQUEST_SECONDS = 5 * 60 + 5; // block unit: 305s = 300s contract floor + 5s cushion for stake→duration truncation
 export const OVERLAP_SEC = 25; // seamless mode: open the next block this early; covers open-tx latency
-// Economy waits until the old block has EXPIRED, then closes it itself and
-// waits for the stake to come back before opening the next.
+// Sequential mode waits until the old block has EXPIRED, then closes it itself
+// and waits for the chain to confirm the close before opening the next.
 //
-// The buffer is what keeps the close free. SessionRouter._rewardUserAfterClose
-// only skips the ~24h hold when `closedAt >= endsAt`, and closedAt is
-// block.timestamp at MINING time, not our clock — so firing exactly at endsAt
-// risks mining a second early, which locks nearly the whole block's stake
-// (the lock scales with time already used, so a near-miss is the WORST case).
+// The buffer no longer buys a "free" close — nothing does; a same-day close
+// locks the used portion whether it lands early or late. What it still buys is
+// the REMAINDER: closing at `endsAt + buffer` bills the whole block and refunds
+// nothing, while closing a second EARLY bills only the elapsed part and refunds
+// the rest immediately. That is a wash for the user. The buffer's real job is
+// ordering: closedAt is block.timestamp at MINING time, not our clock, and a
+// close that mines before endsAt leaves the session live, so the reopen races a
+// still-active block. Keep it positive.
 export const CLOSE_BUFFER_SEC = 8;
-// Cap on waiting for the stake to return. The router's own autoclose ticker is
-// 1 minute, so this must exceed it comfortably or we would give up on a stake
-// that was always going to arrive.
+// Cap on waiting for the chain to confirm a close. The router's own autoclose
+// ticker is 1 minute, so this must exceed it comfortably or we would give up on
+// a settlement that was always going to arrive.
 export const STAKE_RETURN_TIMEOUT_SEC = 150;
 export const REOPEN_DELAY_SEC = CLOSE_BUFFER_SEC; // kept: strideSeconds still prices the gap
 
@@ -77,6 +97,109 @@ export const strideSeconds = (
 // turn a long wait into a tight loop that opens a full-size stake per iteration.
 // Long waits are armed in chunks below this instead.
 export const MAX_TIMER_MS = 2_000_000_000;
+
+// ---- the two money predicates, as pure functions ---------------------------
+// Exported so the checks can bind to the SHIPPING code. They used to be inlined
+// here and in Chat.startRolling, and logic-checks re-implemented both locally —
+// so the suite pinned the intent while the real gate was free to disagree with
+// it, which is exactly how the mode-dependent version survived. A test that
+// re-types the code it is testing proves only that the author can type twice.
+
+type ReserveRun = {
+  running: boolean;
+  perBlockStakeWei?: number | string | bigint;
+  /** blocks this run will ever open (see planBlocks) */
+  total?: number;
+  /** blocks it has opened so far */
+  openedSessionIds?: unknown[];
+};
+
+/**
+ * The stake OTHER live runs still need, and which this wallet therefore cannot
+ * count as free.
+ *
+ * Two rules, both load-bearing:
+ * - Mode does not matter. A closed block's stake is held to the end of the UTC
+ *   day, so nothing is recycled into the next block in either restake mode
+ *   (measured on Base mainnet 2026-08-06). Skipping sequential runs here let the
+ *   gate approve runs the wallet could not fund.
+ * - A run with no blocks LEFT reserves nothing. Its current stake is already out
+ *   of the wallet, so free balance excludes it, and it will never open another.
+ *   Counting it charged a phantom block against every new session — and since a
+ *   session inside the chain cap is a ONE-block run, that was every ordinary
+ *   session. It also produced a refusal claiming a running session "still needs"
+ *   MOR it will never ask for.
+ */
+export const reserveWei = (
+  runs: Iterable<[string, ReserveRun]>,
+  exceptChatId?: string,
+): number => {
+  let total = 0;
+  for (const [key, run] of runs) {
+    if (!run.running || key === exceptChatId) {
+      continue;
+    }
+    // `total` is absent on older/stubbed run shapes; treat that as "may renew"
+    // so an unknown shape errs toward reserving rather than under-reserving.
+    const planned = typeof run.total === 'number' ? run.total : Infinity;
+    const opened = run.openedSessionIds?.length ?? 0;
+    if (opened >= planned) {
+      continue;
+    }
+    const per = Number(run.perBlockStakeWei);
+    if (Number.isFinite(per) && per > 0) {
+      total += per;
+    }
+  }
+  return total;
+};
+
+const HOLD_WINDOW_SEC = 24 * 60 * 60; // startOfDay(closedAt) + 1 day, worst case
+
+/**
+ * Peak number of block-stakes a run has committed at once.
+ *
+ * A closed block's stake is held until the end of the UTC day it closed in, so
+ * the peak is the live block plus every block whose hold has not yet released —
+ * i.e. however many blocks fit inside one hold window.
+ *
+ * At the current 7-day cap that is 1 + 1 = 2, which is why a flat 2 looked
+ * right. But the cap is OWNER-SETTABLE and read live (see getMaxSessionSeconds,
+ * which accepts anything from 300s to 30d). Shorten it and the peak climbs: at a
+ * 1-hour cap a 7-day ask opens ~170 blocks and holds ~26 stakes at once. A flat
+ * 2 would then under-reserve by 13x — the gate approves, block 1 is paid for,
+ * and a later block reverts. Deriving it from blockSeconds means a governance
+ * change cannot silently invalidate the gate.
+ *
+ * `+ 2` not `+ 1`: one for the live block, one for the partial day at the edge.
+ * Rounding up is the safe direction for an affordability gate.
+ */
+export const peakBlockStakes = (
+  blockCount: number,
+  blockSeconds: number,
+): number => {
+  if (!(blockCount > 1)) {
+    return 1;
+  }
+  if (!Number.isFinite(blockSeconds) || blockSeconds <= 0) {
+    return blockCount; // unpriceable block size: reserve for all of it
+  }
+  return Math.min(blockCount, Math.floor(HOLD_WINDOW_SEC / blockSeconds) + 2);
+};
+
+/**
+ * Free stake a new run needs before it may open. A one-block run locks its
+ * stake once; a renewing run needs every stake that can be committed at the
+ * same time, because nothing is released between blocks — in both restake
+ * modes.
+ */
+export const requiredFreeStake = (
+  blockCount: number,
+  perBlockStake: number,
+  otherRunsNeed: number,
+  blockSeconds: number,
+): number =>
+  peakBlockStakes(blockCount, blockSeconds) * perBlockStake + otherRunsNeed;
 
 /**
  * The blocks a run will actually open, in order, with their lengths.
@@ -187,9 +310,10 @@ export interface StartKeepAliveOpts {
   // A specific provider's bid to stake every block against; null = let the
   // router choose a provider each block ("Auto").
   bidId?: string | null;
-  // Seamless (default): overlap blocks for gapless inference, needs ~2x a
-  // block's stake free. Economy (false): open the next block only after the
-  // current one expires and its stake returns — 1x stake, small inference gap.
+  // Seamless (default): overlap blocks for gapless inference. Sequential
+  // (false): open the next block only after the current one expires, leaving a
+  // small inference gap. Costs the SAME — the expiring block's stake is held to
+  // the end of the UTC day, so neither mode gets to reuse it.
   overlap?: boolean;
 }
 
@@ -212,11 +336,12 @@ export interface KeepAliveContextValue {
   // still entitled to this session?", never "which run should I stop?".
   retainedSessionIds: Record<string, string[]>;
   runningCount: number;
-  // WEI that live SEAMLESS runs other than `exceptChatId` still need to fund
-  // their next overlap. Economy runs contribute nothing — they recycle. A new run's gate must add this to its own requirement: each run
-  // asking only "can I peak at 2x?" oversubscribes the wallet once several are
-  // live, and every run that loses the race reverts having already paid for its
-  // first block.
+  // WEI that live runs other than `exceptChatId` still need to fund their next
+  // block — ALL such runs, in either restake mode, but only those with a block
+  // still to open. A new run's gate must add this to its own requirement: each
+  // run asking only "can I peak at 2x?" oversubscribes the wallet once several
+  // are live, and every run that loses the race reverts having already paid for
+  // its first block.
   committedOverlapWei: (exceptChatId?: string) => number;
   start: (opts: StartKeepAliveOpts) => Promise<void>;
   // Stop one run, or every run when called with no argument.
@@ -316,26 +441,22 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
   // runs hold a second block's worth briefly at each rotation; economy runs need
   // their next block's stake before the previous one's has returned. Either way
   // the money is spoken for and a new run must not count it as free.
-  const committedOverlapWei = useCallback((exceptChatId?: string) => {
-    let total = 0;
-    runsRef.current!.forEach((run, key) => {
-      if (!run.running || key === exceptChatId) {
-        return;
-      }
-      // ECONOMY runs reserve nothing. They close each expired block and recycle
-      // that exact stake into the next one, so they never hold two at once —
-      // counting them made every extra run reserve a block it will never need,
-      // and three economy runs blocked a wallet with plenty spare.
-      if (!run.overlap) {
-        return;
-      }
-      const per = Number(run.perBlockStakeWei);
-      if (Number.isFinite(per) && per > 0) {
-        total += per;
-      }
-    });
-    return total;
-  }, []);
+  // Thin wrapper over the exported predicate, so the tested function and the
+  // shipped one are the same function.
+  //
+  // This used to skip sequential ("economy") runs on the premise that they
+  // recycle: close the expired block, get the stake back, open the next with
+  // it. Measured on Base mainnet 2026-08-06, that premise is false — closing a
+  // block (late, at or after endsAt, which is exactly when this loop closes)
+  // returns only the UNUSED remainder and locks the used portion until the end
+  // of the UTC day. A block that ran its full length returns ~0.06% of its
+  // stake. Skipping those runs let the gate approve runs the wallet cannot
+  // fund. See utils/marketplace.ts for the measurements.
+  const committedOverlapWei = useCallback(
+    (exceptChatId?: string) =>
+      reserveWei(runsRef.current!.entries(), exceptChatId),
+    [],
+  );
 
   // stop(chatId) ends ONE run; stop() ends all of them. Callers that mean "this
   // thread is going away" must pass the id — an argument-less stop from a chat
@@ -454,10 +575,17 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
   };
 
   // Close an EXPIRED block ourselves instead of waiting for the router's
-  // once-a-minute autoclose sweep. Verified against SessionRouter.sol: a close at
-  // or after endsAt takes the `isClosingLate_` branch, which skips the
-  // userStakesOnHold push entirely and returns the full user stake in that one
-  // transaction — no 24h lock. That is what lets economy run on 1x.
+  // once-a-minute autoclose sweep.
+  //
+  // What this does NOT do is free the stake. The comment here used to claim a
+  // close at or after endsAt takes an `isClosingLate_` branch that skips the
+  // userStakesOnHold push and returns the full stake — true of the vendored
+  // 2024-12-10 contract, false of the deployed Diamond (measured on Base
+  // mainnet 2026-08-06: a block run to its end returns ~0.06% and locks the
+  // rest to end of day). Closing early is still worth doing — it hands back the
+  // unused remainder immediately and lets the router settle the session — but
+  // it buys no stake to reopen with, which is why sequential mode is no longer
+  // priced as 1x.
   const closeBlock = async (sessionId: string) => {
     const authHeaders = await client.getAuthHeaders();
     const resp = await fetch(
@@ -471,11 +599,13 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     return data;
   };
 
-  // Wait until the chain agrees the block is closed — that is the moment the
-  // stake is back in the wallet. Polling the real signal replaces the old
-  // 12-second guess, which was below the floor of the router's 1-minute sweep
-  // and so was wrong essentially always.
-  const waitForStakeReturn = async (sessionId: string) => {
+  // Wait until the chain agrees the block is CLOSED. Deliberately not named
+  // "wait for the stake to come back" any more: it never measured that, and on
+  // the deployed contract the stake does not come back at close at all — the
+  // used portion is held to end of day and swept later by the proxy-router's
+  // StakeClaimer. Closure is still worth waiting for, because reopening against
+  // a session the chain still thinks is active is what reverted before.
+  const waitForClose = async (sessionId: string) => {
     const deadline = Date.now() + STAKE_RETURN_TIMEOUT_SEC * 1000;
     while (Date.now() < deadline) {
       const s = await fetchSession(sessionId);
@@ -554,13 +684,14 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     const myId = run.id;
     let newSession: any = null;
     try {
-      // ECONOMY: recycle the SAME stake instead of needing a second one. The old
-      // block has expired by now (scheduleNext fires this at endsAt +
-      // CLOSE_BUFFER_SEC), so closing it is the free, late kind and returns the
-      // full stake in one tx. Then wait for the chain to confirm before opening
-      // the next block — the previous code just slept 12s and hoped, which is
-      // below the floor of the router's 1-minute autoclose sweep, so the reopen
-      // reverted with block 1 already paid for.
+      // SEQUENTIAL: settle the old block before opening the next one. It has
+      // expired by now (scheduleNext fires this at endsAt + CLOSE_BUFFER_SEC),
+      // so this is a late close: it returns the unused remainder and holds the
+      // used portion to end of day. It does NOT fund the next block — that was
+      // the old "recycle the same stake" premise, and the deployed contract
+      // does not implement it. Waiting for the close is still required: the
+      // previous code slept 12s and hoped, below the floor of the router's
+      // 1-minute autoclose sweep, so the reopen reverted with block 1 paid for.
       //
       // Best-effort on purpose: if the close fails (provider unreachable, so no
       // signed receipt) we fall through and try the open anyway. The router's
@@ -571,9 +702,9 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
         if (prev) {
           try {
             await closeBlock(prev);
-            await waitForStakeReturn(prev);
+            await waitForClose(prev);
           } catch (e) {
-            console.warn('keep-alive: economy close/refund wait failed', e);
+            console.warn('keep-alive: sequential close/settle wait failed', e);
           }
         }
         // Re-check identity: the close + wait can take a minute, and Stop or a
@@ -689,12 +820,12 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       });
       return;
     }
-    // Seamless: open N+1 just BEFORE N ends (overlap → gapless, 2x stake).
-    // Economy: open N+1 just AFTER N ends, once its stake has returned (1x
-    // stake, small gap while the stake recycles).
-    // Economy fires AFTER expiry (never at it) so our own close is guaranteed to
-    // be the late, penalty-free kind; the close+confirm wait then happens inside
-    // tick before the next open.
+    // Seamless: open N+1 just BEFORE N ends (overlap → gapless inference).
+    // Sequential: open N+1 just AFTER N ends, leaving a small gap.
+    // Both commit the same MOR — N's stake is held to the end of the UTC day
+    // either way, so there is no stake to wait for and no saving to be had.
+    // Sequential still fires AFTER expiry, never at it: a close that mines
+    // before endsAt leaves the session live and the reopen races it.
     const fireAt = run.overlap
       ? endsAt - OVERLAP_SEC
       : endsAt + CLOSE_BUFFER_SEC;
