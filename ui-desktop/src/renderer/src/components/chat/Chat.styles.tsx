@@ -380,9 +380,12 @@ export const SessionLengthNote = styled.div`
      quiet space under a short message; the alternative is the page moving
      while a money figure is being typed. */
   min-height: 7.5em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  /* NOT display:flex. This was flex-centred, which makes every inline child its
+     own flex item — so <strong>end of the day</strong> became a separate column
+     and the sentence rendered as a stack of single words. Reserving the height
+     is what stops the page moving; vertical centring was only cosmetic and is
+     not worth breaking text flow for. */
+  display: block;
 `;
 
 // Carried by the TEXT; colour only reinforces it — money surfaces never state
@@ -1301,4 +1304,28 @@ export const MessageOrb = styled.div<{ $thinking?: boolean }>`
         animation: ${orbSweep} 0.9s linear infinite;
       `}
   }
+`;
+
+
+// The opencode handoff offer, shown once a session opens. Money-surface rules
+// still apply (solid, no glass) because it sits next to a live paid session.
+export const OpencodeOffer = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.8rem;
+  padding: 0.8rem 1.2rem;
+  font-size: ${(p) => p.theme.type.sm};
+  color: ${(p) => p.theme.colors.moneySurfaceText};
+  background: ${(p) => p.theme.colors.moneySurfaceBg};
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.35)};
+  border-radius: ${(p) => p.theme.radii.md};
+`;
+
+export const OpencodeOfferActions = styled.div`
+  display: flex;
+  gap: 0.6rem;
+  flex-shrink: 0;
 `;

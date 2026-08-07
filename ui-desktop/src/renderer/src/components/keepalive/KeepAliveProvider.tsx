@@ -605,7 +605,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       if (runsRef.current!.get(key)?.id === myId) {
         toasts.toast(
           'info',
-          'Rolling session ended — could not open the next block.',
+          'Session ended — could not open the next block.',
         );
         stop(key);
       }
@@ -779,7 +779,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       } catch (e) {
         console.error('keep-alive: first block failed', e);
         if (runsRef.current!.get(chatId)?.id === myId) {
-          toasts.toast('error', 'Could not start the rolling session.');
+          toasts.toast('error', 'Could not start the session.');
           stop(chatId);
         }
         return;

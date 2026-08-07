@@ -692,7 +692,38 @@ const browser = await chromium.launch();
     await pickModel(p);
     const text = await body(p);
     assert(/Stakes about\s*0\.305 MOR/.test(text), `default length did not quote the 5-minute floor stake: ${text.slice(0, 500)}`);
-    assert(/returned in full/.test(text), `the disclosure did not say the stake comes back: ${text.slice(0, 500)}`);
+    // The lock, not a refund. MOR is held until the end of the day regardless of
+    // when the session ends, so a disclosure promising it "returns in full" when
+    // the session lapses would be telling the user something untrue about money.
+    assert(/end of the day/.test(text),
+      `the disclosure did not say when the MOR is actually released: ${text.slice(0, 500)}`);
+    assert(!/returned in full|returns when its session lapses/.test(text),
+      `the disclosure still promises an on-expiry refund: ${text.slice(0, 500)}`);
+
+    // The disclosure must READ as a sentence. Making the note a flex container
+    // to centre it turned every inline child into a flex item, so the emphasised
+    // phrase rendered as a column of single stacked words — legible in the DOM,
+    // unreadable on screen, and invisible to any text-content assertion.
+    // Structural, not geometric. A geometric check passes at a wide viewport —
+    // flex items only squeeze into stacked single words once the container is
+    // narrow — so measuring at one window size proves nothing. The invariant is
+    // that this element must NOT be a layout container at all: its children are
+    // inline text, and flex/grid turn each of them into a separate item.
+    const noteDisplay = await p
+      .locator('strong', { hasText: 'end of the day' })
+      .first()
+      .evaluate((el) => getComputedStyle(el.parentElement).display);
+    assert(!/flex|grid/.test(noteDisplay),
+      `the disclosure's container is "${noteDisplay}" — flex/grid makes each inline child a layout item, which renders the sentence as a stack of single words`);
+
+    // And confirm it flows at the NARROW end, where the breakage actually shows.
+    await p.setViewportSize({ width: 620, height: 900 });
+    await p.waitForTimeout(200);
+    const emph = p.locator('strong', { hasText: 'end of the day' }).first();
+    const box = await emph.boundingBox();
+    assert(box && box.width > box.height,
+      `emphasised text is stacked vertically at a narrow width (${box?.width}x${box?.height})`);
+    await p.setViewportSize({ width: 1100, height: 900 });
     await p.screenshot({ path: `${SHOTS}/session-length-default.png` });
   });
 
@@ -806,6 +837,33 @@ const browser = await chromium.launch();
     const text = await body(p);
     assert(/sessions/.test(text) && /Renewing/.test(text),
       `"1 month" did not become a chained plan, so the check is vacuous: ${text.slice(0, 400)}`);
+  });
+
+  // Clicking "Open in opencode" must SAY something. The launch detects opencode,
+  // writes a config and shells out — not instant — and with no feedback the
+  // click read as if nothing had happened.
+  await drive(page, 'opencode-handoff-shows-progress', URL_, async (p) => {
+    await pickModel(p);
+    await setLength(p, '1 hour');
+    await p.getByText('Stake MOR', { exact: true }).first().click();
+
+    const offer = p.getByText('Use it from your terminal?', { exact: false });
+    await offer.waitFor({ timeout: 10000 });
+
+    await p.getByText('Open in opencode', { exact: true }).click();
+
+    // The intermediate state, while the launch is in flight.
+    await p.getByText('Starting opencode', { exact: false }).waitFor({ timeout: 5000 });
+    // The action must not be clickable twice mid-launch.
+    assert(await p.getByText('Open in opencode', { exact: true }).count() === 0,
+      'the button stayed clickable while the launch was in flight');
+
+    // Then the confirmation — worded for what is actually known: the terminal
+    // was opened. Whether opencode finished booting is not observable here.
+    await p.getByText('Opened in your terminal', { exact: false }).waitFor({ timeout: 5000 });
+    const calls = await p.evaluate(() => window.__opencodeCalls);
+    assert(calls === 1, `expected exactly one launch, got ${calls}`);
+    await p.screenshot({ path: `${SHOTS}/opencode-handoff.png` });
   });
 
   // Tab finishes the unit, and the menu is OURS (themed), not the browser's.

@@ -7,6 +7,10 @@ import { getDb } from '../database'
 import defaultSettings from './defaultSettings.json'
 
 const FAILOVER_KEY = 'user.failover'
+// The OpenAI-compatible local endpoint. Stored here rather than in the router's
+// config because it is app policy — who may talk to this machine, and whether
+// they may spend — not routing.
+const OPENAI_API_KEY_ = 'user.openAiApi'
 
 //TODO: make sure default settings works as a static import.  it was getting imported every time
 //      it was accessed.  if that's necessary, we have to use the async method
@@ -110,3 +114,7 @@ export const setAppVersion = (value) => setKey('app.version', value)
 export const getFailoverSetting = async () => getKey(FAILOVER_KEY)
 
 export const setFailoverSetting = async (isEnabled) => setKey(FAILOVER_KEY, { isEnabled })
+
+export const getOpenAiApiSetting = () => getKey(OPENAI_API_KEY_)
+
+export const setOpenAiApiSetting = (value) => setKey(OPENAI_API_KEY_, value)

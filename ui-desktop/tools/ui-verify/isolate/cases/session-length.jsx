@@ -65,6 +65,19 @@ const props = {
     // 7-day deployment value) without a network call. The offline path is the
     // one a test can pin, and it is the one that must stay correct.
     getProxyRouterDerivedConfig: async () => ({ DerivedConfig: { EthNodeURLs: [] } }),
+    // opencode handoff. The launch is deliberately SLOW so the intermediate
+    // "Starting opencode…" state is observable — that state exists precisely
+    // because the real call is not instant.
+    getOpencodeStatus: async () => ({
+      installed: true,
+      version: '1.18.10',
+      endpointRunning: true,
+    }),
+    openInOpencode: async () => {
+      window.__opencodeCalls = (window.__opencodeCalls || 0) + 1;
+      await new Promise((r) => setTimeout(r, 600));
+      return { ok: true, modelId: 'test-model' };
+    },
   },
   toasts: { toast: (t, m) => window.__toasts.push([t, m]) },
   getModelsData: async () => ({

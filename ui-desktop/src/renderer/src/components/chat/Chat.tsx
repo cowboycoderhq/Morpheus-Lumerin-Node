@@ -69,6 +69,8 @@ import {
   SessionLengthOption,
   SessionLengthOptionHint,
   ChipStake,
+  OpencodeOffer,
+  OpencodeOfferActions,
   ReservedNotice,
   SessionLengthValue,
   SessionLengthNote,
@@ -302,6 +304,19 @@ export const Chat = (props: ChatProps) => {
   const [sessionLengthInput, setSessionLengthInput] = useState('5 minutes');
   // Unit completion. Open only while the user is actually typing — a menu that
   // springs open on focus would sit over the Stake button for no reason.
+  // Offered right after a session opens: hand it straight to opencode. Only
+  // shown when the handoff would actually work (endpoint running, opencode
+  // installed) — an offer that fails on click is worse than no offer.
+  const [opencodeOffer, setOpencodeOffer] = useState<{
+    modelId: string;
+    modelName: string;
+  } | null>(null);
+  // idle → launching (writing config, opening the terminal) → launched.
+  // Launching is not instant: it detects opencode, writes the provider config
+  // and shells out, and with no feedback the click read as if nothing happened.
+  const [opencodeState, setOpencodeState] = useState<
+    'idle' | 'launching' | 'launched'
+  >('idle');
   const [lengthMenuOpen, setLengthMenuOpen] = useState(false);
   const [lengthMenuIndex, setLengthMenuIndex] = useState(0);
   // Restake strategy, and it only matters ABOVE the chain's per-session cap —
@@ -324,7 +339,7 @@ export const Chat = (props: ChatProps) => {
   const myRunSession = chat?.id ? keepAlive.sessionsByChat[chat.id] : undefined;
   // Guards the Stake button against a double-click opening two first blocks
   // before the first render reflects the started run.
-  const startingRollingRef = useRef(false);
+  const startingSessionRef = useRef(false);
 
   // --- Cached data layer (stale-while-revalidate via react-query) ---------
   // These queries live in the app-level QueryClient, so navigating away from
@@ -1027,7 +1042,7 @@ export const Chat = (props: ChatProps) => {
     // NOT gated on "some run is active" any more — starting a rolling session
     // while other chats roll is the point. startRolling always seeds a brand-new
     // chat id, so it can never collide with an existing run.
-    if (startingRollingRef.current) {
+    if (startingSessionRef.current) {
       return;
     }
     // The button is disabled on an invalid length, but the length is the number
@@ -1041,7 +1056,7 @@ export const Chat = (props: ChatProps) => {
       );
       return;
     }
-    startingRollingRef.current = true;
+    startingSessionRef.current = true;
     try {
       const model =
         selectedModel ??
@@ -1161,6 +1176,19 @@ export const Chat = (props: ChatProps) => {
       setSelectedModel(model);
       setMessages([]);
       setChat({ id: chatId, createdAt: new Date(), modelId: model.Id });
+      // Fire-and-forget: the offer is a convenience, and a failure to detect
+      // opencode must never interfere with a session that is already opening.
+      void (async () => {
+        try {
+          const status: any = await props.client.getOpencodeStatus();
+          if (status?.installed && status?.endpointRunning) {
+            setOpencodeOffer({ modelId: model.Id, modelName: model.Name });
+          }
+        } catch {
+          /* no offer */
+        }
+      })();
+
       await keepAlive.start({
         modelId: model.Id,
         chatId,
@@ -1173,7 +1201,7 @@ export const Chat = (props: ChatProps) => {
         perBlockStakeWei: perBlockStake,
       });
     } finally {
-      startingRollingRef.current = false;
+      startingSessionRef.current = false;
     }
   };
 
@@ -2252,7 +2280,7 @@ export const Chat = (props: ChatProps) => {
           <ChatIntroContainer>
             <ChatIntroInner>
               <ChatIntroInnerTitle>
-                Starting your rolling session…
+                Starting your session…
               </ChatIntroInnerTitle>
               <ChatIntroInnerText>
                 Opening the first block — this can take a few seconds while the
@@ -2486,8 +2514,10 @@ export const Chat = (props: ChatProps) => {
                           runs as{' '}
                           <strong>{sessionBlockCount} sessions</strong> of up to{' '}
                           {formatDurationLong(sessionBlockSeconds)}, staking
-                          about {formatMor(stakePreviewWei, 18) ?? '…'} MOR each
-                          and returning it when that session ends.{' '}
+                          about {formatMor(stakePreviewWei, 18) ?? '…'} MOR each.
+                          MOR is locked until the end of the day, so those
+                          stakes ACCUMULATE across renewals — they do not come
+                          back between them.{' '}
                           {/* Mode-accurate AND count-accurate: claiming "only
                               one is staked at a time" directly above the
                               Seamless card's "needs about twice one session's
@@ -2495,9 +2525,9 @@ export const Chat = (props: ChatProps) => {
                               money figure; claiming the two-at-once cost for a
                               plan that never renews was the same error again,
                               in the other direction. */}
-                          {restakeMode === 'seamless'
-                            ? 'Two are briefly staked at once at each renewal (see below).'
-                            : 'Only one is staked at a time.'}{' '}
+                          {/* Both modes now cost the same MOR: nothing is
+                              released between renewals, so "one at a time" is
+                              no longer a saving either mode can offer. */}
                           Each is priced again when it opens, so this is a plan,
                           not a purchase — and it lasts only as long as the app
                           keeps running.
@@ -2508,9 +2538,8 @@ export const Chat = (props: ChatProps) => {
                           <strong>
                             {formatMor(stakePreviewWei, 18) ?? '…'} MOR
                           </strong>
-                          , locked until the session ends and then returned in
-                          full. Ending it early returns the unused part at once
-                          and holds the rest for about a day.
+                          , which is locked until the{' '}
+                          <strong>end of the day</strong>.
                         </>
                       )}
                     </SessionLengthNote>
@@ -2540,8 +2569,8 @@ export const Chat = (props: ChatProps) => {
                       </KeepAliveRow>
                       <ChatIntroInnerText style={{ marginTop: '0.4rem' }}>
                         {restakeMode === 'seamless'
-                          ? `Seamless: the next session opens before the current one ends, so inference never pauses. Needs about twice one session's stake free at each renewal. Stop anytime; each stake returns when its session lapses.`
-                          : `Economy: each session is closed the moment it expires and that same stake is recycled into the next, so only about one session's stake is ever committed — at the cost of a pause (up to a minute) at each renewal while the refund confirms. Stop anytime.`}
+                          ? `Seamless: the next session opens before the current one ends, so inference never pauses. Every stake stays locked until the end of the day, so budget for the whole plan rather than one session's worth.`
+                          : `Economy: the next session opens only after the current one expires, so there is a short gap in inference. It does NOT lower what you stake — MOR is locked until the end of the day either way, so each renewal needs new MOR rather than reusing the last stake.`}
                       </ChatIntroInnerText>
                     </>
                   )}
@@ -2553,10 +2582,6 @@ export const Chat = (props: ChatProps) => {
                       Stake MOR
                     </ChatIntroButton>
                   </div>
-                  <ChatIntroInnerText>
-                    Pay with your MOR tokens directly — the session length is
-                    limited only by your MOR balance, not by the length above.
-                  </ChatIntroInnerText>
                   <div style={{ display: 'flex', justifyContent: 'center' }}>
                     <ChatIntroButton
                       onClick={() => onOpenSession(false, true)}
@@ -2634,7 +2659,7 @@ export const Chat = (props: ChatProps) => {
                     <span title={providerAddress}>{providerAddress}</span>
                     {' · '}
                     {stakedFunds} MOR staked
-                    {/* One timer. During a rolling session it counts down the
+                    {/* One timer. During a chained session it counts down the
                         TOTAL time remaining, not the current 6-min block. */}
                     {(myRun?.running || activeSession?.EndsAt) && (
                       <>
@@ -2655,7 +2680,7 @@ export const Chat = (props: ChatProps) => {
           </ChatIdentity>
 
           <HeaderActions>
-            {/* The ONLY way to end a rolling run. Chat-switch and New-chat used
+            {/* The ONLY way to end a running session. Chat-switch and New-chat used
                 to stop it implicitly, and removing those (so runs survive
                 navigation) left no control at all while the stake copy promised
                 "Stop anytime" — a run would keep restaking for up to 8 hours.
@@ -2669,7 +2694,7 @@ export const Chat = (props: ChatProps) => {
                 <IconPlayerStopFilled size={16} /> Stop renewing
               </HeaderBtn>
             )}
-            {/* Runs elsewhere must be stoppable from HERE. A rolling chat has no
+            {/* Runs elsewhere must be stoppable from HERE. A running chat has no
                 file until its first prompt, so it never appears in the drawer,
                 and the per-chat Stop above only renders inside that chat — a run
                 started and navigated away from before typing was unreachable and
@@ -2765,6 +2790,74 @@ export const Chat = (props: ChatProps) => {
             </EmptyState>
           ) : (
             renderChatBlock()
+          )}
+          {/* The handoff offer. Dismissible, and it disappears once taken —
+              it is an offer, not a nag. */}
+          {opencodeOffer && (
+            <OpencodeOffer>
+              {opencodeState === 'launching' ? (
+                <span>
+                  <Spinner animation="border" size="sm" /> Starting opencode…
+                </span>
+              ) : opencodeState === 'launched' ? (
+                /* Honest about what is known: the terminal was opened. Whether
+                   opencode has finished booting happens outside this app and
+                   cannot be observed from here. */
+                <span>
+                  Opened in your terminal — opencode is starting with{' '}
+                  <strong>{opencodeOffer.modelName}</strong>.
+                </span>
+              ) : (
+                <span>
+                  Session open for <strong>{opencodeOffer.modelName}</strong>.
+                  Use it from your terminal?
+                </span>
+              )}
+              {opencodeState === 'idle' && (
+                <OpencodeOfferActions>
+                  <KeepAliveChip
+                    $active
+                    onClick={async () => {
+                      setOpencodeState('launching');
+                      try {
+                        const result: any = await props.client.openInOpencode({
+                          modelId: opencodeOffer.modelId,
+                        });
+                        if (result?.ok) {
+                          setOpencodeState('launched');
+                          // Leave the confirmation up long enough to read, then
+                          // clear — the banner is an offer, not a status bar.
+                          setTimeout(() => {
+                            setOpencodeOffer(null);
+                            setOpencodeState('idle');
+                          }, 6000);
+                        } else {
+                          // Say why, and return to idle so it can be retried.
+                          // A button that silently does nothing is the failure
+                          // mode this whole flow exists to avoid.
+                          setOpencodeState('idle');
+                          props.toasts.toast(
+                            'error',
+                            result?.message ?? 'Could not open opencode.',
+                          );
+                        }
+                      } catch (e: any) {
+                        setOpencodeState('idle');
+                        props.toasts.toast(
+                          'error',
+                          e?.message ?? 'Could not open opencode.',
+                        );
+                      }
+                    }}
+                  >
+                    Open in opencode
+                  </KeepAliveChip>
+                  <KeepAliveChip onClick={() => setOpencodeOffer(null)}>
+                    Not now
+                  </KeepAliveChip>
+                </OpencodeOfferActions>
+              )}
+            </OpencodeOffer>
           )}
           <Control>
             {modality === 'stt' && !isReadonly ? (
