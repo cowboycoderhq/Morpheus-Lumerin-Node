@@ -17,7 +17,7 @@
 // ============================================================================
 
 import { execFile } from 'child_process';
-import { mkdirSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import { promisify } from 'util';
 
@@ -75,6 +75,15 @@ export type MorpheusProviderInput = {
   apiKey: string;
   /** Advertised model ids — must match what GET /v1/models returns. */
   models: { id: string; label: string }[];
+  /**
+   * Absolute path to the `/start` plugin, if it is being shipped.
+   *
+   * Passed as opencode's `["<path>", options]` plugin tuple so the endpoint URL
+   * and bearer token reach the plugin as DATA rather than being written into
+   * its source. The plugin file is then identical for every user and carries no
+   * secret, which also means rewriting it can never leak one.
+   */
+  pluginPath?: string;
 };
 
 /**
@@ -89,30 +98,62 @@ export function buildMorpheusConfig(input: MorpheusProviderInput): string {
   for (const m of input.models) {
     models[m.id] = { name: m.label };
   }
-  return JSON.stringify(
-    {
-      $schema: 'https://opencode.ai/config.json',
-      provider: {
-        morpheus: {
-          npm: '@ai-sdk/openai-compatible',
-          name: 'Morpheus',
-          options: {
-            baseURL: input.baseUrl,
-            apiKey: input.apiKey,
-          },
-          models,
+  const config: Record<string, unknown> = {
+    $schema: 'https://opencode.ai/config.json',
+    provider: {
+      morpheus: {
+        npm: '@ai-sdk/openai-compatible',
+        name: 'Morpheus',
+        options: {
+          baseURL: input.baseUrl,
+          apiKey: input.apiKey,
         },
+        models,
       },
     },
-    null,
-    2,
-  );
+  };
+
+  if (input.pluginPath) {
+    // The endpoint's ORIGIN, not its /v1 path: the plugin talks to
+    // /morpheus/v1/*, which is a different namespace from the OpenAI surface.
+    // Deriving it here rather than passing a second URL keeps one source of
+    // truth for where the app is listening.
+    config.plugin = [
+      [
+        input.pluginPath,
+        {
+          baseUrl: input.baseUrl.replace(/\/v1\/?$/, ''),
+          apiKey: input.apiKey,
+        },
+      ],
+    ];
+  }
+
+  return JSON.stringify(config, null, 2);
+}
+
+/**
+ * Write the `/start` plugin beside the config.
+ *
+ * Rewritten on every launch so a user can never be left running a stale copy
+ * against a changed endpoint. 0600 for consistency with the config, though the
+ * plugin itself deliberately holds no secret — the token reaches it through the
+ * config's plugin options.
+ */
+export function writeStartPlugin(path: string, contents: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, contents, { encoding: 'utf8', mode: 0o600 });
 }
 
 export function writeMorpheusConfig(path: string, contents: string): void {
   mkdirSync(dirname(path), { recursive: true });
   // 0600: the file carries the endpoint's bearer token.
   writeFileSync(path, contents, { encoding: 'utf8', mode: 0o600 });
+  // `mode` only applies when the file is CREATED. An existing file keeps
+  // whatever permissions it had — so a copy that predates this (or one a user
+  // recreated by hand) would keep 0644 and leave the token world-readable
+  // forever. Set it explicitly on every write.
+  chmodSync(path, 0o600);
 }
 
 /**

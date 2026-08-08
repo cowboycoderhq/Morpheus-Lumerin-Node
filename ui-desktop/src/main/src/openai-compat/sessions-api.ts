@@ -27,7 +27,80 @@ export type SessionCaps = {
   maxStakeMor: number;
   /** Hard ceiling on MOR staked across all sessions opened today. */
   maxDailyStakeMor: number;
+  /**
+   * Hard ceiling on the NUMBER of sessions opened today.
+   *
+   * The MOR caps alone do not bound this: against a cheap model a loop can open
+   * hundreds of sessions well inside the daily MOR ceiling, and each one is a
+   * chain transaction costing gas and locking its stake to end of day. An agent
+   * that misreads a failure and retries is the realistic way that happens, not
+   * an attacker. Optional so existing callers keep working; unset means
+   * unbounded, which is why the app always sets it.
+   */
+  maxDailySessions?: number;
 };
+
+/** Contract floor (300s) plus the cushion the app uses everywhere else. */
+export const MIN_SESSION_SECONDS = 305;
+
+/**
+ * The chain's per-session cap, as a main-process fallback.
+ *
+ * The renderer reads `getMaxSessionDuration()` live because it is
+ * owner-settable (utils/marketplace.ts). Main has no RPC of its own, so it
+ * mirrors the value and lets it be injected. A stale value here only ever
+ * produces a REFUSAL to quote something the chain would clamp anyway — it can
+ * never authorise a longer stake than the chain sells.
+ */
+export const CHAIN_CAP_FALLBACK_SEC = 604800;
+
+export type DurationCheck =
+  | { ok: true; durationSec: number }
+  | { ok: false; reason: string };
+
+/**
+ * Validate a requested duration against the contract's own bounds.
+ *
+ * Deliberately REFUSES rather than silently clamping. A caller that asked for
+ * two years and was quietly given seven days would sign a confirmation for a
+ * session it did not ask for, and the difference is money.
+ */
+export function checkDuration(
+  requestedSec: unknown,
+  capSec: number = CHAIN_CAP_FALLBACK_SEC,
+): DurationCheck {
+  // A JSON number, and nothing else. `Number()` coercion made the refusal
+  // message a lie: it promises "a positive whole number of seconds" but
+  // accepted "0x1000" as 4096, [3600] as 3600, and " 3600 " as 3600 — so a
+  // caller could stake for a duration it never believed it asked for.
+  if (typeof requestedSec !== 'number') {
+    return {
+      ok: false,
+      reason:
+        'durationSec must be a JSON number of seconds, not a string or an array.',
+    };
+  }
+  const sec = requestedSec;
+  if (!Number.isFinite(sec) || Math.floor(sec) !== sec || sec <= 0) {
+    return {
+      ok: false,
+      reason: 'durationSec must be a positive whole number of seconds.',
+    };
+  }
+  if (sec < MIN_SESSION_SECONDS) {
+    return {
+      ok: false,
+      reason: `The chain will not open a session shorter than ${MIN_SESSION_SECONDS}s.`,
+    };
+  }
+  if (sec > capSec) {
+    return {
+      ok: false,
+      reason: `The chain caps one session at ${capSec}s; staking for longer buys nothing. Ask for ${capSec}s or less.`,
+    };
+  }
+  return { ok: true, durationSec: sec };
+}
 
 export type SpendRecord = { at: number; stakeMor: number; sessionId: string };
 
@@ -105,6 +178,33 @@ export function checkCaps(
   if (!Number.isFinite(stakeMor) || stakeMor <= 0) {
     return { allowed: false, reason: 'Could not price this session.' };
   }
+  // A cap that is not a usable number must REFUSE, not wave things through.
+  // Every comparison below is `x > cap`, and that is false for NaN — so a
+  // corrupted or half-written setting would silently mean "no limit" on the
+  // three lines standing between an agent loop and the wallet. The config
+  // reader coerces these already; this is the function refusing to depend on
+  // its caller having done so.
+  for (const [name, value] of [
+    ['maxStakeMor', caps.maxStakeMor],
+    ['maxDailyStakeMor', caps.maxDailyStakeMor],
+  ] as const) {
+    if (!Number.isFinite(value) || (value as number) < 0) {
+      return {
+        allowed: false,
+        reason: `The ${name} limit is not set to a usable number, so no session can be opened. Set it in the app under Settings.`,
+      };
+    }
+  }
+  if (
+    caps.maxDailySessions !== undefined &&
+    !Number.isFinite(caps.maxDailySessions)
+  ) {
+    return {
+      allowed: false,
+      reason:
+        'The daily session limit is not set to a usable number, so no session can be opened. Set it in the app under Settings.',
+    };
+  }
   if (stakeMor > caps.maxStakeMor) {
     return {
       allowed: false,
@@ -123,6 +223,18 @@ export function checkCaps(
         caps.maxDailyStakeMor
       } MOR (${already.toFixed(2)} already staked today).`,
     };
+  }
+  if (typeof caps.maxDailySessions === 'number') {
+    const from = startOfDay(nowMs);
+    const count = ledger.filter((r) => r.at >= from).length;
+    if (count + 1 > caps.maxDailySessions) {
+      return {
+        allowed: false,
+        reason: `That would be session ${count + 1} today, over the daily limit of ${
+          caps.maxDailySessions
+        }. Raise it in the app under Settings if this is deliberate.`,
+      };
+    }
   }
   return { allowed: true };
 }

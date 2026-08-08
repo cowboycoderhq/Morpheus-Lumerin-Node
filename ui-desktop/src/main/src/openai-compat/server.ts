@@ -30,6 +30,19 @@ import {
   toModelList,
   type UsableModel,
 } from './protocol';
+import {
+  buildCatalog,
+  checkCaps,
+  checkDuration,
+  spentToday,
+  stakeForDuration,
+  startOfDay,
+  CHAIN_CAP_FALLBACK_SEC,
+  MIN_SESSION_SECONDS,
+  type Quote,
+  type SessionCaps,
+  type SpendRecord,
+} from './sessions-api';
 
 export type OpenAiApiConfig = {
   enabled: boolean;
@@ -39,6 +52,10 @@ export type OpenAiApiConfig = {
   allowAutoOpen: boolean;
   /** Ceiling on MOR staked by any ONE auto-opened session. */
   maxStakeMor: number;
+  /** Ceiling on MOR staked across every session opened today. */
+  maxDailyStakeMor: number;
+  /** Ceiling on how MANY sessions may be opened today. */
+  maxDailySessions: number;
 };
 
 export type ExternalActivity = {
@@ -58,6 +75,11 @@ export type ServerDeps = {
   /** Surfaced in the UI so a user can see an external tool using their session. */
   onActivity?: (activity: ExternalActivity) => void;
   log?: (message: string) => void;
+  /**
+   * The chain's per-session cap in seconds. The renderer reads it live because
+   * it is owner-settable; main mirrors it. Omitted → the documented fallback.
+   */
+  maxSessionSeconds?: () => number;
 };
 
 export const DEFAULT_PORT = 8137;
@@ -70,7 +92,12 @@ export const defaultConfig = (): OpenAiApiConfig => ({
   port: DEFAULT_PORT,
   token: generateToken(),
   allowAutoOpen: false,
+  // Deliberately small. These are the ceiling on what a tool holding this
+  // token can spend without the operator watching, so the default is "enough
+  // to try it", not "enough to matter".
   maxStakeMor: 1,
+  maxDailyStakeMor: 5,
+  maxDailySessions: 10,
 });
 
 // A prompt body is small; anything large is either a mistake or an attempt to
@@ -204,11 +231,31 @@ export class OpenAiCompatServer {
       return;
     }
 
+    // The /morpheus/v1/* surface backs the `/start` command in opencode. It is
+    // NOT OpenAI-shaped and deliberately namespaced away from /v1, so a generic
+    // OpenAI client can never reach the one route that spends.
+    if (req.method === 'GET' && url === '/morpheus/v1/status') {
+      await this.serveMorpheusStatus(res);
+      return;
+    }
+    if (req.method === 'GET' && url === '/morpheus/v1/catalog') {
+      await this.serveCatalog(res);
+      return;
+    }
+    if (req.method === 'POST' && url === '/morpheus/v1/quote') {
+      await this.serveQuote(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url === '/morpheus/v1/sessions') {
+      await this.serveOpenSession(req, res);
+      return;
+    }
+
     sendJson(
       res,
       404,
       errorBody(
-        `Unsupported path ${req.method} ${url}. This endpoint serves /v1/models and /v1/chat/completions.`,
+        `Unsupported path ${req.method} ${url}. This endpoint serves /v1/models, /v1/chat/completions, and /morpheus/v1/{status,catalog,quote,sessions}.`,
         'not_found',
       ),
     );
@@ -371,6 +418,508 @@ export class OpenAiCompatServer {
   private async serveModels(res: ServerResponse): Promise<void> {
     const models = await this.usableModels();
     sendJson(res, 200, toModelList(models, Math.floor(Date.now() / 1000)));
+  }
+
+  // ==========================================================================
+  // /morpheus/v1/* — the surface `/start` drives. Only ONE route here spends.
+  //
+  // The security model, stated plainly because it decides the code:
+  //
+  // The TUI confirmation is a real boundary against an AGENT — a model cannot
+  // press a key — but it is CLIENT-SIDE. Anything holding the bearer token can
+  // POST /morpheus/v1/sessions directly and skip it. So the dialog is UX plus
+  // agent-resistance, and these are the enforcement:
+  //   - `allowAutoOpen` off by default; without it this route cannot spend at all
+  //   - caps that live in the app and cannot be raised over the wire
+  //   - a per-day MOR ledger AND a per-day session count
+  //   - the open RE-PRICES rather than trusting a figure sent back to it, and
+  //     a caller may pass `confirmedStakeMor` as a CEILING: if the re-price
+  //     comes out above what the user actually confirmed, the open is refused.
+  //     (It used to say "the quote and the open price through the SAME
+  //     function, so the figure confirmed is the figure staked". Same function,
+  //     different call, freshly re-read supply/budget — nothing bound them, and
+  //     doubling the supply between quote and open staked twice the confirmed
+  //     figure. A ceiling can only ever refuse, so trusting it is safe.)
+  //   - every open reported to the UI via onActivity
+  // ==========================================================================
+
+  /** Sessions opened through this API today. In memory: see the caps note. */
+  private ledger: SpendRecord[] = [];
+
+  private caps(): SessionCaps {
+    const cfg = this.deps.config();
+    return {
+      maxStakeMor: cfg.maxStakeMor,
+      maxDailyStakeMor: cfg.maxDailyStakeMor,
+      maxDailySessions: cfg.maxDailySessions,
+    };
+  }
+
+  private capSeconds(): number {
+    return this.deps.maxSessionSeconds?.() ?? CHAIN_CAP_FALLBACK_SEC;
+  }
+
+  /** supply/budget drive every stake figure; both are read fresh per quote. */
+  private async pricingInputs(): Promise<{ supply: number; budget: number } | null> {
+    const url = this.deps.routerUrl();
+    const headers = await this.deps.authHeaders();
+    const get = async (path: string, key: string): Promise<number | null> => {
+      try {
+        const r = await fetch(`${url}${path}`, { headers });
+        if (!r.ok) return null;
+        const body = await r.json();
+        const value = Number(body?.[key]);
+        return Number.isFinite(value) && value > 0 ? value : null;
+      } catch {
+        return null;
+      }
+    };
+    const [supply, budget] = await Promise.all([
+      get('/blockchain/token/supply', 'supply'),
+      get('/blockchain/sessions/budget', 'budget'),
+    ]);
+    // Fail CLOSED. A missing figure means we cannot price, and an unpriced
+    // session must never be opened — that is the one case where guessing costs
+    // real money.
+    if (supply === null || budget === null) return null;
+    return { supply, budget };
+  }
+
+  private async serveMorpheusStatus(res: ServerResponse): Promise<void> {
+    const cfg = this.deps.config();
+    const caps = this.caps();
+    const now = Date.now();
+    sendJson(res, 200, {
+      canOpen: cfg.allowAutoOpen,
+      reason: cfg.allowAutoOpen
+        ? undefined
+        : 'Opening sessions from outside the app is turned off. Enable it in the app under Settings → OpenAI-compatible API.',
+      caps,
+      spentTodayMor: spentToday(this.ledger, now),
+      sessionsToday: this.ledger.filter((r) => r.at >= startOfDay(now)).length,
+      maxSessionSeconds: this.capSeconds(),
+      minSessionSeconds: MIN_SESSION_SECONDS,
+    });
+  }
+
+  /**
+   * Every model with at least one live bid, and the providers behind it.
+   *
+   * This is what `/start` pages through. Prices are quoted per HOUR because a
+   * per-second wei figure in a picker tells a human nothing.
+   */
+  private async serveCatalog(res: ServerResponse): Promise<void> {
+    const pricing = await this.pricingInputs();
+    if (!pricing) {
+      sendJson(
+        res,
+        503,
+        errorBody(
+          'Cannot price sessions right now — the local router did not return the token supply and daily budget. Is it running?',
+          'pricing_unavailable',
+        ),
+      );
+      return;
+    }
+
+    const url = this.deps.routerUrl();
+    const headers = await this.deps.authHeaders();
+    const getJson = async (path: string, fallback: any): Promise<any> => {
+      try {
+        const r = await fetch(`${url}${path}`, { headers });
+        if (!r.ok) return fallback;
+        return await r.json();
+      } catch {
+        return fallback;
+      }
+    };
+
+    const chainModels = await getJson('/blockchain/models', { models: [] });
+    const models = ((chainModels?.models ?? []) as any[]).filter(
+      (m) => !m.IsDeleted,
+    );
+
+    // Bids are per-model and the list is long, so fetch concurrently in bounded
+    // rounds. Serial paging here is what made the Chat tab take 20-30 seconds.
+    const bidsByModel = new Map<string, any[]>();
+    const BATCH = 8;
+    for (let i = 0; i < models.length; i += BATCH) {
+      const slice = models.slice(i, i + BATCH);
+      const results = await Promise.all(
+        slice.map((m: any) =>
+          getJson(`/blockchain/models/${m.Id}/bids/active`, { bids: [] }),
+        ),
+      );
+      slice.forEach((m: any, j: number) => {
+        const bids = results[j]?.bids ?? [];
+        if (bids.length) bidsByModel.set(m.Id, bids);
+      });
+    }
+
+    sendJson(res, 200, {
+      models: buildCatalog(models, bidsByModel, pricing.supply, pricing.budget),
+      maxSessionSeconds: this.capSeconds(),
+      minSessionSeconds: MIN_SESSION_SECONDS,
+    });
+  }
+
+  /**
+   * Price a session WITHOUT opening it, and say whether it would be allowed.
+   *
+   * Read-only by construction — there is no code path from here to a chain
+   * transaction — so `/start` can show a real figure before asking for a
+   * confirmation, and a refused plan costs nothing to discover.
+   */
+  private async serveQuote(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const parsed = await this.readJson(req, res);
+    if (!parsed.ok) return;
+    const quote = await this.priceRequest(parsed.body, res);
+    if (!quote) return;
+    sendJson(res, 200, quote);
+  }
+
+  private async readJson(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<{ ok: true; body: any } | { ok: false }> {
+    try {
+      return { ok: true, body: JSON.parse(await readBody(req)) };
+    } catch {
+      sendJson(res, 400, errorBody('Request body is not valid JSON.', 'invalid_body'));
+      return { ok: false };
+    }
+  }
+
+  /**
+   * The single pricing path, shared by /quote and /sessions.
+   *
+   * Shared on purpose: a confirmation screen showing one number while the chain
+   * takes another is the worst bug this feature could have, and two call sites
+   * computing "the same" figure is how that happens.
+   */
+  private async priceRequest(
+    body: any,
+    res: ServerResponse,
+  ): Promise<Quote | null> {
+    const modelId = typeof body?.modelId === 'string' ? body.modelId : '';
+    const bidId = typeof body?.bidId === 'string' ? body.bidId : '';
+    if (!modelId || !bidId) {
+      sendJson(
+        res,
+        400,
+        errorBody(
+          'Both modelId and bidId are required. Read them from GET /morpheus/v1/catalog — a session is opened against ONE provider\'s bid, so the provider must be chosen explicitly.',
+          'missing_fields',
+        ),
+      );
+      return null;
+    }
+
+    const duration = checkDuration(body?.durationSec, this.capSeconds());
+    if (!duration.ok) {
+      sendJson(res, 400, errorBody(duration.reason, 'invalid_duration'));
+      return null;
+    }
+
+    const pricing = await this.pricingInputs();
+    if (!pricing) {
+      sendJson(
+        res,
+        503,
+        errorBody(
+          'Cannot price sessions right now — the local router did not return the token supply and daily budget.',
+          'pricing_unavailable',
+        ),
+      );
+      return null;
+    }
+
+    const url = this.deps.routerUrl();
+    const headers = await this.deps.authHeaders();
+    let bid: any = null;
+    try {
+      const r = await fetch(`${url}/blockchain/bids/${bidId}`, { headers });
+      if (r.ok) bid = (await r.json())?.bid ?? null;
+    } catch {
+      bid = null;
+    }
+    // The bid must NAME its model, and that name must match. The `?? modelId`
+    // this used to end with made the comparison vacuously true for any bid
+    // carrying neither field — so a bid belonging to model Y would open a paid
+    // session against Y while the confirmation said X. Every other control here
+    // fails closed; this one failed open.
+    const bidModelId = bid
+      ? (bid.ModelAgentId ?? bid.modelId ?? null)
+      : null;
+    if (!bid || !bidModelId || String(bidModelId) !== modelId) {
+      sendJson(
+        res,
+        404,
+        errorBody(
+          `Bid ${bidId} was not found for model ${modelId}. Re-read GET /morpheus/v1/catalog — bids are withdrawn and replaced continuously.`,
+          'bid_not_found',
+        ),
+      );
+      return null;
+    }
+
+    const stakeMor = stakeForDuration(
+      bid.PricePerSecond,
+      duration.durationSec,
+      pricing.supply,
+      pricing.budget,
+    );
+    const verdict = checkCaps(stakeMor, this.caps(), this.ledger, Date.now());
+    const cfg = this.deps.config();
+    return {
+      modelId,
+      bidId,
+      durationSec: duration.durationSec,
+      stakeMor,
+      allowed: verdict.allowed && cfg.allowAutoOpen,
+      reason: !cfg.allowAutoOpen
+        ? 'Opening sessions from outside the app is turned off. Enable it in the app under Settings → OpenAI-compatible API.'
+        : verdict.reason,
+    };
+  }
+
+  /**
+   * Open a paid session. The ONLY route on this server that can spend.
+   *
+   * Re-prices at spend time rather than trusting a figure the caller sends
+   * back: a quote is a moment's snapshot, supply/budget drift daily, and a
+   * caller that could name its own price could name zero.
+   */
+  private async serveOpenSession(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const cfg = this.deps.config();
+    if (!cfg.allowAutoOpen) {
+      sendJson(
+        res,
+        403,
+        errorBody(
+          'Opening sessions from outside the app is turned off. Enable it in the app under Settings → OpenAI-compatible API. This is off by default so that a tool holding this token cannot spend without you having said it may.',
+          'auto_open_disabled',
+          'permission_error',
+        ),
+      );
+      return;
+    }
+
+    const parsed = await this.readJson(req, res);
+    if (!parsed.ok) return;
+
+    // An explicit confirm flag, so a caller cannot open a session by accident
+    // while exploring the API. Not a security control — anything that can POST
+    // can set it — but it makes the spending call impossible to make by typo.
+    if (parsed.body?.confirm !== true) {
+      sendJson(
+        res,
+        400,
+        errorBody(
+          'Refusing to open a session without "confirm": true. Quote it first with POST /morpheus/v1/quote and show the user what it costs.',
+          'confirmation_required',
+        ),
+      );
+      return;
+    }
+
+    const quote = await this.priceRequest(parsed.body, res);
+    if (!quote) return;
+    if (!quote.allowed) {
+      sendJson(
+        res,
+        403,
+        errorBody(quote.reason ?? 'This session is not allowed.', 'cap_exceeded', 'permission_error'),
+      );
+      return;
+    }
+
+    // Honour the figure the user actually confirmed, as a CEILING.
+    //
+    // supply/budget are re-read here, and they move — fixed per UTC day, so a
+    // confirmation that straddles midnight can be priced against different
+    // inputs than the dialog showed. Without this, the user confirms one number
+    // and the chain takes another, bounded only by maxStakeMor. Trusting a
+    // caller-supplied number is safe in this ONE direction: it can only cause a
+    // refusal, never a larger spend.
+    const confirmed = Number(parsed.body?.confirmedStakeMor);
+    if (Number.isFinite(confirmed) && confirmed > 0) {
+      // Epsilon for float noise only — the two calls agree bit-for-bit when the
+      // inputs have not moved.
+      if (quote.stakeMor > confirmed + 1e-9) {
+        sendJson(
+          res,
+          409,
+          errorBody(
+            `The price moved: this session now stakes ${quote.stakeMor.toFixed(
+              4,
+            )} MOR, more than the ${confirmed.toFixed(
+              4,
+            )} MOR you confirmed. Nothing was opened. Quote it again to see the current figure.`,
+            'price_moved',
+          ),
+        );
+        return;
+      }
+    }
+
+    // Re-check the caps and reserve in ONE synchronous step.
+    //
+    // priceRequest forms its verdict on the far side of an await, so in
+    // principle two requests arriving together could both be told "allowed"
+    // against the same empty ledger and both then open. Checking and reserving
+    // here, with no await between, closes that window.
+    //
+    // HONEST STATUS: theoretical. I could not make it happen. Five concurrent
+    // opens against a cap of one were tried, including with the fake router
+    // holding all five bid lookups and releasing them in a single tick to force
+    // same-tick resumption — one session opened either way, with or without
+    // this block. Every path to checkCaps goes through I/O while the span from
+    // checkCaps to the push is pure microtask, which appears to serialise them.
+    // The endpoint suite's concurrency check therefore does NOT discriminate
+    // this guard; treat it as cheap insurance against an interleaving I could
+    // not construct, not as a fix for a demonstrated bug.
+    const verdict = checkCaps(quote.stakeMor, this.caps(), this.ledger, Date.now());
+    if (!verdict.allowed) {
+      sendJson(
+        res,
+        403,
+        errorBody(verdict.reason ?? 'This session is not allowed.', 'cap_exceeded', 'permission_error'),
+      );
+      return;
+    }
+    // Record BEFORE the call. A crash mid-open must not leave a stake
+    // unaccounted for: over-counting costs the user a refusal they could
+    // undo in Settings, under-counting costs them MOR.
+    const provisional: SpendRecord = {
+      at: Date.now(),
+      stakeMor: quote.stakeMor,
+      sessionId: 'pending',
+    };
+    this.ledger.push(provisional);
+
+    let sessionId: string;
+    try {
+      const url = this.deps.routerUrl();
+      const headers = await this.deps.authHeaders();
+      const r = await fetch(`${url}/blockchain/bids/${quote.bidId}/session`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          failover: false,
+          sessionDuration: quote.durationSec,
+          directPayment: false,
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        // The router REJECTED it. Nothing was submitted, so the reservation is
+        // genuinely free again.
+        throw Object.assign(
+          new Error(data?.error || `router returned ${r.status}`),
+          { certainlyNotOpened: true },
+        );
+      }
+      if (!data?.sessionID) {
+        // Accepted, but we cannot name the session. It may well have landed.
+        throw new Error(
+          'the router accepted the request but returned no session id',
+        );
+      }
+      sessionId = String(data.sessionID);
+    } catch (e: any) {
+      // Roll back ONLY when we know the chain saw nothing.
+      //
+      // A router 5xx before submission means no stake — release it. A 200
+      // without an id, or a socket error after the request was sent, means the
+      // transaction may already have landed; releasing the reservation there
+      // would under-count the day's spend, and this file's own rule is that
+      // under-counting costs the user MOR while over-counting costs them a
+      // refusal they can lift in Settings.
+      const safeToRelease = e?.certainlyNotOpened === true;
+      if (safeToRelease) {
+        this.ledger = this.ledger.filter((r) => r !== provisional);
+      } else {
+        provisional.sessionId = 'unknown';
+        this.deps.log?.(
+          `openai-compat: an open failed ambiguously (${e?.message ?? e}); keeping ${quote.stakeMor.toFixed(4)} MOR reserved against today's cap in case it landed`,
+        );
+      }
+      sendJson(
+        res,
+        502,
+        errorBody(
+          `The session could not be opened: ${e?.message ?? 'unknown error'}` +
+            (safeToRelease
+              ? ''
+              : ' — it may still have been created. Check your sessions in the app before retrying.'),
+          'open_failed',
+          'api_error',
+        ),
+      );
+      return;
+    }
+
+    provisional.sessionId = sessionId;
+
+    // ======================================================================
+    // PAST THIS POINT THE MONEY IS SPENT. Nothing below may throw out of this
+    // method, because `handle` turns a throw into HTTP 500 and the caller then
+    // reports "could not open the session" for a session that IS open and
+    // staked — the user loses the MOR *and* the session id needed to use it,
+    // and an agent reading the failure retries and spends again.
+    //
+    // Everything remaining is bookkeeping and presentation: refreshing the
+    // model cache, resolving the advertised name, notifying the UI. All of it
+    // is best-effort. resolveForHandoff in particular re-reads the router and
+    // has several unguarded throw sites of its own (a `/v1/models` body that
+    // is not an array is enough).
+    // ======================================================================
+    let advertised: string | null = null;
+    try {
+      // A just-opened session must be visible to /v1/models immediately, or the
+      // very next request from the same tool reports "no session for that model".
+      this.modelsCache = null;
+      const resolved = await this.resolveForHandoff(quote.modelId);
+      advertised = resolved.advertised;
+    } catch (e: any) {
+      this.deps.log?.(
+        `openai-compat: session ${sessionId} opened, but resolving its advertised name failed: ${e?.message ?? e}`,
+      );
+    }
+
+    try {
+      this.deps.onActivity?.({
+        at: Date.now(),
+        modelId: quote.modelId,
+        modelName: advertised ?? quote.modelId,
+        openedSessionId: sessionId,
+        stakedMor: quote.stakeMor,
+      });
+      this.deps.log?.(
+        `openai-compat: opened session ${sessionId} for ${quote.modelId} (${quote.stakeMor.toFixed(4)} MOR)`,
+      );
+    } catch {
+      /* a listener must never cost the caller its receipt */
+    }
+
+    sendJson(res, 200, {
+      sessionId,
+      // The id the caller must now send as `model` — NOT the chain id. Handing
+      // back the hex id is what made the in-app handoff report "not currently
+      // serving 0x…" for a model that was open and serving fine. If resolution
+      // failed above, the chain id is still a better answer than an error: the
+      // session is real, and `resolveModel` accepts the chain id too.
+      model: advertised ?? quote.modelId,
+      // Tell the caller when the name could not be confirmed, rather than
+      // letting it assume `model` is the advertised one.
+      modelResolved: advertised !== null,
+      stakeMor: quote.stakeMor,
+      durationSec: quote.durationSec,
+    });
   }
 
   private async serveChat(req: IncomingMessage, res: ServerResponse): Promise<void> {

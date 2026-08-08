@@ -30,8 +30,10 @@ import {
   detectOpencode,
   installCommand,
   launchInTerminal,
-  writeMorpheusConfig
+  writeMorpheusConfig,
+  writeStartPlugin
 } from '../../opencode/setup'
+import { MORPHEUS_START_PLUGIN } from '../../opencode/start-plugin'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -1021,7 +1023,17 @@ const readOpenAiConfig = (): OpenAiApiConfig => {
     allowAutoOpen: Boolean(stored.allowAutoOpen),
     maxStakeMor: Number.isFinite(Number(stored.maxStakeMor))
       ? Number(stored.maxStakeMor)
-      : base.maxStakeMor
+      : base.maxStakeMor,
+    // Fall back to the DEFAULT, never to "unbounded", when a stored config
+    // predates these caps or carries junk. A cap that silently becomes
+    // infinite on a malformed read is worse than having no cap, because the
+    // UI still shows one.
+    maxDailyStakeMor: Number.isFinite(Number(stored.maxDailyStakeMor))
+      ? Number(stored.maxDailyStakeMor)
+      : base.maxDailyStakeMor,
+    maxDailySessions: Number.isFinite(Number(stored.maxDailySessions))
+      ? Number(stored.maxDailySessions)
+      : base.maxDailySessions
   }
   if (merged.token !== stored.token) {
     setOpenAiApiSetting(merged)
@@ -1099,6 +1111,7 @@ export const startOpenAiApiIfEnabled = async () => {
 
 const opencodeDir = () => path.join(app.getPath('userData'), 'opencode')
 const opencodeConfigPath = () => path.join(opencodeDir(), 'morpheus.json')
+const opencodeStartPluginPath = () => path.join(opencodeDir(), 'morpheus-start.js')
 
 export const getOpencodeStatus = async () => {
   const status = await detectOpencode()
@@ -1173,12 +1186,18 @@ export const openInOpencode = async ({ modelId, cwd }: { modelId: string; cwd?: 
   }
 
   const configPath = opencodeConfigPath()
+  const pluginPath = opencodeStartPluginPath()
+  // Rewritten every launch: a stale plugin pointed at a changed port or a
+  // rotated token would fail inside opencode, where the user has no way to see
+  // why. Cheap enough to redo unconditionally.
+  writeStartPlugin(pluginPath, MORPHEUS_START_PLUGIN)
   writeMorpheusConfig(
     configPath,
     buildMorpheusConfig({
       baseUrl: `http://127.0.0.1:${api.port}/v1`,
       apiKey: api.token,
-      models
+      models,
+      pluginPath
     })
   )
 

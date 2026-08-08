@@ -26,6 +26,7 @@ import {
   buildLaunchScript,
   shellQuote,
 } from '../../src/main/src/opencode/setup.ts';
+import { MORPHEUS_START_PLUGIN } from '../../src/main/src/opencode/start-plugin.ts';
 import {
   checkCaps,
   spentToday,
@@ -969,6 +970,35 @@ console.log('opencode: the config and the command we hand a terminal');
   ok('model keys are the ids /v1/models advertises',
     Object.keys(cfg.provider.morpheus.models).sort().join(',') === 'deepseek-v4,local-llama');
   ok('models carry a human label', cfg.provider.morpheus.models['deepseek-v4'].name === 'DeepSeek V4');
+
+  // ---- the /start plugin, declared as a [path, options] tuple ----
+  // The token reaches the plugin as DATA. Writing it into the plugin SOURCE
+  // would mean every rewrite of that file is another copy of a live credential
+  // on disk, and a plugin that is byte-identical for every user cannot leak
+  // one at all.
+  ok('no plugin is declared when none is shipped', cfg.plugin === undefined);
+
+  const withPlugin = JSON.parse(buildMorpheusConfig({
+    baseUrl: 'http://127.0.0.1:8137/v1',
+    apiKey: 'mor-sk-secret',
+    models: [{ id: 'deepseek-v4', label: 'DeepSeek V4' }],
+    pluginPath: '/Users/x/Library/Application Support/app/opencode/morpheus-start.js',
+  }));
+  ok('the plugin is declared as a [path, options] tuple',
+    Array.isArray(withPlugin.plugin) && Array.isArray(withPlugin.plugin[0]) &&
+    withPlugin.plugin[0].length === 2);
+  ok('the tuple names the plugin file',
+    withPlugin.plugin[0][0].endsWith('morpheus-start.js'));
+  ok('the plugin is given the endpoint ORIGIN, not the /v1 path — it talks to /morpheus/v1',
+    withPlugin.plugin[0][1].baseUrl === 'http://127.0.0.1:8137');
+  ok('the plugin is handed the token as options, not baked into its source',
+    withPlugin.plugin[0][1].apiKey === 'mor-sk-secret');
+  ok('the plugin source carries no credential of its own',
+    !/mor-sk-/.test(MORPHEUS_START_PLUGIN));
+  // A path with a space (Application Support) must survive JSON round-trip
+  // intact — it is read by opencode, not by a shell, so it must NOT be quoted.
+  ok('a path containing spaces is stored verbatim',
+    withPlugin.plugin[0][0].includes('Application Support'));
 
   // ---- shell safety ----
   ok('a plain model builds the expected command', (() => {
