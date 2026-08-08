@@ -274,11 +274,13 @@ console.log('grok relay: end to end against a fake agent');
 
   const invocations = [];
   let askResult = null;
+  let relay2Log = [];
   const relay = new GrokLeaderRelay({
     realSocketPath: realPath,
     listenSocketPath: listenPath,
     commands: ['start'],
     blessedVersions: ['0.2.106'],
+    log: (m) => relay2Log.push(m),
     onCommand: async (inv) => {
       invocations.push({ command: inv.command, args: inv.args, sessionId: inv.sessionId });
       askResult = await inv.ask([
@@ -360,6 +362,28 @@ console.log('grok relay: end to end against a fake agent');
     .find((m) => m.id === 2 && m.result?.stopReason === 'end_turn');
   ok('the swallowed prompt is completed back to the client', !!completed);
 
+  // A REJECTED dialog must be reported, not silently reported as a cancel.
+  // grok 1.0.0 answers x.ai/ask_user_question with -32601, and the first build
+  // of this relay turned that into "the user cancelled" — a broken integration
+  // wearing the disguise of a change of mind.
+  {
+    const logs = [];
+    relay2Log = logs;
+    const before = logs.length;
+    client.write(acp({
+      jsonrpc: '2.0', id: 2, method: 'session/prompt',
+      params: { sessionId: 'sess-1', prompt: [{ type: 'text', text: '/start' }] },
+    }));
+    await settle();
+    const ask2 = clientSaw.map((f) => acpPayload(f)).filter(Boolean)
+      .reverse().find((m) => m.method === 'x.ai/ask_user_question');
+    client.write(acp({ jsonrpc: '2.0', id: ask2.id, error: { code: -32601, message: 'Method not found' } }));
+    await settle();
+    ok('a rejected dialog is reported as a rejection, not a cancel',
+      logs.slice(before).some((l) => /REJECTED/.test(l) && /-32601/.test(l)),
+      JSON.stringify(logs.slice(before).slice(-3)));
+  }
+
   await relay.stop();
   ok('stopping removes the socket', !existsSync(listenPath));
   client.destroy();
@@ -394,11 +418,13 @@ console.log('grok relay: an unchecked grok build');
 
   const states = [];
   let handlerRan = false;
+  let relay2Log = [];
   const relay = new GrokLeaderRelay({
     realSocketPath: realPath,
     listenSocketPath: listenPath,
     commands: ['start'],
     blessedVersions: ['0.2.106'],
+    log: (m) => relay2Log.push(m),
     onCommand: async () => { handlerRan = true; },
     onState: (s) => states.push(s),
   });

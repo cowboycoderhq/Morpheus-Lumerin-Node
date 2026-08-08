@@ -250,7 +250,17 @@ export class GrokLeaderRelay {
     const resolve = this.pending.get(inner.id);
     if (!resolve) return false;
     this.pending.delete(inner.id);
-    resolve(inner.error !== undefined ? null : inner.result);
+    if (inner.error !== undefined) {
+      // A REJECTED dialog is not a cancelled one. Treating the two alike hides
+      // a broken integration behind "the user changed their mind" — say so.
+      // This describes OUR OWN request, so it carries no user content.
+      const code = inner.error?.code;
+      const msg = String(inner.error?.message ?? '').slice(0, 200);
+      this.deps.log?.(`relay: the client REJECTED our dialog (code=${code}) ${msg}`);
+      resolve(null);
+      return true;
+    }
+    resolve(inner.result);
     return true;
   }
 

@@ -27,7 +27,7 @@ import {
   buildLaunchScript,
   shellQuote,
 } from '../../src/main/src/opencode/setup.ts';
-import { buildStartPlugin, buildProviderPlugin } from '../../src/main/src/opencode/start-plugin.ts';
+import { buildProviderPlugin } from '../../src/main/src/opencode/start-plugin.ts';
 import {
   checkCaps,
   spentToday,
@@ -994,33 +994,24 @@ console.log('opencode: the config and the command we hand a terminal');
     withPlugin.plugin[0][1].baseUrl === 'http://127.0.0.1:8137');
   ok('the plugin is handed the token as options, not baked into its source',
     withPlugin.plugin[0][1].apiKey === 'mor-sk-secret');
-  const startSrc = buildStartPlugin('/tmp/endpoint.json');
   const providerSrc = buildProviderPlugin('/tmp/endpoint.json');
-  ok('neither generated plugin carries a credential',
-    !/mor-sk-/.test(startSrc) && !/mor-sk-/.test(providerSrc));
-  ok('both read the descriptor path they were built with',
-    startSrc.includes('"/tmp/endpoint.json"') &&
-    providerSrc.includes('"/tmp/endpoint.json"'));
-  ok('the placeholder is fully substituted',
-    !startSrc.includes('__MORPHEUS_DESCRIPTOR__') &&
-    !providerSrc.includes('__MORPHEUS_DESCRIPTOR__'));
-  // A path with a quote or backslash must not break out of the string literal.
+  ok('the generated plugin carries no credential', !/mor-sk-/.test(providerSrc));
+  ok('it reads the descriptor path it was built with', providerSrc.includes('"/tmp/endpoint.json"'));
+  ok('the placeholder is fully substituted', !providerSrc.includes('__MORPHEUS_DESCRIPTOR__'));
   ok('a hostile descriptor path stays inside its literal',
-    buildStartPlugin('/tmp/a"b\\c.json').includes(String.raw`"/tmp/a\"b\\c.json"`));
+    buildProviderPlugin('/tmp/a"b.json').includes(String.raw`"/tmp/a\"b.json"`));
   // The generated files must still contain a REAL import — the source cannot,
   // because vite's scanner reads a literal `import ... from '...'` inside a
   // template literal as an import of the MAIN BUNDLE and flips its module
   // interop, which emitted `require(...)` into an .mjs and stopped the whole
   // app from loading with "require is not defined in ES module scope".
-  ok('the generated plugins import fs for real',
-    /import \{ readFileSync \} from 'node:fs';/.test(startSrc) &&
+  ok('the generated plugin imports fs for real',
     /import \{ readFileSync \} from 'node:fs';/.test(providerSrc));
   ok('but the SOURCE never contains one inside a template',
     !/^import .* from '(node:)?fs'/m.test(
       readFileSync(new URL('../../src/main/src/opencode/start-plugin.ts', import.meta.url), 'utf8')
         .split('String.raw`').slice(1).join('String.raw`')));
-  ok('start registers a command, provider registers a config hook',
-    /slash: \{ name: 'start'/.test(startSrc) && /config: async \(config\)/.test(providerSrc));
+  ok('the provider plugin registers a config hook', /config: async \(config\)/.test(providerSrc));
   ok('the provider plugin only ever adds its own key',
     /config\.provider\.morpheus =/.test(providerSrc));
   // A path with a space (Application Support) must survive JSON round-trip
