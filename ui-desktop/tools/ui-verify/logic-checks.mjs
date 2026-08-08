@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 // Node-runnable assertions over the PR's exported substrate utils.
 // Run: npm run logic   (uses vite-node to transform the .ts/.tsx/.js sources)
 import {
@@ -26,7 +27,7 @@ import {
   buildLaunchScript,
   shellQuote,
 } from '../../src/main/src/opencode/setup.ts';
-import { MORPHEUS_START_PLUGIN } from '../../src/main/src/opencode/start-plugin.ts';
+import { buildStartPlugin, buildProviderPlugin } from '../../src/main/src/opencode/start-plugin.ts';
 import {
   checkCaps,
   spentToday,
@@ -993,12 +994,62 @@ console.log('opencode: the config and the command we hand a terminal');
     withPlugin.plugin[0][1].baseUrl === 'http://127.0.0.1:8137');
   ok('the plugin is handed the token as options, not baked into its source',
     withPlugin.plugin[0][1].apiKey === 'mor-sk-secret');
-  ok('the plugin source carries no credential of its own',
-    !/mor-sk-/.test(MORPHEUS_START_PLUGIN));
+  const startSrc = buildStartPlugin('/tmp/endpoint.json');
+  const providerSrc = buildProviderPlugin('/tmp/endpoint.json');
+  ok('neither generated plugin carries a credential',
+    !/mor-sk-/.test(startSrc) && !/mor-sk-/.test(providerSrc));
+  ok('both read the descriptor path they were built with',
+    startSrc.includes('"/tmp/endpoint.json"') &&
+    providerSrc.includes('"/tmp/endpoint.json"'));
+  ok('the placeholder is fully substituted',
+    !startSrc.includes('__MORPHEUS_DESCRIPTOR__') &&
+    !providerSrc.includes('__MORPHEUS_DESCRIPTOR__'));
+  // A path with a quote or backslash must not break out of the string literal.
+  ok('a hostile descriptor path stays inside its literal',
+    buildStartPlugin('/tmp/a"b\\c.json').includes(String.raw`"/tmp/a\"b\\c.json"`));
+  // The generated files must still contain a REAL import — the source cannot,
+  // because vite's scanner reads a literal `import ... from '...'` inside a
+  // template literal as an import of the MAIN BUNDLE and flips its module
+  // interop, which emitted `require(...)` into an .mjs and stopped the whole
+  // app from loading with "require is not defined in ES module scope".
+  ok('the generated plugins import fs for real',
+    /import \{ readFileSync \} from 'node:fs';/.test(startSrc) &&
+    /import \{ readFileSync \} from 'node:fs';/.test(providerSrc));
+  ok('but the SOURCE never contains one inside a template',
+    !/^import .* from '(node:)?fs'/m.test(
+      readFileSync(new URL('../../src/main/src/opencode/start-plugin.ts', import.meta.url), 'utf8')
+        .split('String.raw`').slice(1).join('String.raw`')));
+  ok('start registers a command, provider registers a config hook',
+    /slash: \{ name: 'start'/.test(startSrc) && /config: async \(config\)/.test(providerSrc));
+  ok('the provider plugin only ever adds its own key',
+    /config\.provider\.morpheus =/.test(providerSrc));
   // A path with a space (Application Support) must survive JSON round-trip
   // intact — it is read by opencode, not by a shell, so it must NOT be quoted.
   ok('a path containing spaces is stored verbatim',
     withPlugin.plugin[0][0].includes('Application Support'));
+
+  // ---- launching with NO model, so /start can pick one ----
+  // Requiring a model here is what made the plugin unreachable except through
+  // the Chat handoff it exists to replace.
+  {
+    const noModel = buildLaunchScript({
+      opencodePath: '/opt/homebrew/bin/opencode',
+      configPath: '/tmp/morpheus.json',
+      cwd: '/tmp',
+    });
+    ok('no model -> no -m flag', !/ -m /.test(noModel));
+    ok('but the config is still exported',
+      /OPENCODE_CONFIG='\/tmp\/morpheus.json'/.test(noModel));
+    ok('and opencode is still exec\'d', /exec '\/opt\/homebrew\/bin\/opencode'/.test(noModel));
+    const withModel = buildLaunchScript({
+      opencodePath: '/opt/homebrew/bin/opencode',
+      configPath: '/tmp/morpheus.json',
+      modelId: 'deepseek-v4',
+      cwd: '/tmp',
+    });
+    ok('a model still produces -m morpheus/<id>',
+      / -m 'morpheus\/deepseek-v4'/.test(withModel));
+  }
 
   // ---- shell safety ----
   ok('a plain model builds the expected command', (() => {

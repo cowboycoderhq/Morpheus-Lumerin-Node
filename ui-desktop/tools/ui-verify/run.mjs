@@ -503,6 +503,66 @@ const browser = await chromium.launch();
 //     unreachable while everything still compiles. This is that tripwire. ---
 {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 } });
+  // The spend caps are the only editable numbers on this screen that bound what
+  // an outside tool may stake, and they shipped BROKEN: the handler read
+  // `e.target.value`, but this app's TextInput calls `onChange({id, value})`, so
+  // every keystroke threw and the fields could not be edited at all. Nothing
+  // covered them, because the whole card had no case. Type into them for real.
+  await drive(page, 'settings-spend-caps-are-editable', `http://localhost:${PORT}/?case=settings`, async (p) => {
+    const field = '#openai-api-maxStakeMor';
+    await p.waitForSelector(field, { timeout: 20000 });
+
+    const errors = [];
+    p.on('pageerror', (e) => errors.push(String(e)));
+
+    await p.fill(field, '');
+    await p.type(field, '2.5');
+    await p.waitForTimeout(300);
+
+    assert(errors.length === 0, `typing into a cap threw: ${errors[0]}`);
+    assert(
+      (await p.inputValue(field)) === '2.5',
+      `the field did not accept the text: got ${await p.inputValue(field)}`,
+    );
+
+    const writes = await p.evaluate(() => window.__apiWrites);
+    const staked = writes.filter((w) => 'maxStakeMor' in w).map((w) => w.maxStakeMor);
+    assert(staked.includes(2.5), `2.5 was never committed: ${JSON.stringify(staked)}`);
+    // Clearing the field must NOT commit 0 — a cap of zero refuses everything,
+    // and backspacing to retype was enough to set it.
+    assert(!staked.includes(0), `clearing the field committed a 0 cap: ${JSON.stringify(staked)}`);
+
+    // The other two exist and are wired to their own keys.
+    for (const [sel, key] of [
+      ['#openai-api-maxDailyStakeMor', 'maxDailyStakeMor'],
+      ['#openai-api-maxDailySessions', 'maxDailySessions'],
+    ]) {
+      await p.fill(sel, '');
+      await p.type(sel, '7');
+      await p.waitForTimeout(200);
+      const w = await p.evaluate(() => window.__apiWrites);
+      assert(
+        w.some((x) => x[key] === 7),
+        `${key} was not committed from its own field`,
+      );
+    }
+    assert(errors.length === 0, `a later cap field threw: ${errors[0]}`);
+  });
+
+  // /start is unreachable unless opencode can be opened WITHOUT a model — the
+  // handoff it replaces is the only other writer of the config and plugin.
+  await drive(page, 'settings-opens-opencode-with-no-model', `http://localhost:${PORT}/?case=settings`, async (p) => {
+    await p.waitForSelector('text=Open opencode', { timeout: 20000 });
+    await p.getByText('Open opencode', { exact: true }).first().click();
+    await p.waitForTimeout(300);
+    const opens = await p.evaluate(() => window.__opencodeOpens);
+    assert(opens.length === 1, `expected one launch, got ${opens.length}`);
+    assert(
+      !opens[0]?.modelId,
+      `it demanded a model, which is what made /start unreachable: ${JSON.stringify(opens[0])}`,
+    );
+  });
+
   await drive(page, 'settings-appearance', `http://localhost:${PORT}/?case=settings`, async (p) => {
     await p.waitForSelector('[data-testid="theme-aurora"]', { timeout: 20000 });
     await p.evaluate(() => window.localStorage.removeItem('trinity.themeVariant'));

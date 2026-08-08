@@ -15,7 +15,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { pathToFileURL } from 'url';
 import { OpenAiCompatServer, generateToken } from '../../src/main/src/openai-compat/server.ts';
-import { MORPHEUS_START_PLUGIN } from '../../src/main/src/opencode/start-plugin.ts';
+import { buildStartPlugin, buildProviderPlugin } from '../../src/main/src/opencode/start-plugin.ts';
 
 let pass = 0;
 let fail = 0;
@@ -771,8 +771,12 @@ console.log('morpheus: catalog, quote, and the one spending route');
 console.log('');
 console.log('morpheus: the /start plugin');
 {
+  // The plugin reads its endpoint from a DESCRIPTOR, because opencode gives
+  // auto-loaded plugins no options. Write a real one and let it read it.
+  const descriptorFile = join(tmpdir(), `morpheus-endpoint-${process.pid}.json`);
+  writeFileSync(descriptorFile, JSON.stringify({ baseUrl: base, apiKey: TOKEN, models: [] }), 'utf8');
   const pluginFile = join(tmpdir(), `morpheus-start-${process.pid}.mjs`);
-  writeFileSync(pluginFile, MORPHEUS_START_PLUGIN, 'utf8');
+  writeFileSync(pluginFile, buildStartPlugin(descriptorFile), 'utf8');
   const mod = await import(pathToFileURL(pluginFile).href);
   ok('the plugin source parses and exports a tui entrypoint',
     typeof mod.tui === 'function');
@@ -799,7 +803,7 @@ console.log('morpheus: the /start plugin');
     client: { tui: { openModels: async () => { modelsDialogOpened++; } } },
   };
 
-  await mod.tui(api, { baseUrl: base, apiKey: TOKEN });
+  await mod.tui(api);
   ok('the plugin registers its command', typeof registered === 'function');
   const cmds = registered();
   const startCmd = cmds.find((c) => c.slash && c.slash.name === 'start');
@@ -937,7 +941,45 @@ console.log('morpheus: the /start plugin');
     toasts.some((t) => /per-session limit/i.test(t.message)));
   ok('and nothing was staked', sessionOpens.length === beforeRefusal);
 
+  // --- the companion provider plugin -------------------------------------
+  // /start is useless without it in a terminal the app did not launch: the
+  // session opens and the model cannot be selected, because opencode has never
+  // heard of the provider.
+  {
+    const provFile = join(tmpdir(), `morpheus-provider-${process.pid}.mjs`);
+    writeFileSync(provFile, buildProviderPlugin(descriptorFile), 'utf8');
+    const prov = await import(pathToFileURL(provFile).href);
+    ok('the provider plugin parses and exports a server entrypoint',
+      typeof prov.server === 'function');
+    const hooks = await prov.server();
+    ok('it registers a config hook', typeof hooks.config === 'function');
+
+    const cfg = { provider: { theirs: { name: 'Their Provider' } } };
+    await hooks.config(cfg);
+    ok('it adds the morpheus provider', !!cfg.provider.morpheus);
+    ok('pointed at the running endpoint',
+      cfg.provider.morpheus.options.baseURL === base);
+    ok('carrying the key', cfg.provider.morpheus.options.apiKey === TOKEN);
+    ok('using the generic OpenAI-compatible adapter',
+      cfg.provider.morpheus.npm === '@ai-sdk/openai-compatible');
+    ok("and it leaves the user's own providers alone",
+      cfg.provider.theirs?.name === 'Their Provider');
+
+    // No descriptor -> add NOTHING. A provider pointed at nothing would put
+    // dead models in the picker.
+    const orphan = join(tmpdir(), `morpheus-missing-${process.pid}.json`);
+    const orphanFile = join(tmpdir(), `morpheus-provider-orphan-${process.pid}.mjs`);
+    writeFileSync(orphanFile, buildProviderPlugin(orphan), 'utf8');
+    const orphanMod = await import(pathToFileURL(orphanFile).href);
+    const cfg2 = { provider: { theirs: {} } };
+    await (await orphanMod.server()).config(cfg2);
+    ok('with no descriptor it adds no provider at all', !cfg2.provider.morpheus);
+    rmSync(provFile, { force: true });
+    rmSync(orphanFile, { force: true });
+  }
+
   rmSync(pluginFile, { force: true });
+  rmSync(descriptorFile, { force: true });
   cfg = { ...cfg, allowAutoOpen: false, maxStakeMor: 1, maxDailyStakeMor: 5 };
 }
 

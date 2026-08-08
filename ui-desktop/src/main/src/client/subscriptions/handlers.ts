@@ -31,9 +31,10 @@ import {
   installCommand,
   launchInTerminal,
   writeMorpheusConfig,
-  writeStartPlugin
+  writeStartPlugin,
+  writeEndpointDescriptor
 } from '../../opencode/setup'
-import { MORPHEUS_START_PLUGIN } from '../../opencode/start-plugin'
+import { buildProviderPlugin } from '../../opencode/start-plugin'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -1111,18 +1112,92 @@ export const startOpenAiApiIfEnabled = async () => {
 
 const opencodeDir = () => path.join(app.getPath('userData'), 'opencode')
 const opencodeConfigPath = () => path.join(opencodeDir(), 'morpheus.json')
-const opencodeStartPluginPath = () => path.join(opencodeDir(), 'morpheus-start.js')
+const endpointDescriptorPath = () => path.join(opencodeDir(), 'endpoint.json')
+// opencode auto-loads every file here at startup, for EVERY session — which is
+// what makes /start exist in a terminal the user opened themselves. Writing
+// into this directory adds files; it never reads or rewrites the user's
+// opencode.jsonc.
+const globalPluginDir = () => path.join(os.homedir(), '.config', 'opencode', 'plugins')
+
+/**
+ * Install both generated plugins globally, plus the descriptor they read.
+ *
+ * Idempotent and cheap, so it runs on every status check rather than only at
+ * install time: a rotated token or a changed port must not leave a stale copy
+ * behind, and there is no install hook to hang this off.
+ */
+const provisionOpencodePlugins = async (api: OpenAiApiConfig) => {
+  const descriptor = endpointDescriptorPath()
+  writeEndpointDescriptor(descriptor, {
+    baseUrl: `http://127.0.0.1:${api.port}`,
+    apiKey: api.token,
+    models: await ensureOpenAiServer()
+      .advertisedModels()
+      .catch(() => [])
+  })
+  const dir = globalPluginDir()
+  writeStartPlugin(path.join(dir, 'morpheus-provider.js'), buildProviderPlugin(descriptor))
+
+  // The /start plugin is NOT installed.
+  //
+  // It is written against `TuiPluginApi` (api.ui.dialog, api.command.register),
+  // which @opencode-ai/plugin declares but the opencode 1.18.10 RUNTIME does
+  // not provide: a directory-loaded plugin's `tui` export is called with
+  // `PluginInput` instead — {client, project, worktree, directory,
+  // experimental_workspace, serverUrl, $} and nothing else. Probed directly
+  // against the installed binary on 2026-08-08. Loading it therefore threw
+  // "undefined is not an object (evaluating 'api.ui.dialog')" at startup, which
+  // opencode logs and then skips the plugin, so /start never appeared.
+  //
+  // Removing any copy a previous build installed, so opencode stops erroring on
+  // every launch while the command is rebuilt against the API that exists
+  // (Hooks.config can inject a slash command — verified — plus Hooks.tool and
+  // the permission.ask gate).
+  for (const stale of [
+    path.join(dir, 'morpheus-start.js'),
+    path.join(opencodeDir(), 'morpheus-start.js')
+  ]) {
+    try {
+      fs.rmSync(stale, { force: true })
+    } catch {
+      /* best effort */
+    }
+  }
+  return { descriptor, dir }
+}
 
 export const getOpencodeStatus = async () => {
   const status = await detectOpencode()
   const api = readOpenAiConfig()
+  const running = ensureOpenAiServer().isRunning()
+
+  // Provision the config and the /start plugin as soon as the endpoint is up,
+  // rather than only during a Chat handoff.
+  //
+  // Previously the ONLY writer was openInOpencode, which needed a model — so a
+  // user had to open a session in the app before `/start` existed, and `/start`
+  // is the thing that exists so you do not have to. Writing here means opening
+  // Settings is enough. Best-effort: a failure must not stop Settings rendering.
+  let pluginsInstalledAt: string | null = null
+  if (running && status.installed) {
+    try {
+      const { dir } = await provisionOpencodePlugins(api)
+      pluginsInstalledAt = dir
+    } catch (e) {
+      log.warn(`opencode: could not install the plugins — ${String(e)}`)
+    }
+  }
+
   return {
     ...status,
     installCommand: installCommand().display,
     // The handoff needs the endpoint running: opencode talks to it, not to us.
     endpointEnabled: api.enabled,
-    endpointRunning: ensureOpenAiServer().isRunning(),
-    configPath: opencodeConfigPath()
+    endpointRunning: running,
+    configPath: opencodeConfigPath(),
+    // Surfaced so Settings can say /start is available everywhere, not only in
+    // terminals this app launched.
+    pluginsInstalledAt
   }
 }
 
@@ -1153,7 +1228,18 @@ export const installOpencode = async () => {
  * serving — a terminal that opens onto a connection error is a worse outcome
  * than a clear message here.
  */
-export const openInOpencode = async ({ modelId, cwd }: { modelId: string; cwd?: string }) => {
+export const openInOpencode = async ({
+  modelId,
+  cwd
+}: {
+  // OPTIONAL. Without it, opencode opens with the Morpheus provider configured
+  // and no model preselected — which is the whole point of `/start`: you should
+  // not need a session in the app before you can open one from the terminal.
+  // Requiring a modelId here made the plugin unreachable except through the
+  // handoff it exists to replace.
+  modelId?: string
+  cwd?: string
+}) => {
   const api = readOpenAiConfig()
   if (!api.enabled || !ensureOpenAiServer().isRunning()) {
     return {
@@ -1176,8 +1262,8 @@ export const openInOpencode = async ({ modelId, cwd }: { modelId: string; cwd?: 
   // set, and asking for them separately meant paying the 5-10s /blockchain/models
   // read twice — which exceeded the IPC timeout and made this look like it had
   // failed while the terminal opened anyway.
-  const { advertised, models } = await ensureOpenAiServer().resolveForHandoff(modelId)
-  if (!advertised) {
+  const { advertised, models } = await ensureOpenAiServer().resolveForHandoff(modelId ?? '')
+  if (modelId && !advertised) {
     return {
       ok: false,
       reason: 'model_unavailable',
@@ -1186,18 +1272,21 @@ export const openInOpencode = async ({ modelId, cwd }: { modelId: string; cwd?: 
   }
 
   const configPath = opencodeConfigPath()
-  const pluginPath = opencodeStartPluginPath()
-  // Rewritten every launch: a stale plugin pointed at a changed port or a
-  // rotated token would fail inside opencode, where the user has no way to see
-  // why. Cheap enough to redo unconditionally.
-  writeStartPlugin(pluginPath, MORPHEUS_START_PLUGIN)
+  // Refresh the GLOBAL install here too, so launching from the app and opening
+  // a terminal by hand can never disagree about which plugin is current.
+  //
+  // Deliberately NOT declared in the config below any more: the auto-load
+  // directory already loads it, and naming the same plugin twice registers
+  // /start twice.
+  await provisionOpencodePlugins(api).catch((e) =>
+    log.warn(`opencode: could not install the plugins — ${String(e)}`)
+  )
   writeMorpheusConfig(
     configPath,
     buildMorpheusConfig({
       baseUrl: `http://127.0.0.1:${api.port}/v1`,
       apiKey: api.token,
-      models,
-      pluginPath
+      models
     })
   )
 
@@ -1207,8 +1296,10 @@ export const openInOpencode = async ({ modelId, cwd }: { modelId: string; cwd?: 
       opencodePath: status.path,
       configPath,
       // opencode must be given the ADVERTISED id — it has to match the config's
-      // model key and what /v1/models returns.
-      modelId: advertised,
+      // model key and what /v1/models returns. Absent when no model was asked
+      // for, in which case opencode opens with no preselection and `/start` is
+      // how you pick one.
+      modelId: advertised ?? undefined,
       cwd: workdir
     })
     await launchInTerminal(path.join(opencodeDir(), 'open-morpheus.command'), script)

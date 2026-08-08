@@ -27,6 +27,21 @@ const store = {
 
 // logout wipes the wallet — count it and never let it fire from a render.
 window.__logout = 0;
+window.__apiWrites = [];
+window.__opencodeOpens = [];
+// Endpoint ON and auto-open ON, so the spend-cap fields actually render — they
+// are hidden otherwise, and a fixture that cannot reach them would make any
+// assertion about them vacuous.
+const apiCfg = {
+  enabled: true,
+  running: true,
+  port: 8137,
+  token: 'mor-sk-test',
+  allowAutoOpen: true,
+  maxStakeMor: 1,
+  maxDailyStakeMor: 5,
+  maxDailySessions: 10,
+};
 const client = {
   logout: async () => {
     window.__logout++;
@@ -37,6 +52,31 @@ const client = {
   getAuthHeaders: async () => ({}),
   restartService: async () => {},
   pingService: async () => true,
+
+  // ---- the OpenAI endpoint + spend caps ----
+  // Records every config write so a case can assert what the UI actually
+  // committed, not merely that it rendered.
+  getOpenAiApiConfig: async () => ({ ...apiCfg }),
+  setOpenAiApiConfig: async (next) => {
+    window.__apiWrites.push({ ...next });
+    Object.assign(apiCfg, next);
+    return { ...apiCfg };
+  },
+  regenerateOpenAiApiToken: async () => ({ ...apiCfg }),
+  copyToClipboard: () => {},
+  getOpencodeStatus: async () => ({
+    installed: true,
+    version: '1.18.10',
+    installCommand: 'brew install sst/tap/opencode',
+    endpointEnabled: true,
+    endpointRunning: true,
+    configPath: '/tmp/morpheus.json',
+  }),
+  installOpencode: async () => ({ output: '' }),
+  openInOpencode: async (arg) => {
+    window.__opencodeOpens.push(arg);
+    return { ok: true };
+  },
 };
 
 createRoot(document.getElementById('root')).render(
