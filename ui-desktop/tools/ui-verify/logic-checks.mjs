@@ -3,6 +3,8 @@ import {
   buildGrokLaunchScript,
   buildGrokModelsToml,
   grokModelKey,
+  mergeKnownModels,
+  selectGrokModels,
 } from '../../src/main/src/grok/models-config.ts';
 // Node-runnable assertions over the PR's exported substrate utils.
 // Run: npm run logic   (uses vite-node to transform the .ts/.tsx/.js sources)
@@ -1053,6 +1055,49 @@ console.log('grok: models published into the managed config');
   // own IdP session token on any endpoint it reads as first-party xAI — which
   // a 127.0.0.1 URL always is — so the key has to travel in a header it does
   // not rewrite, or every request arrives as an unexplainable 401.
+  // ---- the sticky list ----
+  // grok does not rebuild its model list when the config changes, so a list
+  // tracking live sessions exactly forced a restart on EVERY session.
+  {
+    const a = [{ id: 'deepseek-v4-pro', label: 'deepseek-v4-pro (session)' }];
+    const b = [{ id: 'deepseek-v4-flash', label: 'deepseek-v4-flash (session)' }];
+
+    ok('a first session seeds the list', mergeKnownModels([], a).length === 1);
+    // THE point: a model survives its own session ending.
+    ok('a model stays listed after its session closes',
+      mergeKnownModels(a, []).map((m) => m.id).join() === 'deepseek-v4-pro');
+    ok('a second model is added, not swapped in',
+      mergeKnownModels(a, b).map((m) => m.id).join() === 'deepseek-v4-flash,deepseek-v4-pro');
+    ok('re-opening the same model does not duplicate it',
+      mergeKnownModels(a, a).length === 1);
+    ok('a live label wins over a remembered one',
+      mergeKnownModels([{ id: 'x', label: 'stale' }], [{ id: 'x', label: 'fresh' }])[0].label === 'fresh');
+    ok('the order is stable, so an unchanged set writes an identical file',
+      JSON.stringify(mergeKnownModels(a, b)) === JSON.stringify(mergeKnownModels(b, a)));
+    ok('junk entries are dropped rather than written as broken TOML',
+      mergeKnownModels([{ label: 'no id' }, null], a).length === 1);
+  }
+
+  // ---- local models are never published to grok ----
+  {
+    const adv = [
+      { id: 'qwen2.5-1.5b-instruct', label: 'qwen (local)', isLocal: true },
+      { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro (session)', isLocal: false },
+    ];
+    const picked = selectGrokModels([], adv).map((m) => m.id);
+    ok('a session-backed model is published', picked.includes('deepseek-v4-pro'));
+    // grok always sends tools AND stream; the local runtime always refuses that
+    // pair. Listing it is offering a guaranteed failure.
+    ok('a LOCAL model is never published to grok', !picked.includes('qwen2.5-1.5b-instruct'));
+    ok('and it cannot sneak in through the remembered set',
+      !selectGrokModels([{ id: 'qwen2.5-1.5b-instruct', label: 'x' }], [])
+        .map((m) => m.id)
+        .includes('qwen2.5-1.5b-instruct') === false);
+    ok('stickiness still holds for session models',
+      selectGrokModels([{ id: 'deepseek-v4-flash', label: 'f' }], adv)
+        .map((m) => m.id).join() === 'deepseek-v4-flash,deepseek-v4-pro');
+  }
+
   // The launch command must select the model by its CONFIG KEY: `-m` resolves
   // against grok's model map, and the raw id is not in it.
   {

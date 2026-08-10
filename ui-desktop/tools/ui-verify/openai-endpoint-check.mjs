@@ -470,6 +470,23 @@ console.log('admission: headers we did not ask for');
     browsery.status === 403);
 }
 
+// ---- local models are flagged, so a coding agent can be spared them --------
+// grok always sends tools AND stream; the local runtime answers that with
+// "Cannot use tools with stream" every time. Publishing one to grok offers a
+// guaranteed failure, so the caller needs to be able to tell them apart.
+console.log('');
+console.log('models: local vs session is distinguishable');
+{
+  const listed = await server.advertisedModels(true);
+  const local = listed.find((m) => m.id === 'local-llama');
+  const session = listed.find((m) => m.id === 'deepseek-v4');
+  ok('the local model is flagged local', local?.isLocal === true);
+  ok('the session-backed one is not', session?.isLocal === false);
+  ok('and its label says so', /\(session\)/.test(session?.label ?? ''));
+  ok('filtering local leaves the session model',
+    listed.filter((m) => !m.isLocal).some((m) => m.id === 'deepseek-v4'));
+}
+
 // ---- a handoff must resolve the CHAIN id to the advertised one -------------
 // Callers inside the app hold the hex32 chain id; every client-facing surface
 // (the /v1/models list, grok's config key, opencode's model key) is built from
