@@ -262,6 +262,10 @@ const createClient = function (createStore) {
     // kind of failure, one that reports an error for work that succeeded.
     openInOpencode: utils.forwardToMainProcess('open-in-opencode', 120000),
     getOpencodeStatus: utils.forwardToMainProcess('get-opencode-status', 60000),
+    getGrokStatus: utils.forwardToMainProcess('get-grok-status', 30000),
+    // Enabling spawns the agent and waits for its socket — give it room.
+    setGrokEnabled: utils.forwardToMainProcess('set-grok-enabled', 60000),
+    grokPickerDone: utils.forwardToMainProcess('grok-picker-done', 15000),
     setOpencodeCwd: utils.forwardToMainProcess('set-opencode-cwd'),
     checkProviderConnectivity: utils.forwardToMainProcess(
       'check-provider-connectivity',

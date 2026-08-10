@@ -455,6 +455,43 @@ console.log('grok relay: an unchecked grok build');
   for (const p of [realPath, listenPath]) if (existsSync(p)) rmSync(p, { force: true });
 }
 
+// ---- the supervisor --------------------------------------------------------
+// It spawns a real agent, so only the paths and the refusal behaviour are
+// exercised here. The point is that a missing grok is REPORTED rather than
+// leaving a half-built arrangement behind.
+console.log('');
+console.log('grok supervisor: when grok is not there');
+{
+  const { GrokSupervisor, defaultLeaderSocket, agentSocket } =
+    await import('../../src/main/src/grok/supervisor.ts');
+
+  ok('the relay takes grok\'s DEFAULT socket, so plain `grok` goes through it',
+    defaultLeaderSocket().endsWith('/.grok/leader.sock'));
+  ok('and the real agent is moved to a private one',
+    agentSocket().endsWith('/.grok/morpheus-agent.sock'));
+  ok('they are not the same path', defaultLeaderSocket() !== agentSocket());
+
+  const statuses = [];
+  let asked = 0;
+  const sup = new GrokSupervisor({
+    grokPath: () => undefined,
+    askRenderer: async () => { asked++; return { opened: false }; },
+    onStatus: (s) => statuses.push(s),
+  });
+
+  const status = await sup.start();
+  ok('a missing grok is reported, not ignored', !!status.problem);
+  ok('the message says what is wrong', /not installed/i.test(status.problem));
+  ok('and nothing is left claiming to be enabled', status.enabled === false);
+  ok('with no agent running', status.agentRunning === false);
+  ok('and the relay stopped', status.relay.status === 'stopped');
+  ok('the renderer was never asked for a picker', asked === 0);
+  ok('status changes are published so the UI can show them', statuses.length > 0);
+
+  await sup.stop();
+  ok('stopping is safe even when nothing started', sup.status().enabled === false);
+}
+
 console.log('');
 console.log(`GROK RELAY: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

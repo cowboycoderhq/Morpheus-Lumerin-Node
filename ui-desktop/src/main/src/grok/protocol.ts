@@ -129,7 +129,16 @@ export function summariseFrame(direction: string, frame: LeaderFrame): string {
 // silent misbehaviour on a money path.
 
 /** Versions this relay has actually been exercised against. */
-export const BLESSED_LEADER_VERSIONS = ['0.2.106'];
+export const BLESSED_LEADER_VERSIONS = [
+  // Each entry means: the relay has been RUN against this build and the app
+  // path — handshake, framing, /start interception, turn completion — was
+  // observed working. Not "it looked compatible".
+  '0.2.106',
+  // 1.0.0 rejects x.ai/ask_user_question with -32601, which is why the picker
+  // moved into the app; nothing the supervisor does uses that method. Verified
+  // 2026-08-10 against the installed 1.0.0.
+  '1.0.0',
+];
 
 export function readLeaderVersion(frame: LeaderFrame): string | null {
   if (!frame.json || frame.json.type !== 'registered') return null;

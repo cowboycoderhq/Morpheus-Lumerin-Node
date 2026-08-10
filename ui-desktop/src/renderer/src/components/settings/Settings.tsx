@@ -63,6 +63,8 @@ const Common = (props: CommonProps) => {
   // In-flight text for the spend-cap fields, keyed by config field. Only a
   // usable number is committed; see the inputs below.
   const [capDraft, setCapDraft] = useState<Record<string, string>>({});
+  const [grok, setGrok] = useState<any>(null);
+  const [grokBusy, setGrokBusy] = useState(false);
   const [ocStatus, setOcStatus] = useState<any>(null);
   const [ocBusy, setOcBusy] = useState(false);
   const [ocOutput, setOcOutput] = useState<string>('');
@@ -81,6 +83,7 @@ const Common = (props: CommonProps) => {
       try {
         setApiCfg(await props.client.getOpenAiApiConfig());
         setOcStatus(await props.client.getOpencodeStatus());
+        setGrok(await props.client.getGrokStatus());
       } catch (e) {
         console.warn('Could not read the OpenAI endpoint config', e);
       }
@@ -323,6 +326,48 @@ const Common = (props: CommonProps) => {
                 ))}
               </Flex.Row>
             )}
+
+            {/* grok: /start in a terminal, choosing in this window. */}
+            <SectionDescription style={{ marginTop: '1.6rem' }}>
+              grok terminal integration
+            </SectionDescription>
+            <FieldRow>
+              <ToggleRow htmlFor="grok-enabled">
+                <ToggleInput
+                  id="grok-enabled"
+                  checked={Boolean(grok?.enabled)}
+                  disabled={grokBusy}
+                  onChange={async (e) => {
+                    setGrokBusy(true);
+                    try {
+                      setGrok(
+                        await props.client.setGrokEnabled(
+                          Boolean(e.target.checked),
+                        ),
+                      );
+                    } finally {
+                      setGrokBusy(false);
+                    }
+                  }}
+                />
+                <ToggleLabel>
+                  Enable <code>/start</code> in grok
+                  {grokBusy ? ' — starting…' : ''}
+                </ToggleLabel>
+              </ToggleRow>
+            </FieldRow>
+            {/* `problem` is the ONLY way a refused version, a dead agent or an
+                unavailable socket reaches the user: from the terminal all three
+                look identical to "nothing happened". Show it verbatim. */}
+            <SettingsCallout tone={grok?.problem ? 'warning' : 'info'}>
+              {grok?.problem
+                ? grok.problem
+                : grok?.enabled
+                  ? 'Type /start in any grok terminal. This window comes forward so you can choose the model, provider and length here — grok never sees the command, and no model decides to spend.'
+                  : grok?.installed === false
+                    ? 'grok is not installed. Install it and turn this on to get /start.'
+                    : 'Off. grok runs normally and /start does nothing.'}
+            </SettingsCallout>
 
             {/* opencode setup lives inside this card because it is only
                 meaningful once the endpoint it talks to is running. */}

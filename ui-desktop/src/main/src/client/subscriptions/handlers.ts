@@ -34,6 +34,7 @@ import {
   writeStartPlugin,
   writeEndpointDescriptor
 } from '../../opencode/setup'
+import { GrokSupervisor, bringAppToFront } from '../../grok/supervisor'
 import { buildProviderPlugin } from '../../opencode/start-plugin'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
@@ -1164,6 +1165,81 @@ const provisionOpencodePlugins = async (api: OpenAiApiConfig) => {
     }
   }
   return { descriptor, dir }
+}
+
+// ---- grok integration -------------------------------------------------------
+// `/start` is typed in a terminal, so the picker cannot live there: three
+// attempts at another tool's in-terminal UI failed on APIs that were published
+// but absent, or present and then removed by a self-installed update. The relay
+// takes the command off the wire — that part is stable — and the choosing
+// happens in this window, which we own. See ../../grok/supervisor.ts.
+
+let grokSupervisor: GrokSupervisor | null = null
+const grokPicker = new Map<number, (outcome: { opened: boolean; note?: string }) => void>()
+
+const ensureGrokSupervisor = (): GrokSupervisor => {
+  if (!grokSupervisor) {
+    grokSupervisor = new GrokSupervisor({
+      grokPath: () => {
+        // A GUI app does not inherit the user's shell PATH, so probe where
+        // grok's own installer puts it.
+        for (const p of [
+          path.join(os.homedir(), '.grok', 'bin', 'grok'),
+          '/opt/homebrew/bin/grok',
+          '/usr/local/bin/grok'
+        ]) {
+          if (fs.existsSync(p)) return p
+        }
+        return undefined
+      },
+      log: (m) => log.info(m),
+      onStatus: (status) => {
+        BrowserWindow.getAllWindows()[0]?.webContents.send('grok-status', status)
+      },
+      askRenderer: (request) =>
+        new Promise((resolve) => {
+          const win = bringAppToFront()
+          if (!win) {
+            // Resolve rather than hang: the terminal is holding a turn open on
+            // a dialog that can never appear.
+            resolve({ opened: false, note: 'the app window is not available' })
+            return
+          }
+          let settled = false
+          const done = (outcome: { opened: boolean; note?: string }) => {
+            if (settled) return
+            settled = true
+            grokPicker.delete(request.requestId)
+            resolve(outcome)
+          }
+          grokPicker.set(request.requestId, done)
+          // A renderer that never answers must not wedge the turn forever.
+          const timer = setTimeout(() => done({ opened: false, note: 'timed out' }), 10 * 60_000)
+          timer.unref?.()
+          win.webContents.send('grok-picker-request', request)
+        })
+    })
+  }
+  return grokSupervisor
+}
+
+export const getGrokStatus = async () => ensureGrokSupervisor().status()
+
+export const setGrokEnabled = async (enabled: boolean) => {
+  const sup = ensureGrokSupervisor()
+  if (enabled) return sup.start()
+  await sup.stop()
+  return sup.status()
+}
+
+/** The renderer reporting what the user chose. */
+export const grokPickerDone = async (payload: {
+  requestId: number
+  opened: boolean
+  note?: string
+}) => {
+  grokPicker.get(payload.requestId)?.({ opened: payload.opened, note: payload.note })
+  return { ok: true }
 }
 
 export const getOpencodeStatus = async () => {

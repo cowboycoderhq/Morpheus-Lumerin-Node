@@ -1019,7 +1019,51 @@ console.log('opencode: the config and the command we hand a terminal');
   ok('a path containing spaces is stored verbatim',
     withPlugin.plugin[0][0].includes('Application Support'));
 
-  // ---- launching with NO model, so /start can pick one ----
+  // ---- the grok IPC chain is COMPLETE ----------------------------------------
+// A severed IPC chain typechecks and builds cleanly: `client` is `any` through
+// the HOC, so a missing method is invisible until someone uses the feature.
+// That is exactly how the whole grok bridge was lost once — a concurrent editor
+// reverted four files, every gate stayed green, and the shipped app had a picker
+// nothing could reach. Assert the three links of each channel exist together.
+{
+  const read = (rel) =>
+    readFileSync(new URL(rel, import.meta.url), 'utf8');
+  const handlersSrc = read('../../src/main/src/client/subscriptions/handlers.ts');
+  const listenersSrc = read('../../src/main/src/client/subscriptions/index.ts');
+  const clientSrc = read('../../src/renderer/src/client/index.ts');
+
+  // ONE list, so a fourth channel added later cannot half-land.
+  const CHANNELS = [
+    ['get-grok-status', 'getGrokStatus'],
+    ['set-grok-enabled', 'setGrokEnabled'],
+    ['grok-picker-done', 'grokPickerDone'],
+  ];
+  for (const [ipcName, fnName] of CHANNELS) {
+    ok(`${ipcName}: main exports its handler`,
+      new RegExp(`export const ${fnName}\\b`).test(handlersSrc));
+    ok(`${ipcName}: registered in the listeners map`,
+      listenersSrc.includes(`'${ipcName}': handlers.${fnName}`));
+    ok(`${ipcName}: the renderer binds it`,
+      new RegExp(`${fnName}:\\s*utils\\.forwardToMainProcess\\('${ipcName}'`).test(clientSrc));
+  }
+
+  // The renderer half: the picker host must be mounted and must report back.
+  const routerSrc = read('../../src/renderer/src/components/Router.tsx');
+  ok('the picker is actually mounted', /<StartPickerModal/.test(routerSrc));
+  ok('and it listens for the request the supervisor sends',
+    routerSrc.includes("'grok-picker-request'"));
+  ok('and always reports the outcome back, so the terminal turn can end',
+    routerSrc.includes('grokPickerDone'));
+
+  // The supervisor must send exactly the event the renderer waits for.
+  const supervisorUser = read('../../src/main/src/client/subscriptions/handlers.ts');
+  ok('the supervisor sends that same event name',
+    supervisorUser.includes("send('grok-picker-request'"));
+  ok('and brings the window forward — /start happens in another app',
+    supervisorUser.includes('bringAppToFront'));
+}
+
+// ---- launching with NO model, so /start can pick one ----
   // Requiring a model here is what made the plugin unreachable except through
   // the Chat handoff it exists to replace.
   {

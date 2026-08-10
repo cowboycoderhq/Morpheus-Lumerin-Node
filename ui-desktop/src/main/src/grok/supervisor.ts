@@ -68,6 +68,8 @@ export class GrokSupervisor {
   private relay: GrokLeaderRelay | null = null
   private enabled = false
   private problem: string | undefined
+  /** The agent's last words, so a silent exit still has a cause. */
+  private agentSaid: string | undefined
   private nextRequestId = 1
 
   constructor(deps: SupervisorDeps) {
@@ -126,14 +128,27 @@ export class GrokSupervisor {
       // Cast: this app augments ProcessEnv with non-string values, but a
       // child's environment is strings only — which is what childEnv is.
       env: childEnv as unknown as NodeJS.ProcessEnv,
-      stdio: 'ignore'
+      // NOT 'ignore'. An agent that exits silently is undiagnosable, and it
+      // exits for reasons we do not control (its own arbitration between
+      // leaders, its own checks). Keep its last words so a failure has a cause
+      // attached instead of just a shrug.
+      stdio: ['ignore', 'pipe', 'pipe']
     })
     this.agent = child
+    const remember = (buf: Buffer): void => {
+      const text = String(buf).trim()
+      if (text) this.agentSaid = text.split('\n').slice(-3).join(' | ').slice(0, 400)
+    }
+    child.stdout?.on('data', remember)
+    child.stderr?.on('data', remember)
     child.on('exit', (code) => {
-      this.deps.log?.(`grok: the agent exited (${code})`)
+      this.deps.log?.(`grok: the agent exited (${code}) ${this.agentSaid ?? ''}`)
       // Say so rather than leaving a relay pointed at nothing. A dead agent
       // looks exactly like a broken app from the terminal.
-      this.problem = 'The grok agent stopped. Turn the integration off and on again.'
+      this.problem =
+        `The grok agent stopped (${code}).` +
+        (this.agentSaid ? ` It said: ${this.agentSaid}` : '') +
+        ' Turn the integration off and on again.'
       this.publish()
     })
 
