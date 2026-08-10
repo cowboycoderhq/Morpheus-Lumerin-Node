@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import {
+  buildGrokLaunchScript,
   buildGrokModelsToml,
   grokModelKey,
 } from '../../src/main/src/grok/models-config.ts';
@@ -1052,6 +1053,33 @@ console.log('grok: models published into the managed config');
   // own IdP session token on any endpoint it reads as first-party xAI — which
   // a 127.0.0.1 URL always is — so the key has to travel in a header it does
   // not rewrite, or every request arrives as an unexplainable 401.
+  // The launch command must select the model by its CONFIG KEY: `-m` resolves
+  // against grok's model map, and the raw id is not in it.
+  {
+    const script = buildGrokLaunchScript({
+      grokPath: '/Users/x/.grok/bin/grok',
+      modelId: 'qwen2.5-1.5b-instruct',
+      cwd: '/tmp',
+    });
+    ok('grok is launched on the config key, not the raw id',
+      / -m 'morpheus-qwen2-5-1-5b-instruct'/.test(script));
+    ok('and the key it uses is the one the config declares',
+      script.includes(grokModelKey('qwen2.5-1.5b-instruct')));
+    ok('the working directory is quoted', /cd '\/tmp'/.test(script));
+    // Model names are chain data and end up in a .command file.
+    ok('a control character in a model id is refused, not quoted', (() => {
+      try {
+        buildGrokLaunchScript({ grokPath: 'g', modelId: 'a\nb', cwd: '/tmp' });
+        return false;
+      } catch {
+        return true;
+      }
+    })());
+    ok('a quote in a path cannot escape its argument',
+      buildGrokLaunchScript({ grokPath: "/a'b/grok", modelId: 'm', cwd: '/tmp' })
+        .includes(String.raw`'/a'\''b/grok'`));
+  }
+
   ok('the key also travels in a header grok will not rewrite',
     /extra_headers = \{ "X-Morpheus-Key" = "mor-sk-secret" \}/.test(cfg));
 

@@ -36,6 +36,7 @@ import {
 } from '../../opencode/setup'
 import { GrokSupervisor, bringAppToFront } from '../../grok/supervisor'
 import {
+  buildGrokLaunchScript,
   buildGrokModelsToml,
   managedConfigPath,
   writeGrokModelsConfig
@@ -1278,6 +1279,50 @@ const startGrokModelsRefresh = (): void => {
   tick()
   grokModelsTimer = setInterval(tick, 60_000)
   grokModelsTimer.unref?.()
+}
+
+/**
+ * Open a terminal running grok on this model.
+ *
+ * Publishes the model FIRST and waits for it: grok reads its config at startup,
+ * so launching before the file is written gives a terminal whose picker does
+ * not contain the model the user just paid for — which is precisely the bug
+ * they reported.
+ */
+export const openInGrok = async ({ modelId, cwd }: { modelId: string; cwd?: string }) => {
+  const grok = ensureGrokSupervisor().status()
+  if (!grok.installed || !grok.grokPath) {
+    return {
+      ok: false,
+      reason: 'not_installed',
+      message: 'grok is not installed. Install it from x.ai and try again.'
+    }
+  }
+  const api = readOpenAiConfig()
+  if (!api.enabled || !ensureOpenAiServer().isRunning()) {
+    return {
+      ok: false,
+      reason: 'endpoint_off',
+      message:
+        'Turn on the OpenAI-compatible API in Settings first — grok connects to it, not to the app directly.'
+    }
+  }
+
+  // Write the config BEFORE launching, forced, so the new session is in it.
+  await refreshGrokModels().catch((e) => log.warn(`grok models: ${String(e)}`))
+
+  const workdir = cwd || (getOpenAiApiSetting()?.opencodeCwd as string) || app.getPath('home')
+  try {
+    const script = buildGrokLaunchScript({
+      grokPath: grok.grokPath,
+      modelId,
+      cwd: workdir
+    })
+    await launchInTerminal(path.join(opencodeDir(), 'open-morpheus-grok.command'), script)
+    return { ok: true, modelId, cwd: workdir }
+  } catch (e) {
+    return { ok: false, reason: 'unsafe_input', message: String(e) }
+  }
 }
 
 export const getGrokStatus = async () => {

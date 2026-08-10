@@ -316,6 +316,11 @@ export const Chat = (props: ChatProps) => {
   // idle → launching (writing config, opening the terminal) → launched.
   // Launching is not instant: it detects opencode, writes the provider config
   // and shells out, and with no feedback the click read as if nothing happened.
+  // Which tool the banner is currently launching, so its copy names the right
+  // one rather than always saying "opencode".
+  const [opencodeTarget, setOpencodeTarget] = useState<'opencode' | 'grok'>(
+    'opencode',
+  );
   const [opencodeState, setOpencodeState] = useState<
     'idle' | 'launching' | 'launched'
   >('idle');
@@ -2839,14 +2844,15 @@ export const Chat = (props: ChatProps) => {
             <OpencodeOffer>
               {opencodeState === 'launching' ? (
                 <span>
-                  <Spinner animation="border" size="sm" /> Starting opencode…
+                  <Spinner animation="border" size="sm" /> Starting{' '}
+                  {opencodeTarget}…
                 </span>
               ) : opencodeState === 'launched' ? (
                 /* Honest about what is known: the terminal was opened. Whether
                    opencode has finished booting happens outside this app and
                    cannot be observed from here. */
                 <span>
-                  Opened in your terminal — opencode is starting with{' '}
+                  Opened in your terminal — {opencodeTarget} is starting with{' '}
                   <strong>{opencodeOffer.modelName}</strong>.
                 </span>
               ) : (
@@ -2893,6 +2899,44 @@ export const Chat = (props: ChatProps) => {
                     }}
                   >
                     Open in opencode
+                  </KeepAliveChip>
+                  <KeepAliveChip
+                    onClick={async () => {
+                      setOpencodeTarget('grok');
+                      setOpencodeState('launching');
+                      try {
+                        const result: any = await props.client.openInGrok({
+                          modelId: opencodeOffer.modelId,
+                        });
+                        if (result?.ok) {
+                          setOpencodeState('launched');
+                          setTimeout(() => {
+                            setOpencodeOffer(null);
+                            setOpencodeState('idle');
+                            setOpencodeTarget('opencode');
+                          }, 6000);
+                        } else {
+                          // Say why and return to idle. grok not installed, or
+                          // the endpoint off, are both fixable — a button that
+                          // silently does nothing is not.
+                          setOpencodeState('idle');
+                          setOpencodeTarget('opencode');
+                          props.toasts.toast(
+                            'error',
+                            result?.message ?? 'Could not open grok.',
+                          );
+                        }
+                      } catch (e: any) {
+                        setOpencodeState('idle');
+                        setOpencodeTarget('opencode');
+                        props.toasts.toast(
+                          'error',
+                          e?.message ?? 'Could not open grok.',
+                        );
+                      }
+                    }}
+                  >
+                    Open in grok
                   </KeepAliveChip>
                   <KeepAliveChip onClick={() => setOpencodeOffer(null)}>
                     Not now
