@@ -1254,7 +1254,9 @@ export const refreshGrokModels = async () => {
     return { models: 0 }
   }
   const advertised = await ensureOpenAiServer()
-    .advertisedModels()
+    // Forced: this runs right after a session opens, and a cached list would
+    // not contain it.
+    .advertisedModels(true)
     .catch(() => [] as { id: string; label: string }[])
   writeGrokModelsConfig(
     managedConfigPath(),

@@ -1220,6 +1220,12 @@ export const Chat = (props: ChatProps) => {
         // So the NEXT run's gate can reserve this one's pending overlap.
         perBlockStakeWei: perBlockStake,
       });
+      // Publish the new model to grok NOW rather than waiting on the refresh
+      // timer. A session opened here took up to ~90s to appear in `/model`
+      // (a 30s models cache plus a 60s poll), and the wait is invisible: the
+      // user restarts grok, does not see their model, and concludes it is
+      // broken. Fire-and-forget — the timer is still the backstop.
+      void props.client.refreshGrokModels?.().catch(() => undefined);
     } finally {
       startingSessionRef.current = false;
     }
