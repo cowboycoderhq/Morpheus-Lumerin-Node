@@ -44,6 +44,18 @@ export type OpenAiModelEntry = {
 
 export type AdmissionInput = {
   authorization?: string | null;
+  /**
+   * Fallback credential header.
+   *
+   * grok replaces the Authorization header on any endpoint it considers
+   * first-party xAI, and it decides that by literal host match on
+   * "localhost"/"127.0.0.1"/"::1" — which is us. Its own kill switch then swaps
+   * our key for its IdP session token, so a correctly configured client arrives
+   * with an 838-character JWT and gets a 401 it cannot explain. Reading the
+   * credential from a header grok does not rewrite is the fix that does not
+   * involve weakening anything.
+   */
+  morpheusKey?: string | null;
   host?: string | null;
   origin?: string | null;
 };
@@ -119,9 +131,13 @@ export function admitRequest(
     };
   }
 
+  // Either channel may carry it. Both are compared the same way, so this adds
+  // a header, not an exemption: with neither present the request still fails.
   const header = input.authorization ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  if (!match) {
+  const direct = (input.morpheusKey ?? '').trim();
+  const presented = direct || (match ? match[1].trim() : '');
+  if (!presented) {
     return {
       ok: false,
       status: 401,
@@ -130,7 +146,7 @@ export function admitRequest(
         'Missing Authorization header. Set your API key to the token shown in the app under Settings → OpenAI-compatible API.',
     };
   }
-  if (!bearerMatches(match[1].trim(), expectedToken)) {
+  if (!bearerMatches(presented, expectedToken)) {
     return {
       ok: false,
       status: 401,

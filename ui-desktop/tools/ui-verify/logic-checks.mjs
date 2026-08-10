@@ -1048,6 +1048,12 @@ console.log('grok: models published into the managed config');
   ok('with the key on the model itself (a loopback model_provider fails closed)',
     /api_key = "mor-sk-secret"/.test(cfg));
   ok('and the OpenAI chat-completions backend', /api_backend = "chat_completions"/.test(cfg));
+  // The credential that actually survives the trip. grok swaps api_key for its
+  // own IdP session token on any endpoint it reads as first-party xAI — which
+  // a 127.0.0.1 URL always is — so the key has to travel in a header it does
+  // not rewrite, or every request arrives as an unexplainable 401.
+  ok('the key also travels in a header grok will not rewrite',
+    /extra_headers = \{ "X-Morpheus-Key" = "mor-sk-secret" \}/.test(cfg));
 
   // It must ADD models and nothing else. This file is layered under the user's
   // config.toml, but writing a global here would still be deciding something

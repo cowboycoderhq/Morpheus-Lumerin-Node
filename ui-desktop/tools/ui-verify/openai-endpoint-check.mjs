@@ -470,6 +470,40 @@ console.log('admission: headers we did not ask for');
     browsery.status === 403);
 }
 
+// ---- the credential may arrive in either header ----------------------------
+// grok decides an endpoint is first-party xAI by literal host match on
+// "127.0.0.1", then its disable_api_key_auth kill switch swaps our api_key for
+// its own IdP session token. A correctly configured client therefore arrived
+// with an 838-character JWT and got a 401 it could not explain. X-Morpheus-Key
+// is a channel it does not rewrite.
+console.log('');
+console.log('admission: the credential channel grok cannot hijack');
+{
+  const viaHeader = await fetch(`${base}/v1/models`, {
+    headers: { 'X-Morpheus-Key': TOKEN },
+  });
+  ok('a request authenticated only by X-Morpheus-Key is admitted', viaHeader.status === 200);
+
+  // Exactly what grok sends: its own JWT in Authorization, ours in the header.
+  const both = await fetch(`${base}/v1/models`, {
+    headers: { Authorization: `Bearer ${'j'.repeat(838)}`, 'X-Morpheus-Key': TOKEN },
+  });
+  ok('and still admitted when grok overwrites Authorization with its own token',
+    both.status === 200);
+
+  // It is a channel, NOT an exemption.
+  const wrong = await fetch(`${base}/v1/models`, { headers: { 'X-Morpheus-Key': 'nope' } });
+  ok('a wrong X-Morpheus-Key is refused', wrong.status === 401);
+  const empty = await fetch(`${base}/v1/models`, { headers: { 'X-Morpheus-Key': '' } });
+  ok('an empty one is refused', empty.status === 401);
+  const neither = await fetch(`${base}/v1/models`);
+  ok('and neither header is still refused', neither.status === 401);
+  const browsery = await fetch(`${base}/v1/models`, {
+    headers: { 'X-Morpheus-Key': TOKEN, Origin: 'https://evil.example' },
+  });
+  ok('it cannot smuggle a browser past the Origin refusal', browsery.status === 403);
+}
+
 // ---- /morpheus/v1: the surface `/start` drives ------------------------------
 // One route here can spend. Everything below is about proving it cannot be
 // reached by accident, cannot be talked past, and cannot stake a figure other
