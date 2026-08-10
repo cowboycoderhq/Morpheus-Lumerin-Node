@@ -1308,6 +1308,20 @@ export const openInGrok = async ({ modelId, cwd }: { modelId: string; cwd?: stri
     }
   }
 
+  // Callers here hold the hex32 CHAIN id; the config is keyed off the id the
+  // endpoint ADVERTISES (a name). Passing the chain id straight through built a
+  // key that is in no model map, and grok answered "unknown model id" — the
+  // same hex-vs-name mismatch that broke the opencode handoff. Resolve through
+  // the endpoint, which is the one definition of "which model is this".
+  const { advertised } = await ensureOpenAiServer().resolveForHandoff(modelId)
+  if (!advertised) {
+    return {
+      ok: false,
+      reason: 'model_unavailable',
+      message: `The endpoint is not currently serving "${modelId}". Is the session still open?`
+    }
+  }
+
   // Write the config BEFORE launching, forced, so the new session is in it.
   await refreshGrokModels().catch((e) => log.warn(`grok models: ${String(e)}`))
 
@@ -1315,11 +1329,12 @@ export const openInGrok = async ({ modelId, cwd }: { modelId: string; cwd?: stri
   try {
     const script = buildGrokLaunchScript({
       grokPath: grok.grokPath,
-      modelId,
+      // The ADVERTISED id, so grokModelKey produces the key the config declares.
+      modelId: advertised,
       cwd: workdir
     })
     await launchInTerminal(path.join(opencodeDir(), 'open-morpheus-grok.command'), script)
-    return { ok: true, modelId, cwd: workdir }
+    return { ok: true, modelId: advertised, cwd: workdir }
   } catch (e) {
     return { ok: false, reason: 'unsafe_input', message: String(e) }
   }
