@@ -1073,6 +1073,38 @@ console.log('grok: models published into the managed config');
   ok('a hostile id still yields a safe bare key',
     grokModelKey('a"b/c d') === 'morpheus-a-b-c-d');
 
+  // THE bug that shipped: a dot is TOML's TABLE SEPARATOR, so a key containing
+  // one parses as nested tables. grok looked up "morpheus-qwen2", found no such
+  // model, and fell through to xAI's API. Every real model id has dots in it
+  // ("qwen2.5-1.5b-instruct") — the earlier fixture used "deepseek-v4" and so
+  // could never have expressed the condition.
+  ok('a key never contains a dot', !grokModelKey('qwen2.5-1.5b-instruct').includes('.'));
+  ok('the dotted id still reaches the endpoint as the model field',
+    buildGrokModelsToml({ baseUrl: 'u', apiKey: 'k',
+      models: [{ id: 'qwen2.5-1.5b-instruct', label: 'x' }] })
+      .includes('model = "qwen2.5-1.5b-instruct"'));
+  ok('and its table header is a single bare key',
+    /^\[model\.morpheus-qwen2-5-1-5b-instruct\]$/m.test(
+      buildGrokModelsToml({ baseUrl: 'u', apiKey: 'k',
+        models: [{ id: 'qwen2.5-1.5b-instruct', label: 'x' }] })));
+  // No table header anywhere may contain a dot beyond the `model.` prefix.
+  {
+    const cfg2 = buildGrokModelsToml({ baseUrl: 'u', apiKey: 'k',
+      models: [{ id: 'a.b.c', label: 'x' }, { id: 'x.y', label: 'y' }] });
+    const headers = cfg2.match(/^\[.*\]$/gm) ?? [];
+    ok('no generated table header nests unintentionally',
+      headers.every((h) => (h.match(/\./g) ?? []).length === 1), headers.join(' '));
+  }
+  // Ids that differ only in punctuation must not produce a duplicate table,
+  // which is a parse error that would take the WHOLE file down.
+  {
+    const dup = buildGrokModelsToml({ baseUrl: 'u', apiKey: 'k',
+      models: [{ id: 'a.b', label: '1' }, { id: 'a-b', label: '2' }] });
+    const headers = dup.match(/^\[model\..*\]$/gm) ?? [];
+    ok('colliding ids get distinct keys',
+      headers.length === 2 && new Set(headers).size === 2, headers.join(' '));
+  }
+
   // Endpoint off -> publish NOTHING, rather than leaving a stale list that
   // offers models which cannot answer.
   const empty = buildGrokModelsToml({ baseUrl: '', apiKey: '', models: [] });
