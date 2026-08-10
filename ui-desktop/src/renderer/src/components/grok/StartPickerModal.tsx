@@ -1,0 +1,891 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import Form from 'react-bootstrap/Form';
+import InputGroup from 'react-bootstrap/InputGroup';
+import {
+  IconAlertTriangle,
+  IconChevronLeft,
+  IconCircleCheck,
+  IconLoader2,
+  IconSearch,
+  IconWorldOff,
+} from '@tabler/icons-react';
+import Modal from '../contracts/modals/Modal';
+import {
+  bodyProps,
+  Body,
+  CalloutText,
+  CheapestBadge,
+  EmptyState,
+  ErrorCallout,
+  Footer,
+  FooterLeft,
+  FooterRight,
+  GhostBtn,
+  Header,
+  Layout,
+  LoadingState,
+  OptionList,
+  OptionMain,
+  OptionMeta,
+  OptionName,
+  OptionRow,
+  PriceBlock,
+  PriceUnit,
+  PriceValue,
+  PrimaryBtn,
+  RecapLine,
+  ResultCount,
+  SearchWrapper,
+  SpinIcon,
+  StakeNote,
+  StakeValue,
+  StepDot,
+  StepDots,
+  StepLabel,
+  StepMeta,
+  Subtitle,
+  SummaryCard,
+  SummaryLabel,
+  SummaryRow,
+  SummaryValue,
+  Title,
+  WarningCallout,
+} from './StartPickerModal.styles';
+
+// ============================================================================
+// /start — walks the user through opening a paid Morpheus blockchain session:
+// model -> provider -> duration -> confirm. Talks ONLY to the local
+// /morpheus/v1/* surface the main process already exposes (see
+// src/main/src/openai-compat/server.ts); this file owns presentation only.
+// ============================================================================
+
+type Props = {
+  open: boolean;
+  /** Free text typed after `/start`, may be ''. Prefills the model search. */
+  args: string;
+  /** Endpoint base + bearer token, from client.getOpenAiApiConfig(). */
+  baseUrl: string;
+  token: string;
+  /** ALWAYS called exactly once per `open` — cancel, error, or success. */
+  onDone: (outcome: { opened: boolean; note?: string }) => void;
+};
+
+type Step = 'model' | 'provider' | 'duration' | 'confirm';
+
+const STEP_ORDER: Step[] = ['model', 'provider', 'duration', 'confirm'];
+
+const STEP_TITLE: Record<Step, string> = {
+  model: 'Choose a model',
+  provider: 'Choose a provider',
+  duration: 'Choose a session length',
+  confirm: 'Confirm & open',
+};
+
+type CatalogModel = { id: string; name: string };
+
+type Catalog = {
+  models: CatalogModel[];
+  maxSessionSeconds: number;
+  minSessionSeconds: number;
+};
+
+type Provider = {
+  bidId: string;
+  provider: string;
+  pricePerSecond: string;
+  stakeMorPerHour: number;
+};
+
+type ProvidersResponse = {
+  modelId: string;
+  providers: Provider[];
+  maxSessionSeconds: number;
+  minSessionSeconds: number;
+};
+
+type Quote = {
+  modelId: string;
+  bidId: string;
+  durationSec: number;
+  stakeMor: number;
+  allowed: boolean;
+  reason?: string;
+};
+
+type OpenSessionResponse = {
+  sessionId: string;
+  model: string;
+  modelResolved: boolean;
+  stakeMor: number;
+  durationSec: number;
+};
+
+type DurationPreset = { label: string; seconds: number };
+
+// Every preset the picker offers; the ones outside [min,max] for this chain
+// are filtered out once the catalog reports its bounds.
+const DURATION_PRESETS: DurationPreset[] = [
+  { label: '5 minutes', seconds: 305 },
+  { label: '30 minutes', seconds: 1800 },
+  { label: '1 hour', seconds: 3600 },
+  { label: '6 hours', seconds: 21600 },
+  { label: '12 hours', seconds: 43200 },
+  { label: '1 day', seconds: 86400 },
+  { label: '3 days', seconds: 259200 },
+  { label: '7 days', seconds: 604800 },
+];
+
+type ApiError = { message: string };
+type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
+
+async function apiRequest<T>(
+  baseUrl: string,
+  token: string,
+  path: string,
+  init?: RequestInit,
+): Promise<ApiResult<T>> {
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
+      ...init,
+      headers: {
+        'content-type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...(init?.headers as Record<string, string> | undefined),
+      },
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: {
+        message:
+          e instanceof Error
+            ? `Could not reach the local endpoint: ${e.message}`
+            : 'Could not reach the local endpoint.',
+      },
+    };
+  }
+
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+
+  if (!res.ok) {
+    const errMessage = (body as { error?: { message?: string } } | null)?.error
+      ?.message;
+    return {
+      ok: false,
+      error: {
+        message: errMessage || `Request failed with status ${res.status}.`,
+      },
+    };
+  }
+  return { ok: true, data: body as T };
+}
+
+// Never invent a MOR figure: an unloaded value renders "…", never 0.
+const formatMor = (n: number | null | undefined, decimals = 4): string =>
+  n === null || n === undefined || !Number.isFinite(n)
+    ? '…'
+    : n.toFixed(decimals);
+
+const truncateAddr = (addr: string): string =>
+  addr.length > 14 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
+
+function StartPickerModal({ open, args, baseUrl, token, onDone }: Props) {
+  const prefersReducedMotion = useReducedMotion();
+
+  // `onDone` is called through a ref so a stale closure captured by the
+  // Escape-key listener (set up once per `open` transition) always reaches
+  // the CURRENT handler, not whichever one existed when the listener was
+  // attached.
+  const onDoneRef = useRef(onDone);
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
+
+  const doneRef = useRef(false);
+  const finish = (outcome: { opened: boolean; note?: string }) => {
+    if (doneRef.current) return; // onDone fires EXACTLY once per open.
+    doneRef.current = true;
+    onDoneRef.current(outcome);
+  };
+  const handleCancel = () => finish({ opened: false });
+
+  const [step, setStep] = useState<Step>('model');
+
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [modelFilter, setModelFilter] = useState('');
+  const [selectedModel, setSelectedModel] = useState<CatalogModel | null>(null);
+
+  const [providers, setProviders] = useState<Provider[] | null>(null);
+  const [providersLoading, setProvidersLoading] = useState(false);
+  const [providersError, setProvidersError] = useState<string | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<Provider | null>(
+    null,
+  );
+
+  const [selectedDuration, setSelectedDuration] =
+    useState<DurationPreset | null>(null);
+
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
+
+  const loadCatalog = async () => {
+    setCatalogLoading(true);
+    setCatalogError(null);
+    const res = await apiRequest<Catalog>(
+      baseUrl,
+      token,
+      '/morpheus/v1/catalog',
+    );
+    setCatalogLoading(false);
+    if (!res.ok) {
+      setCatalogError(res.error.message);
+      return;
+    }
+    setCatalog(res.data);
+  };
+
+  // Reset the whole flow every time the modal is (re)opened, and kick off the
+  // catalog load — the only fetch that happens without a user click.
+  useEffect(() => {
+    if (!open) return;
+    doneRef.current = false;
+    setStep('model');
+    setModelFilter(args || '');
+    setSelectedModel(null);
+    setProviders(null);
+    setProvidersError(null);
+    setSelectedProvider(null);
+    setSelectedDuration(null);
+    setQuote(null);
+    setQuoteError(null);
+    setOpenError(null);
+    setOpening(false);
+    setCatalog(null);
+    setCatalogError(null);
+    setCatalogLoading(true);
+    // Fire-and-forget: the effect itself cannot be async.
+    void (async () => {
+      const res = await apiRequest<Catalog>(
+        baseUrl,
+        token,
+        '/morpheus/v1/catalog',
+      );
+      setCatalogLoading(false);
+      if (!res.ok) {
+        setCatalogError(res.error.message);
+        return;
+      }
+      setCatalog(res.data);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Escape always cancels (unless the flow has already finished).
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        finish({ opened: false });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const normalize = (s: string) => s.toLowerCase().trim();
+
+  const filteredModels = useMemo(() => {
+    const models = catalog?.models ?? [];
+    const q = normalize(modelFilter);
+    if (!q) return models;
+    const tokens = q.split(/\s+/).filter(Boolean);
+    return models.filter((m) => {
+      const hay = `${normalize(m.name)} ${normalize(m.id)}`;
+      return tokens.every((t) => hay.includes(t));
+    });
+  }, [catalog, modelFilter]);
+
+  const sortedProviders = useMemo(() => {
+    if (!providers) return [];
+    // Sorted, and the "cheapest" badge assigned, by PRICE — never by list
+    // position, so a provider that arrives first in the response is not
+    // mistaken for the cheapest one.
+    return [...providers].sort((a, b) => a.stakeMorPerHour - b.stakeMorPerHour);
+  }, [providers]);
+
+  const cheapestPrice = useMemo(() => {
+    if (!providers || !providers.length) return null;
+    return Math.min(...providers.map((p) => p.stakeMorPerHour));
+  }, [providers]);
+
+  const availableDurations = useMemo(() => {
+    if (!catalog) return [];
+    return DURATION_PRESETS.filter(
+      (d) =>
+        d.seconds >= catalog.minSessionSeconds &&
+        d.seconds <= catalog.maxSessionSeconds,
+    );
+  }, [catalog]);
+
+  if (!open) return null;
+
+  const handleSelectModel = async (m: CatalogModel) => {
+    setSelectedModel(m);
+    setSelectedProvider(null);
+    setSelectedDuration(null);
+    setQuote(null);
+    setStep('provider');
+    setProviders(null);
+    setProvidersError(null);
+    setProvidersLoading(true);
+    const res = await apiRequest<ProvidersResponse>(
+      baseUrl,
+      token,
+      `/morpheus/v1/providers?modelId=${encodeURIComponent(m.id)}`,
+    );
+    setProvidersLoading(false);
+    if (!res.ok) {
+      setProvidersError(res.error.message);
+      return;
+    }
+    setProviders(res.data.providers);
+  };
+
+  const handleSelectProvider = (p: Provider) => {
+    setSelectedProvider(p);
+    setSelectedDuration(null);
+    setQuote(null);
+    setStep('duration');
+  };
+
+  const requestQuote = async (
+    model: CatalogModel,
+    provider: Provider,
+    duration: DurationPreset,
+  ) => {
+    setQuote(null);
+    setQuoteError(null);
+    setQuoteLoading(true);
+    const res = await apiRequest<Quote>(baseUrl, token, '/morpheus/v1/quote', {
+      method: 'POST',
+      body: JSON.stringify({
+        modelId: model.id,
+        bidId: provider.bidId,
+        durationSec: duration.seconds,
+      }),
+    });
+    setQuoteLoading(false);
+    if (!res.ok) {
+      setQuoteError(res.error.message);
+      return;
+    }
+    setQuote(res.data);
+  };
+
+  const handleSelectDuration = (d: DurationPreset) => {
+    if (!selectedModel || !selectedProvider) return;
+    setSelectedDuration(d);
+    setStep('confirm');
+    void requestQuote(selectedModel, selectedProvider, d);
+  };
+
+  const handleOpenSession = async () => {
+    if (!selectedModel || !selectedProvider || !selectedDuration || !quote)
+      return;
+    setOpening(true);
+    setOpenError(null);
+    const res = await apiRequest<OpenSessionResponse>(
+      baseUrl,
+      token,
+      '/morpheus/v1/sessions',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          modelId: selectedModel.id,
+          bidId: selectedProvider.bidId,
+          durationSec: selectedDuration.seconds,
+          confirm: true,
+          confirmedStakeMor: quote.stakeMor,
+        }),
+      },
+    );
+    setOpening(false);
+    if (!res.ok) {
+      // Shown verbatim (below) — these messages name the exact spend cap that
+      // fired and what to do. `onDone` fires only once the user dismisses it.
+      setOpenError(res.error.message);
+      return;
+    }
+    finish({
+      opened: true,
+      note: `Session opened for ${res.data.model} — staked ${formatMor(res.data.stakeMor)} MOR.`,
+    });
+  };
+
+  const handleBack = () => {
+    if (step === 'provider') setStep('model');
+    else if (step === 'duration') setStep('provider');
+    else if (step === 'confirm') setStep('duration');
+  };
+
+  const stepIndex = STEP_ORDER.indexOf(step);
+
+  const motionProps = prefersReducedMotion
+    ? {
+        initial: false,
+        animate: { opacity: 1 },
+        exit: { opacity: 1 },
+        transition: { duration: 0 },
+      }
+    : {
+        initial: { opacity: 0, y: 10 },
+        animate: { opacity: 1, y: 0 },
+        exit: { opacity: 0, y: -10 },
+        transition: { duration: 0.18, ease: [0.2, 0.8, 0.2, 1] as const },
+      };
+
+  return (
+    <Modal onClose={handleCancel} bodyProps={bodyProps}>
+      <Layout>
+        <Header>
+          <StepMeta>
+            <StepDots>
+              {STEP_ORDER.map((s, i) => (
+                <StepDot
+                  key={s}
+                  $state={
+                    i < stepIndex
+                      ? 'done'
+                      : i === stepIndex
+                        ? 'active'
+                        : 'pending'
+                  }
+                />
+              ))}
+            </StepDots>
+            <StepLabel>
+              Step {stepIndex + 1} of {STEP_ORDER.length}
+            </StepLabel>
+          </StepMeta>
+          <Title>{STEP_TITLE[step]}</Title>
+
+          {step === 'model' && (
+            <>
+              <Subtitle>
+                Search across the marketplace for a model to run.
+              </Subtitle>
+              <SearchWrapper>
+                <InputGroup>
+                  <InputGroup.Text>
+                    <IconSearch size={18} />
+                  </InputGroup.Text>
+                  <Form.Control
+                    type="text"
+                    placeholder="Search models…"
+                    value={modelFilter}
+                    onChange={(e) => setModelFilter(e.target.value)}
+                    autoFocus
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      boxShadow: 'none',
+                      outline: 'none',
+                      fontSize: '1.35rem',
+                    }}
+                  />
+                </InputGroup>
+              </SearchWrapper>
+              {catalog && (
+                <ResultCount>
+                  {filteredModels.length} of {catalog.models.length}{' '}
+                  {catalog.models.length === 1 ? 'model' : 'models'}
+                </ResultCount>
+              )}
+            </>
+          )}
+
+          {step === 'provider' && selectedModel && (
+            <Subtitle>
+              Providers bidding to serve {selectedModel.name}.
+            </Subtitle>
+          )}
+
+          {step === 'duration' && selectedModel && selectedProvider && (
+            <>
+              <Subtitle>How long should the session stay open?</Subtitle>
+              <RecapLine>
+                <strong>{selectedModel.name}</strong> ·{' '}
+                {truncateAddr(selectedProvider.provider)}
+              </RecapLine>
+            </>
+          )}
+
+          {step === 'confirm' && (
+            <Subtitle>Review the session before it opens.</Subtitle>
+          )}
+        </Header>
+
+        <Body>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div key={step} {...motionProps}>
+              {step === 'model' && (
+                <>
+                  {catalogLoading && (
+                    <LoadingState>
+                      <SpinIcon>
+                        <IconLoader2 size={22} stroke={2} />
+                      </SpinIcon>
+                      Loading the model catalog — this can take a few seconds
+                      the first time.
+                    </LoadingState>
+                  )}
+                  {!catalogLoading && catalogError && (
+                    <>
+                      <ErrorCallout>
+                        <IconAlertTriangle size={20} stroke={2} />
+                        <CalloutText>{catalogError}</CalloutText>
+                      </ErrorCallout>
+                      <div style={{ marginTop: '1.2rem' }}>
+                        <GhostBtn onClick={() => void loadCatalog()}>
+                          Try again
+                        </GhostBtn>
+                      </div>
+                    </>
+                  )}
+                  {!catalogLoading && !catalogError && catalog && (
+                    <>
+                      {filteredModels.length === 0 ? (
+                        <EmptyState>
+                          <IconWorldOff size={32} stroke={1.5} />
+                          <div>No models match your search.</div>
+                        </EmptyState>
+                      ) : (
+                        <OptionList>
+                          {filteredModels.map((m) => (
+                            <OptionRow
+                              key={m.id}
+                              type="button"
+                              onClick={() => void handleSelectModel(m)}
+                            >
+                              <OptionMain>
+                                <OptionName>{m.name}</OptionName>
+                                <OptionMeta>{m.id}</OptionMeta>
+                              </OptionMain>
+                            </OptionRow>
+                          ))}
+                        </OptionList>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+
+              {step === 'provider' && (
+                <>
+                  {providersLoading && (
+                    <LoadingState>
+                      <SpinIcon>
+                        <IconLoader2 size={22} stroke={2} />
+                      </SpinIcon>
+                      Checking who is bidding on this model…
+                    </LoadingState>
+                  )}
+                  {!providersLoading && providersError && (
+                    <>
+                      <ErrorCallout>
+                        <IconAlertTriangle size={20} stroke={2} />
+                        <CalloutText>{providersError}</CalloutText>
+                      </ErrorCallout>
+                      <div
+                        style={{
+                          marginTop: '1.2rem',
+                          display: 'flex',
+                          gap: '0.8rem',
+                        }}
+                      >
+                        <GhostBtn
+                          onClick={() =>
+                            selectedModel &&
+                            void handleSelectModel(selectedModel)
+                          }
+                        >
+                          Try again
+                        </GhostBtn>
+                        <GhostBtn onClick={handleBack}>Back</GhostBtn>
+                      </div>
+                    </>
+                  )}
+                  {!providersLoading &&
+                    !providersError &&
+                    providers &&
+                    providers.length === 0 && (
+                      <>
+                        <EmptyState>
+                          <IconWorldOff size={32} stroke={1.5} />
+                          <div>
+                            No provider is currently bidding on this model.
+                          </div>
+                        </EmptyState>
+                        <div
+                          style={{ display: 'flex', justifyContent: 'center' }}
+                        >
+                          <GhostBtn onClick={handleBack}>
+                            <IconChevronLeft size={16} stroke={2} />
+                            Back to models
+                          </GhostBtn>
+                        </div>
+                      </>
+                    )}
+                  {!providersLoading &&
+                    !providersError &&
+                    sortedProviders.length > 0 && (
+                      <OptionList>
+                        {sortedProviders.map((p) => (
+                          <OptionRow
+                            key={p.bidId}
+                            type="button"
+                            onClick={() => handleSelectProvider(p)}
+                          >
+                            <OptionMain>
+                              <OptionName>
+                                {truncateAddr(p.provider)}
+                                {cheapestPrice !== null &&
+                                  p.stakeMorPerHour === cheapestPrice && (
+                                    <CheapestBadge>Cheapest</CheapestBadge>
+                                  )}
+                              </OptionName>
+                              <OptionMeta title={p.provider}>
+                                {p.provider}
+                              </OptionMeta>
+                            </OptionMain>
+                            <PriceBlock>
+                              <PriceValue>
+                                {formatMor(p.stakeMorPerHour)}
+                              </PriceValue>
+                              <PriceUnit>MOR / hour</PriceUnit>
+                            </PriceBlock>
+                          </OptionRow>
+                        ))}
+                      </OptionList>
+                    )}
+                </>
+              )}
+
+              {step === 'duration' && (
+                <>
+                  {availableDurations.length === 0 ? (
+                    <>
+                      <EmptyState>
+                        <IconWorldOff size={32} stroke={1.5} />
+                        <div>
+                          No preset session length fits this chain&apos;s
+                          allowed range.
+                        </div>
+                      </EmptyState>
+                      <div
+                        style={{ display: 'flex', justifyContent: 'center' }}
+                      >
+                        <GhostBtn onClick={handleBack}>
+                          <IconChevronLeft size={16} stroke={2} />
+                          Back
+                        </GhostBtn>
+                      </div>
+                    </>
+                  ) : (
+                    <OptionList>
+                      {availableDurations.map((d) => {
+                        const estimate =
+                          selectedProvider != null
+                            ? (selectedProvider.stakeMorPerHour * d.seconds) /
+                              3600
+                            : null;
+                        return (
+                          <OptionRow
+                            key={d.seconds}
+                            type="button"
+                            onClick={() => handleSelectDuration(d)}
+                          >
+                            <OptionMain>
+                              <OptionName>{d.label}</OptionName>
+                            </OptionMain>
+                            <PriceBlock>
+                              <PriceValue>~{formatMor(estimate)}</PriceValue>
+                              <PriceUnit>MOR</PriceUnit>
+                            </PriceBlock>
+                          </OptionRow>
+                        );
+                      })}
+                    </OptionList>
+                  )}
+                </>
+              )}
+
+              {step === 'confirm' && (
+                <>
+                  {quoteLoading && (
+                    <LoadingState>
+                      <SpinIcon>
+                        <IconLoader2 size={22} stroke={2} />
+                      </SpinIcon>
+                      Pricing this session…
+                    </LoadingState>
+                  )}
+                  {!quoteLoading && quoteError && (
+                    <>
+                      <ErrorCallout>
+                        <IconAlertTriangle size={20} stroke={2} />
+                        <CalloutText>{quoteError}</CalloutText>
+                      </ErrorCallout>
+                      <div
+                        style={{
+                          marginTop: '1.2rem',
+                          display: 'flex',
+                          gap: '0.8rem',
+                        }}
+                      >
+                        <GhostBtn
+                          onClick={() =>
+                            selectedModel &&
+                            selectedProvider &&
+                            selectedDuration &&
+                            void requestQuote(
+                              selectedModel,
+                              selectedProvider,
+                              selectedDuration,
+                            )
+                          }
+                        >
+                          Try again
+                        </GhostBtn>
+                        <GhostBtn onClick={handleBack}>Back</GhostBtn>
+                      </div>
+                    </>
+                  )}
+                  {!quoteLoading && !quoteError && quote && !quote.allowed && (
+                    <WarningCallout>
+                      <IconAlertTriangle size={20} stroke={2} />
+                      <CalloutText>
+                        {quote.reason ||
+                          'This session is not allowed right now.'}
+                      </CalloutText>
+                    </WarningCallout>
+                  )}
+                  {!quoteLoading && !quoteError && quote && quote.allowed && (
+                    <>
+                      <SummaryCard>
+                        <SummaryRow>
+                          <SummaryLabel>Model</SummaryLabel>
+                          <SummaryValue title={selectedModel?.name}>
+                            {selectedModel?.name ?? '…'}
+                          </SummaryValue>
+                        </SummaryRow>
+                        <SummaryRow>
+                          <SummaryLabel>Provider</SummaryLabel>
+                          <SummaryValue title={selectedProvider?.provider}>
+                            {selectedProvider
+                              ? truncateAddr(selectedProvider.provider)
+                              : '…'}
+                          </SummaryValue>
+                        </SummaryRow>
+                        <SummaryRow>
+                          <SummaryLabel>Duration</SummaryLabel>
+                          <SummaryValue>
+                            {selectedDuration?.label ?? '…'}
+                          </SummaryValue>
+                        </SummaryRow>
+                        <SummaryRow>
+                          <SummaryLabel>Stake</SummaryLabel>
+                          <StakeValue>
+                            {formatMor(quote.stakeMor)} MOR
+                          </StakeValue>
+                        </SummaryRow>
+                      </SummaryCard>
+                      <StakeNote>
+                        The stake is collateral, not a fee. It is locked until
+                        the end of the day the session closes, then returns
+                        automatically.
+                      </StakeNote>
+                      {opening && (
+                        <LoadingState>
+                          <SpinIcon>
+                            <IconLoader2 size={22} stroke={2} />
+                          </SpinIcon>
+                          Opening session…
+                        </LoadingState>
+                      )}
+                      {!opening && openError && (
+                        <ErrorCallout style={{ marginTop: '1.2rem' }}>
+                          <IconAlertTriangle size={20} stroke={2} />
+                          <CalloutText>{openError}</CalloutText>
+                        </ErrorCallout>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </Body>
+
+        <Footer>
+          <FooterLeft>
+            {step !== 'model' && !opening && (
+              <GhostBtn onClick={handleBack}>
+                <IconChevronLeft size={16} stroke={2} />
+                Back
+              </GhostBtn>
+            )}
+          </FooterLeft>
+          <FooterRight>
+            {step === 'confirm' && quote && !quote.allowed ? (
+              <GhostBtn onClick={handleCancel}>Close</GhostBtn>
+            ) : step === 'confirm' && quote && quote.allowed && openError ? (
+              <GhostBtn onClick={handleCancel}>Close</GhostBtn>
+            ) : (
+              <GhostBtn onClick={handleCancel} disabled={opening}>
+                Cancel
+              </GhostBtn>
+            )}
+            {step === 'confirm' && quote && quote.allowed && !openError && (
+              <PrimaryBtn
+                onClick={() => void handleOpenSession()}
+                disabled={opening}
+              >
+                {opening ? (
+                  <>
+                    <SpinIcon>
+                      <IconLoader2 size={16} stroke={2} />
+                    </SpinIcon>
+                    Opening…
+                  </>
+                ) : (
+                  <>
+                    <IconCircleCheck size={16} stroke={2} />
+                    Open session
+                  </>
+                )}
+              </PrimaryBtn>
+            )}
+          </FooterRight>
+        </Footer>
+      </Layout>
+    </Modal>
+  );
+}
+
+export default StartPickerModal;
