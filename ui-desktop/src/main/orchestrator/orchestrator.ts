@@ -12,9 +12,45 @@ import {
 } from './orchestrator.types'
 import { Process } from './process'
 import { ProcessFactory } from './process-factory'
+import { reapOrphan } from './service-pids'
+import { isPortAvailable } from './managed-process'
 
 console.log('Process cwd', process.cwd())
 console.log('App path', resolveAppDataPath(''))
+
+// An extracted service is "already installed" only if the binary we are about to
+// RUN is actually there and non-empty — not merely because its directory exists.
+//
+// The old guard was `fs.existsSync(extractPath)`. If an extraction was ever
+// interrupted (app closed, network dropped, disk hiccup), the DIRECTORY survives
+// while build/bin/llama-server does not — and every later run then logged
+// "already exists, skipping download", set the state to SUCCESS, and left the AI
+// phase to fail on a binary that was never there. "Try again" re-entered the same
+// short-circuit, so it failed identically, forever. That is unrecoverable without
+// deleting the folder by hand, which no user will ever be told to do.
+const isInstalled = (runPath?: string): boolean => {
+  if (!runPath) return false
+  try {
+    const p = resolveAppDataPath(runPath)
+    if (!fs.existsSync(p) || fs.statSync(p).size === 0) return false
+
+    // A binary we cannot execute is NOT installed. The extractor used to drop
+    // the archive's unix mode, so every file landed 0644 and the binaries were
+    // unrunnable; existence alone said "installed", so we skipped the re-extract
+    // and the tree stayed broken.
+    //
+    // Scope honestly: this only rescues a tree that has never been through
+    // ManagedProcess.start() (which chmods its own binary to 0755 before every
+    // spawn). It does NOT repair a machine that already reached the start
+    // path — that one already reads as executable. It is a cheap guard against
+    // shipping a non-executable tree, not a general repair mechanism.
+    // No-op on Windows: Node documents X_OK as having no effect there.
+    fs.accessSync(p, fs.constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
 
 export class Orchestrator {
   private proxyRouterProcess?: Process
@@ -30,6 +66,17 @@ export class Orchestrator {
   // restartService while the initial startAll hasn't returned yet) await the
   // existing promise instead of racing a second pipeline.
   private startInProgress: Promise<void> | null = null
+
+  // How long a quit will wait for the services to stop before giving up on
+  // them and exiting anyway.
+  private static readonly SHUTDOWN_TIMEOUT_MS = 8000
+
+  private shuttingDown = false
+
+  // Reaping happens exactly once, before this run spawns anything — so every
+  // live pid we recorded is by definition from a previous run, and we can never
+  // kill a child of our own that is currently healthy.
+  private orphansReaped = false
 
   private proxyDownloadState: DownloadItem = {
     name: 'Proxy Router',
@@ -63,9 +110,23 @@ export class Orchestrator {
     this.cfg = cfg
     this.log = log
     this.onStateUpdate = onStateUpdate
-    app.on('quit', () => {
-      this.log.warn('Quit event received')
-      return this.stopAll()
+
+    // `quit` fires too late to be useful: it returned a promise nobody awaited,
+    // so the app exited and left the services running (they were surviving for
+    // days). Hold the quit open until the children are actually dead — bounded,
+    // so a wedged child can never trap the user in an app that won't close.
+    app.on('before-quit', (event) => {
+      if (this.shuttingDown) return
+      this.shuttingDown = true
+      event.preventDefault()
+      this.log.warn('Quit requested — stopping services')
+
+      Promise.race([
+        this.stopAll(),
+        new Promise((resolve) => setTimeout(resolve, Orchestrator.SHUTDOWN_TIMEOUT_MS))
+      ])
+        .catch((err) => this.log.error('Failed to stop services cleanly', err))
+        .finally(() => app.exit(0))
     })
   }
 
@@ -84,6 +145,24 @@ export class Orchestrator {
 
   private async runStartupPipeline() {
     this.log.info('Orchestrator started')
+
+    // If we crashed last time, our services are still running and still holding
+    // their ports. Clear them out before we try to start anything, otherwise the
+    // spawn fails on a port conflict or we adopt a service running yesterday's
+    // config. Only ever kills pids this app recorded when it spawned them.
+    await this.reapOrphanedServices()
+
+    // IPFS defaults to port 5001, which collides with all sorts of things a
+    // developer already runs (it's a very common local port). A collision used
+    // to be fatal: IPFS couldn't bind, never reached 'running', and — because it
+    // was in the readiness gate — froze the whole app on "Connecting to the
+    // Morpheus network" with no error. Find a free port for it instead, and
+    // thread that port everywhere IPFS's port is referenced (its own --api bind,
+    // the health probe, AND the IPFS_MULTADDR the proxy-router uses to reach it).
+    // Must run BEFORE the proxy-router env is written/started, since the router
+    // reads that multiaddr.
+    await this.resolveIpfsPort()
+
     await this.resetState()
     this.emitStateUpdate()
 
@@ -106,14 +185,22 @@ export class Orchestrator {
     this.emitStateUpdate()
 
     if (this.cfg.aiRuntime.downloadUrl && this.cfg.aiRuntime.extractPath) {
-      if (fs.existsSync(resolveAppDataPath(this.cfg.aiRuntime.extractPath))) {
+      if (isInstalled(this.cfg.aiRuntime.runPath)) {
         this.log.info(
-          'AI runtime already exists, skipping download',
-          resolveAppDataPath(this.cfg.aiRuntime.extractPath)
+          'AI runtime already installed, skipping download',
+          resolveAppDataPath(this.cfg.aiRuntime.runPath!)
         )
         this.aiRuntimeDownloadState.status = 'success'
         this.emitStateUpdate()
       } else {
+        // A half-extracted tree is worse than none: it makes the guard above lie.
+        // Clear it so the re-extract starts clean.
+        const stale = resolveAppDataPath(this.cfg.aiRuntime.extractPath)
+        if (fs.existsSync(stale)) {
+          this.log.info(`AI runtime is present but incomplete — re-installing: ${stale}`)
+          await fs.remove(stale).catch((e) => this.log.error('Failed to clear', e))
+        }
+
         await downloadFile(
           this.cfg.aiRuntime.downloadUrl,
           resolveAppDataPath(this.cfg.aiRuntime.fileName),
@@ -146,6 +233,18 @@ export class Orchestrator {
     this.aiRuntimeDownloadState.status = 'success'
     this.emitStateUpdate()
 
+    // Anyone who ran an earlier build has the superseded TinyLlama .gguf sitting
+    // in app-data, and nothing will ever load it again — the model filename is
+    // what the downloader keys on. Reclaim the ~460MB rather than silently
+    // leaving it on their disk forever.
+    for (const stale of ['./services/ai-model.gguf', './services/ai-model.llvm']) {
+      const stalePath = resolveAppDataPath(stale)
+      if (stalePath !== resolveAppDataPath(this.cfg.aiModel.fileName) && fs.existsSync(stalePath)) {
+        this.log.info(`Removing superseded AI model: ${stalePath}`)
+        await fs.remove(stalePath).catch((err) => this.log.error('Failed to remove', err))
+      }
+    }
+
     if (this.cfg.aiModel.downloadUrl) {
       await downloadFile(
         this.cfg.aiModel.downloadUrl,
@@ -166,7 +265,7 @@ export class Orchestrator {
     if (
       this.cfg.ipfs.downloadUrl &&
       this.cfg.ipfs.extractPath &&
-      !fs.existsSync(resolveAppDataPath(this.cfg.ipfs.extractPath))
+      !isInstalled(this.cfg.ipfs.runPath)
     ) {
       await downloadFile(
         this.cfg.ipfs.downloadUrl,
@@ -180,6 +279,18 @@ export class Orchestrator {
         },
         this.log.scope('IPFS node download')
       )
+
+      // Both extractors early-return when the destination already exists. So
+      // without this removal, a broken IPFS tree (e.g. one extracted by the old
+      // mode-dropping code, leaving a non-executable binary) would be
+      // re-DOWNLOADED — ~30MB — and then not extracted at all, repairing
+      // nothing and orphaning the archive on disk. The aiRuntime branch above
+      // already does this; the IPFS branch never did.
+      const staleIpfs = resolveAppDataPath(this.cfg.ipfs.extractPath)
+      if (fs.existsSync(staleIpfs)) {
+        this.log.info(`IPFS is present but not usable — re-installing: ${staleIpfs}`)
+        await fs.remove(staleIpfs).catch((e) => this.log.error('Failed to clear', e))
+      }
 
       this.log.info(`unzipping ipfs`)
 
@@ -200,6 +311,7 @@ export class Orchestrator {
 
     if (!this.ipfsProcess) {
       this.ipfsProcess = await ProcessFactory({
+        name: 'ipfs',
         command: resolveAppDataPath(this.cfg.ipfs.runPath),
         args: this.cfg.ipfs.runArgs,
         log: this.log.scope('IPFS'),
@@ -210,11 +322,23 @@ export class Orchestrator {
       })
     }
 
-    await this.ipfsProcess.start()
+    // One service failing must not abort the pipeline. This used to be a bare
+    // `await ipfsProcess.start()`: when IPFS threw, aiRuntime.start() below was
+    // never reached, so the AI runtime sat at 'pending' forever — which the
+    // setup UI reads as "still working", i.e. an eternal spinner with no error
+    // and no way to retry. It also meant the AI binary never got its
+    // chmod-before-spawn, so a bad install could never even repair itself.
+    //
+    // A failed start() has ALREADY recorded state='stopped' + the real error on
+    // its own ManagedProcess, which is what the UI escalates on. Swallowing the
+    // throw here loses nothing and makes each service's failure visible instead
+    // of silently fatal to everything downstream.
+    await this.ipfsProcess.start().catch((err) => this.log.error('IPFS failed to start', err))
     this.emitStateUpdate()
 
     if (!this.aiRuntimeProcess) {
       this.aiRuntimeProcess = await ProcessFactory({
+        name: 'aiRuntime',
         command: resolveAppDataPath(this.cfg.aiRuntime.runPath),
         args: this.cfg.aiRuntime.runArgs,
         log: this.log.scope('Ai-runtime'),
@@ -225,7 +349,9 @@ export class Orchestrator {
       })
     }
 
-    await this.aiRuntimeProcess.start()
+    await this.aiRuntimeProcess
+      .start()
+      .catch((err) => this.log.error('AI runtime failed to start', err))
     this.emitStateUpdate()
 
     // Container runtime
@@ -246,7 +372,7 @@ export class Orchestrator {
 
     // writting local config files if not exist
     await this.writeEnvFile(path.join(proxyFolder, '.env'), this.cfg.proxyRouter.env ?? {})
-    await this.writeLocalConfigFile(
+    await this.writeModelsConfigFile(
       path.join(proxyFolder, 'models-config.json'),
       this.cfg.proxyRouter.modelsConfig
     )
@@ -257,6 +383,7 @@ export class Orchestrator {
 
     if (!this.proxyRouterProcess) {
       this.proxyRouterProcess = await ProcessFactory({
+        name: 'proxyRouter',
         command: resolveAppDataPath(this.cfg.proxyRouter.runPath),
         args: this.cfg.proxyRouter.runArgs || [],
         log: this.log.scope('Proxy-router'),
@@ -267,8 +394,72 @@ export class Orchestrator {
       })
     }
 
-    await this.proxyRouterProcess.start()
+    await this.proxyRouterProcess
+      .start()
+      .catch((err) => this.log.error('Proxy router failed to start', err))
     this.emitStateUpdate()
+  }
+
+  /**
+   * Kill any service still running from a previous, crashed run of this app.
+   * Runs once per app launch, before anything is spawned.
+   */
+  // Find a free port for IPFS starting from its configured default, and rewrite
+  // every reference to it in the live config. Idempotent and safe to call once
+  // per startup. If the default is already free, nothing changes.
+  private async resolveIpfsPort() {
+    const ipfs = this.cfg.ipfs
+    if (!ipfs?.probe?.url) return
+
+    const configured = Number(new URL(ipfs.probe.url).port)
+    if (!configured) return
+
+    // Probe the default first, then walk upward. Bound the search so a machine
+    // with a truly saturated range fails loudly rather than looping.
+    let chosen = 0
+    for (let port = configured; port < configured + 50; port++) {
+      if (await isPortAvailable(port)) {
+        chosen = port
+        break
+      }
+    }
+    if (!chosen) {
+      this.log.warn(
+        `No free port for IPFS in ${configured}..${configured + 49}; leaving it at ${configured} (it will fail to start, but IPFS is optional).`
+      )
+      return
+    }
+    if (chosen === configured) return // default was free — nothing to rewrite
+
+    this.log.info(`IPFS port ${configured} is taken; using ${chosen} instead`)
+    const from = String(configured)
+    const to = String(chosen)
+
+    ipfs.ports = [chosen]
+    ipfs.runArgs = (ipfs.runArgs ?? []).map((a) => a.replace(`tcp/${from}`, `tcp/${to}`))
+    ipfs.probe.url = ipfs.probe.url.replace(`:${from}`, `:${to}`)
+
+    // The router reaches IPFS via this multiaddr — keep it in lockstep, or the
+    // provider file-pinning feature would silently point at the wrong port.
+    const env = this.cfg.proxyRouter?.env as Record<string, string> | undefined
+    if (env?.IPFS_MULTADDR) {
+      env.IPFS_MULTADDR = `/ip4/127.0.0.1/tcp/${to}`
+    }
+  }
+
+  private async reapOrphanedServices() {
+    if (this.orphansReaped) return
+    this.orphansReaped = true
+
+    for (const name of ['proxyRouter', 'aiRuntime', 'ipfs'] as const) {
+      try {
+        await reapOrphan(name, this.log.scope(name))
+      } catch (err) {
+        // Never let cleanup block startup — a surviving orphan surfaces as a
+        // port conflict below, which now says so in plain terms.
+        this.log.error(`Failed to reap orphaned ${name}`, err)
+      }
+    }
   }
 
   async stopAll() {
@@ -425,13 +616,17 @@ export class Orchestrator {
       this.ipfsDownloadState
     ].some((item) => item.status === 'error')
 
-    // Check for any errors in startup processes
-    const hasStartupErrors = [
-      this.ipfsProcess,
-      this.aiRuntimeProcess,
-      this.proxyRouterProcess,
-      this.containerRuntimeProcess
-    ].some((process) => process?.getError())
+    // Check for any errors in startup processes.
+    // Container Runtime (Docker) AND IPFS are intentionally EXCLUDED — both are
+    // optional. Docker a non-technical user won't have; IPFS is only used by the
+    // PROVIDER "host/upload your own model" feature, never by the consumer chat/
+    // staking flow (the proxy-router runs healthy without it). IPFS also
+    // defaults to a commonly-taken port (5001); making it block the gate meant a
+    // port conflict froze the entire app with no error. Its state is still
+    // reported to the UI, but an IPFS error must not fail the whole app.
+    const hasStartupErrors = [this.aiRuntimeProcess, this.proxyRouterProcess].some((process) =>
+      process?.getError()
+    )
 
     if (hasDownloadErrors || hasStartupErrors) {
       return 'error'
@@ -445,13 +640,12 @@ export class Orchestrator {
       this.ipfsDownloadState
     ].every((item) => item.status === 'success')
 
-    // Check if all processes are running
-    const allProcessesRunning = [
-      this.ipfsProcess,
-      this.aiRuntimeProcess,
-      this.proxyRouterProcess,
-      this.containerRuntimeProcess
-    ].every((process) => process?.getState() === 'running')
+    // Check if all REQUIRED processes are running. Container Runtime (Docker)
+    // and IPFS are optional (see above) and deliberately not part of the
+    // readiness gate, so the app reaches 'ready' whether or not they are up.
+    const allProcessesRunning = [this.aiRuntimeProcess, this.proxyRouterProcess].every(
+      (process) => process?.getState() === 'running'
+    )
 
     if (allDownloadsComplete && allProcessesRunning) {
       return 'ready'
@@ -461,17 +655,22 @@ export class Orchestrator {
   }
 
   private async writeEnvFile(path: string, env: Record<string, string>) {
-    // check if the file exists
-    if (fs.existsSync(path)) {
-      this.log.info(`Env file already exists: ${path}`)
-      return
-    }
-
+    // ALWAYS overwrite — do NOT skip if it exists. This .env is fully derived
+    // from orchestrator.config (contract addresses, ports, and PATHS), with no
+    // user data or secrets in it (the router generates its own auth cookie
+    // separately). Skipping meant a .env written by an OLDER or containerized
+    // build survived forever: a cached .env carrying Docker paths
+    // (PROXY_STORAGE_PATH=/app/app/data) made the router report its cookie at
+    // /app/app/data/.cookie — a path that doesn't exist on the host. getAuthHeaders
+    // then failed with ENOENT and onboarding died at its first authenticated
+    // call, leaving a logged-in user with no wallet. Rewriting every launch keeps
+    // the file in lockstep with the config (this also fixes stale IPFS_MULTADDR
+    // after the dynamic-port change).
     const envString = Object.entries(env)
       .map(([key, value]) => `${key}=${value}`)
       .join('\n')
     await fs.writeFile(path, envString)
-    this.log.info(`Created env file: ${path}`)
+    this.log.info(`Wrote env file: ${path}`)
   }
 
   private async writeLocalConfigFile(filepath: string, content: string) {
@@ -483,6 +682,58 @@ export class Orchestrator {
 
     await fs.writeFile(filepath, content)
     this.log.info(`Created config file: ${filepath}`)
+  }
+
+  /**
+   * Keep the bundled local model's entry in models-config.json in sync with the
+   * app's config, WITHOUT clobbering models the user added themselves.
+   *
+   * Write-if-absent (as the other config files do) is wrong here: the file
+   * outlives the app version, so after the model changed, the chat header went
+   * on advertising the old one — the app was serving Qwen while calling itself
+   * tiny-llama. But a blind overwrite would delete any remote models the user
+   * registered by hand. So we reconcile exactly one entry: the local model,
+   * identified by its all-zero modelId.
+   */
+  private async writeModelsConfigFile(filepath: string, content: string) {
+    const generated = JSON.parse(content)
+    const localModel = generated.models?.[0]
+
+    if (!localModel || !fs.existsSync(filepath)) {
+      await fs.writeFile(filepath, content)
+      this.log.info(`Created models config: ${filepath}`)
+      return
+    }
+
+    try {
+      const existing = JSON.parse(await fs.readFile(filepath, 'utf-8'))
+      const models: any[] = Array.isArray(existing.models) ? existing.models : []
+
+      const index = models.findIndex((m) => m?.modelId === localModel.modelId)
+      const next = [...models]
+      if (index >= 0) {
+        // Spread the user's entry first so anything they added (concurrentSlots,
+        // parameters, ...) survives; our fields win on conflict.
+        next[index] = { ...next[index], ...localModel }
+      } else {
+        next.unshift(localModel)
+      }
+
+      const merged = { ...existing, models: next }
+      if (JSON.stringify(merged) === JSON.stringify(existing)) {
+        this.log.info(`Models config already up to date: ${filepath}`)
+        return
+      }
+
+      await fs.writeFile(filepath, JSON.stringify(merged))
+      this.log.info(`Updated local model entry in models config: ${filepath}`)
+    } catch (err) {
+      // Unparseable (hand-edited into invalid JSON, truncated write) — a broken
+      // config would stop proxy-router from serving any model at all, so reset
+      // it to a known-good one rather than leave it wedged.
+      this.log.error(`Models config unreadable, rewriting: ${filepath}`, err)
+      await fs.writeFile(filepath, content)
+    }
   }
 
   private async resetState() {

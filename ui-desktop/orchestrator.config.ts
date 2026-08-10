@@ -27,6 +27,13 @@ const configMacArm = {
       ETH_NODE_USE_SUBSCRIPTIONS: 'false',
       ETH_NODE_ADDRESS: '',
       PROXY_STORE_CHAT_CONTEXT: 'true',
+      // The CLIENT owns the conversation context (Chat.tsx sends the full
+      // transcript). Leave the router's own prepend OFF so the two can never
+      // double up — today it prepends nothing anyway (its AppendChatHistory
+      // type-assertion fails after a JSON round-trip), but when that upstream bug
+      // is fixed, a router that also prepends would duplicate every turn.
+      // Storing stays ON: the history drawer reads it back via /v1/chats/:id.
+      PROXY_FORWARD_CHAT_CONTEXT: 'false',
       PROXY_STORAGE_PATH: './data/',
       LOG_COLOR: 'false',
       LOG_FOLDER_PATH: './logs/',
@@ -35,14 +42,17 @@ const configMacArm = {
     },
     modelsConfig: JSON.stringify(
       buildLocalModelsConfig(
-        'tiny-llama-1.1B-chat',
+        'qwen2.5-1.5b-instruct',
         'openai',
         `http://localhost:${process.env.SERVICE_AI_API_PORT}/v1/chat/completions`
       )
     ),
     ratingConfig: JSON.stringify(buildLocalRatingConfig()),
     probe: {
-      url: `http://localhost:${process.env.SERVICE_PROXY_API_PORT}/healthcheck`
+      url: `http://localhost:${process.env.SERVICE_PROXY_API_PORT}/healthcheck`,
+      // First boot dials the chain and provisions a wallet; 10s is not enough on
+      // a cold machine or a slow link.
+      timeout: 120000
     }
   },
   aiRuntime: {
@@ -56,20 +66,38 @@ const configMacArm = {
     runArgs: [
       '--no-webui',
       '--model',
-      '../../../ai-model.gguf',
+      '../../../qwen2.5-1.5b-instruct-q4_k_m.gguf',
       '--port',
       `${process.env.SERVICE_AI_API_PORT}`,
       '--log-file',
       './llama.log'
     ] as string[],
     probe: {
-      url: `http://127.0.0.1:${process.env.SERVICE_AI_API_PORT}/health`
+      url: `http://127.0.0.1:${process.env.SERVICE_AI_API_PORT}/health`,
+      // llama-server's FIRST start has to load a ~1.07 GB model AND compile Metal
+      // shaders from cold. That takes far longer than the 10s DEFAULT_TIMEOUT the
+      // probe was silently inheriting — and on timeout ManagedProcess.ping() does
+      // `await this.stop()`, KILLING the server mid-load. Every retry respawned it
+      // and killed it at 10s again, so the AI step failed identically forever and
+      // "Try again" could never work. A fast, warm machine slips under 10s; a
+      // fresh one does not.
+      timeout: 300000
     }
   },
   aiModel: {
+    // TinyLlama-1.1B at Q2_K (2-bit) was incoherent: asked "hello" it ignored
+    // the turn and free-associated web text. The chat template was applied
+    // correctly and no system prompt was at fault — the quant simply had no
+    // instruction-following left. Qwen2.5-1.5B-Instruct at Q4_K_M answers
+    // "hello" correctly with no system prompt at all, and is Apache-2.0
+    // (no redistribution strings, unlike the Llama licence).
+    //
+    // NOTE: the downloader skips on filename existence, so this filename MUST
+    // change whenever the model does — otherwise everyone who already ran the
+    // app keeps the old broken .gguf forever.
     downloadUrl:
-      'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q2_K.gguf' as string,
-    fileName: './services/ai-model.gguf' as string
+      'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf' as string,
+    fileName: './services/qwen2.5-1.5b-instruct-q4_k_m.gguf' as string
   },
   ipfs: {
     downloadUrl:
@@ -190,7 +218,7 @@ const configWin: typeof configMacArm = {
     runArgs: [
       '--no-webui',
       '--model',
-      '../ai-model.gguf',
+      '../qwen2.5-1.5b-instruct-q4_k_m.gguf',
       '--port',
       `${process.env.SERVICE_AI_API_PORT}`
     ]
@@ -231,16 +259,17 @@ const configWinArm: typeof configMacArm = {
     runArgs: [
       '--no-webui',
       '--model',
-      '../ai-model.llvm',
+      '../qwen2.5-1.5b-instruct-q4_k_m.gguf',
       '--port',
       `${process.env.SERVICE_AI_API_PORT}`
     ]
   },
+  // Was pointing at a `.llvm` model file that does not exist on HuggingFace —
+  // a guaranteed 404 on every Windows-ARM launch. There is no such format: a
+  // GGUF is a GGUF regardless of the CPU the runtime was built for, so this
+  // takes the same model as every other platform.
   aiModel: {
-    ...configMacArm.aiModel,
-    downloadUrl:
-      'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q2_K.llvm',
-    fileName: './services/ai-model.llvm'
+    ...configMacArm.aiModel
   },
   ipfs: {
     ...configMacArm.ipfs,

@@ -7,6 +7,8 @@ import {
 } from 'electron-devtools-installer'
 import { createClient } from './src/client'
 import config from './config'
+import { cfg } from '../../orchestrator.config'
+import { resolveRouterEndpoint } from './orchestrator/resolve-router-endpoint'
 import initContextMenu from './contextMenu'
 import initMenu from './menu'
 import errorHandler from './errorHandler'
@@ -14,6 +16,16 @@ import logger from './logger'
 import { join } from 'path'
 
 const installExtension = (install as any).default as typeof install
+
+// Dev-console hygiene: the Electron CSP warning fires on every dev boot and
+// (by its own text) never shows in a packaged app. Suppressing it in dev only
+// keeps the console readable for real errors. NOTE the underlying gap is
+// real — no CSP is defined anywhere — but a correct policy needs its own pass
+// (connect-src must cover the router's streaming endpoints), tracked as a
+// follow-up, not silenced by this line.
+if (!app.isPackaged) {
+  process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true'
+}
 
 function createWindow(): void {
   // Create the browser window.
@@ -60,7 +72,7 @@ const sleepBeforeStart = 3000
 app
   .whenReady()
   .then(() => new Promise((r) => setTimeout(r, sleepBeforeStart)))
-  .then(() => {
+  .then(async () => {
     // Set app user model id for windows
     electronApp.setAppUserModelId('com.electron')
 
@@ -110,6 +122,16 @@ app
 
     // IPC test
     ipcMain.on('ping', () => console.log('pong'))
+
+    // Decide our router's endpoint BEFORE the window loads. The renderer calls
+    // the router directly via config.chain.localProxyRouterUrl, so this must be
+    // settled before that config is handed over — otherwise a foreign router
+    // (e.g. the user's own Dockerized proxy-router on the same port) gets
+    // adopted, and every authenticated call fails because its auth cookie lives
+    // inside the container. Non-fatal: on any error we keep the default.
+    await resolveRouterEndpoint(cfg, config, logger).catch((e) =>
+      logger.error('resolveRouterEndpoint failed; using default router endpoint', e)
+    )
 
     createWindow()
 

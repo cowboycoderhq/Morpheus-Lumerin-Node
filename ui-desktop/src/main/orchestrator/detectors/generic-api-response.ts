@@ -31,12 +31,24 @@ export class GenericApiResponseDetector {
     this.log = params.log ?? null
   }
 
-  async ping(timeoutMs?: number): Promise<void> {
+  async ping(timeoutMs?: number, signal?: AbortSignal): Promise<void> {
     const timeout = timeoutMs ?? this.timeout
     const startTime = Date.now()
     const pollInterval = this.pollInterval
+    let lastError: string | undefined
+
+    // Abortable so a caller who has stopped caring (the child died, or a newer
+    // attempt superseded this one) can cancel the poll loop instead of leaving
+    // it to hammer the URL for the rest of its budget and then fire a late
+    // stop() — a poller that outlives its reason is how a dead service gets
+    // flipped back to 'running' minutes later.
+    const aborted = () =>
+      signal?.aborted ? new Error('aborted') : undefined
 
     while (Date.now() - startTime < timeout) {
+      const preAbort = aborted()
+      if (preAbort) throw preAbort
+
       try {
         const res = await this.request(this.url, this.method)
 
@@ -49,16 +61,37 @@ export class GenericApiResponseDetector {
         this.log?.info('Service health check passed')
         return
       } catch (error: any) {
+        lastError = error?.message
         this.log?.info('Ping attempt failed, retrying...', this.url, error?.message)
       }
 
-      // Wait before next attempt
+      // Wait before next attempt — but wake early if aborted.
       this.log?.info(`waiting ${pollInterval}ms before next attempt`)
-      await new Promise((resolve) => setTimeout(resolve, pollInterval))
+      await new Promise<void>((resolve) => {
+        const t = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve()
+        }, pollInterval)
+        const onAbort = () => {
+          clearTimeout(t)
+          resolve()
+        }
+        signal?.addEventListener('abort', onAbort, { once: true })
+      })
+
+      const postAbort = aborted()
+      if (postAbort) throw postAbort
     }
 
+    // Carry the reason for the failure, not just the fact of it — it is the
+    // only thing that tells a caller (or a user) whether this was a service
+    // that crashed, a port conflict, or an unreachable network.
     this.log?.info('Service health check timed out')
-    throw new Error('Service health check timed out')
+    throw new Error(
+      lastError
+        ? `Service health check timed out (${this.url}: ${lastError})`
+        : `Service health check timed out (${this.url})`
+    )
   }
 
   request(uri: string, method: HttpMethod) {

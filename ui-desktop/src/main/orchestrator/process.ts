@@ -18,7 +18,7 @@ export interface Process {
 }
 
 export interface Pinger {
-  ping(timeoutMs?: number): Promise<void>
+  ping(timeoutMs?: number, signal?: AbortSignal): Promise<void>
 }
 
 export interface StateInfo {

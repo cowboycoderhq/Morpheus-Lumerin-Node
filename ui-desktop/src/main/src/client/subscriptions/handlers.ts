@@ -71,8 +71,42 @@ export const getProxyRouterSettings = async () => {
   return getProxyRouterConfig()
 }
 
+// The router's live /config (DerivedConfig etc.), fetched from the MAIN
+// process: a renderer-side fetch paints every boot-time 500 into the devtools
+// console; here a not-ready router just yields the safe default, silently.
+export const getProxyRouterDerivedConfig = async () => {
+  try {
+    const path = `${config.chain.localProxyRouterUrl}/config`
+    const response = await fetch(path, { headers: await getAuthHeaders() })
+    if (!response.ok) return {}
+    return await response.json()
+  } catch (e) {
+    log.verbose('Router /config not available yet', String(e))
+    return {}
+  }
+}
+
+// Backstop redaction for anything that reaches the error log: never let a
+// private key OR a mnemonic land in main.log verbatim. Precise redaction of the
+// user's actual secrets happens at the source (onboardingCompleted), but a bad
+// import can echo the input back through many layers, so scrub here too.
+export const redactSecretsInText = (s: unknown): string =>
+  String(s ?? '')
+    // 0x-prefixed or bare 32-byte hex private key
+    .replace(/\b(0x)?[0-9a-fA-F]{64}\b/g, '[REDACTED_KEY]')
+    // A BIP39 mnemonic: 12-24 consecutive short lowercase words separated by
+    // whitespace, commas, or quotes — covers plain, newline, comma, and
+    // JSON-array forms. Deliberately greedy for a LOG backstop: over-redacting a
+    // run of words is fine; leaking a seed is not. (Precise per-value redaction
+    // elsewhere is the primary.)
+    .replace(/\b([a-z]{3,8}[\s"',]+){11,23}[a-z]{3,8}\b/g, '[REDACTED_MNEMONIC]')
+    // A basic-auth cookie (user:token) echoed into a log outside an Authorization
+    // header — long token after a colon. Same greedy-backstop tradeoff; URLs and
+    // timestamps are safe (the token run is broken by dots / is too short).
+    .replace(/\b[\w.-]{2,40}:[A-Za-z0-9+/=_-]{20,}={0,2}\b/g, '[REDACTED_COOKIE]')
+
 export const handleClientSideError = (data) => {
-  log.error('client-side error', data.message, data.stack)
+  log.error('client-side error', redactSecretsInText(data.message), redactSecretsInText(data.stack))
 }
 
 export const getDefaultCurrency = async () => getDefaultCurrencySetting()
@@ -157,8 +191,12 @@ export const getAllModels = async (): Promise<unknown[]> => {
       headers: await getAuthHeaders(),
       method: 'GET'
     })
+    // A non-OK response still parses (error body) — data.models would be
+    // undefined, which react-query rejects loudly. Same guard on every
+    // fetcher that feeds a query.
+    if (!response.ok) return []
     const data = await response.json()
-    return data.models
+    return data.models ?? []
   } catch (e) {
     console.log('Error', e)
     return []
@@ -179,49 +217,53 @@ export const getBalances = async (): Promise<unknown[]> => {
   }
 }
 
+// The proxy-router holds the signing key and pays gas; the renderer only names
+// the recipient and the amount. Contract: proxy-router structs.SendRequest —
+//   { to: eth_addr (required), amount: BigInt WEI (required, > 0) }
+// returning { tx: "0x..." }.
+//
+// These MUST throw on failure. They previously did `catch -> return undefined`,
+// and SendForm treats "did not throw" as success — so a rejected or failed
+// transfer rendered a SUCCESS screen to the user. On a money surface that is the
+// worst possible failure mode. A send either yields a tx hash or raises.
+const postSend = async (
+  route: 'eth' | 'mor',
+  payload: { to: string; amount: string }
+): Promise<string> => {
+  const path = `${config.chain.localProxyRouterUrl}/blockchain/send/${route}`
+
+  let response: Response
+  try {
+    response = await fetch(path, {
+      method: 'POST',
+      body: JSON.stringify({ to: payload.to, amount: payload.amount }),
+      headers: await getAuthHeaders()
+    })
+  } catch (e: any) {
+    throw new Error(`Could not reach the local node: ${e?.message || e}`)
+  }
+
+  const data = await response.json().catch(() => null)
+
+  if (!response.ok) {
+    // The router reports failures as { error: "..." } (structs.ErrRes).
+    throw new Error(data?.error || `Transfer failed (HTTP ${response.status})`)
+  }
+  if (!data?.tx) {
+    throw new Error('The node accepted the request but returned no transaction hash')
+  }
+  return data.tx
+}
+
 export const sendEth = async (payload: {
   to: string
   amount: string
-}): Promise<string | undefined> => {
-  try {
-    const path = `${config.chain.localProxyRouterUrl}/blockchain/send/eth`
-    const response = await fetch(path, {
-      method: 'POST',
-      body: JSON.stringify({
-        to: payload.to,
-        amount: payload.amount
-      }),
-      headers: await getAuthHeaders()
-    })
-    const data = await response.json()
-    return data.tx
-  } catch (e) {
-    console.log('Error', e)
-    return undefined
-  }
-}
+}): Promise<string> => postSend('eth', payload)
 
 export const sendMor = async (payload: {
   to: string
   amount: string
-}): Promise<string | undefined> => {
-  try {
-    const path = `${config.chain.localProxyRouterUrl}/blockchain/send/mor`
-    const response = await fetch(path, {
-      method: 'POST',
-      body: JSON.stringify({
-        to: payload.to,
-        amount: payload.amount
-      }),
-      headers: await getAuthHeaders()
-    })
-    const data = await response.json()
-    return data.tx
-  } catch (e) {
-    console.log('Error', e)
-    return undefined
-  }
-}
+}): Promise<string> => postSend('mor', payload)
 
 export const getTransactions = async (payload: {
   page: number
@@ -232,8 +274,12 @@ export const getTransactions = async (payload: {
     const response = await fetch(path, {
       headers: await getAuthHeaders()
     })
+    // During router boot this endpoint 500s; the error body parsed "fine" and
+    // data.transactions came back undefined — which react-query surfaces as
+    // "Query data cannot be undefined" on every Dashboard mount.
+    if (!response.ok) return []
     const data = await response.json()
-    return data.transactions
+    return data.transactions ?? []
   } catch (e) {
     console.log('Error', e)
     return []
@@ -401,10 +447,30 @@ export const clearWallet = async () => {
 }
 
 export const resetWallet = async () => {
-  await clearWallet()
-  await clearEthNodeEnv()
-  await clearCacheV2()
+  // The LOCAL settings wallet decides onboarding-vs-login routing, so it must
+  // be cleared first and synchronously, together with the credentials. The
+  // old order ran the network clears first: `clearWallet()` here is the HTTP
+  // DELETE to the proxy-router — if the router wasn't up yet it failed
+  // silently and the local wallet survived, leaving a bricked half-state
+  // (wallet present + no password hash = a login screen no password can pass).
+  wallet.clearWallet()
   setPasswordHash('')
+  // Best-effort deep cleans — each may fail without leaving a half-account.
+  try {
+    await clearWallet()
+  } catch (e) {
+    log.error('Router wallet clear failed during reset', e)
+  }
+  try {
+    await clearEthNodeEnv()
+  } catch (e) {
+    log.error('Eth node env clear failed during reset', e)
+  }
+  try {
+    await clearCacheV2()
+  } catch (e) {
+    log.error('Cache clear failed during reset', e)
+  }
   app.relaunch()
   app.quit()
 }
@@ -731,7 +797,21 @@ export const onboardingCompleted = async (data, core: Core) => {
     core.emitter.emit('create-wallet', { address: walletAddress })
     openWallet(data.password, core)
   } catch (err) {
-    return { error: new WalletError('Onboarding unable to be completed: ', err) }
+    // NEVER let the seed/private key reach a log or the propagated error. A bad
+    // import makes the router echo its input back in the error body ("invalid
+    // hex string: <the mnemonic>"), which otherwise lands in main.log verbatim
+    // and in the "Copy diagnostics" clipboard. Redact the exact secrets the user
+    // entered — precise, no false positives.
+    const secrets = [data.mnemonic, data.privateKey, data.password].filter(
+      (v): v is string => typeof v === 'string' && v.length > 0
+    )
+    const redact = (s: unknown): string =>
+      secrets.reduce((acc, sec) => acc.split(sec).join('[REDACTED]'), String(s ?? ''))
+
+    const safe = new Error(redact((err as Error)?.message))
+    safe.stack = redact((err as Error)?.stack)
+    log.error('Onboarding failed', safe.message)
+    return { error: new WalletError('Onboarding unable to be completed: ', safe) }
   }
 }
 
@@ -762,6 +842,85 @@ export async function openWallet(password: string, { emitter }: Core) {
 
   emitter.emit('open-wallet', { address, isActive: true })
   emitter.emit('open-proxy-router', { password })
+
+  // Fire-and-forget: repair the router's signing wallet if it's missing.
+  healRouterWallet(address).catch((e) => log.error('Router wallet heal failed', e))
+}
+
+// Self-heal for "wallet not set": the proxy-router keeps its signing key in
+// the OS keychain under a FIXED service name (morpheus-proxy-router) — global
+// machine state. Anything that deletes or overwrites it (another instance of
+// the router on the same machine, a reset that outlived onboarding) leaves
+// the router unable to sign: /blockchain/balance 500s and sessions can't
+// open, with no recovery path short of a full account reset. On every login,
+// check the router's wallet and re-provision it from the app's own Keychain
+// mnemonic backup (written by createSimpleAccount). Accounts without that
+// backup (classic crypto onboarding never persists the phrase) can't be
+// auto-healed — log loudly so the gap is visible.
+async function healRouterWallet(localAddress?: string) {
+  const proxyUrl = config.chain.localProxyRouterUrl
+  const APP_KEYCHAIN_SERVICE = 'org.morpheus.simple-account'
+  // Login can beat the router's boot — poll with patience, then give up loudly.
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      const res = await fetch(`${proxyUrl}/wallet`, { headers: await getAuthHeaders() })
+      if (res.ok) {
+        const { address } = await res.json().catch(() => ({}) as any)
+        if (
+          address &&
+          localAddress &&
+          String(address).toLowerCase() !== String(localAddress).toLowerCase()
+        ) {
+          log.error(`Router wallet ${address} != local ${localAddress}; re-provisioning`)
+        } else {
+          return // healthy
+        }
+      } else {
+        const body = await res.json().catch(() => ({}) as any)
+        if (!String(body?.error || '').includes('wallet not set')) {
+          // Some other transient error — let the router settle and retry.
+          await new Promise((r) => setTimeout(r, 3000))
+          continue
+        }
+      }
+
+      // Router is reachable and has no (or the wrong) wallet — re-provision.
+      const username = getKey('user.username')
+      const keytarModule = (await import('keytar')).default
+      const mnemonic = username
+        ? await keytarModule
+            .getPassword(APP_KEYCHAIN_SERVICE, String(username))
+            .catch(() => null)
+        : null
+      if (!mnemonic) {
+        log.error(
+          'Router wallet is not set and no Keychain mnemonic backup exists — ' +
+            'cannot self-heal. The user must reset or re-import their phrase.'
+        )
+        return
+      }
+      const prov = await fetch(`${proxyUrl}/wallet/mnemonic`, {
+        method: 'POST',
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({ mnemonic, derivationPath: '0' })
+      })
+      if (!prov.ok) {
+        log.error('Router wallet re-provision failed', await prov.text())
+        return
+      }
+      const check = await fetch(`${proxyUrl}/wallet`, {
+        headers: await getAuthHeaders()
+      })
+        .then((r) => r.json())
+        .catch(() => ({}) as any)
+      log.info(`Router wallet self-healed: ${check?.address}`)
+      return
+    } catch {
+      // Router not reachable yet.
+    }
+    await new Promise((r) => setTimeout(r, 3000))
+  }
+  log.error('Router never became reachable during the wallet-heal window')
 }
 
 export const suggestAddresses = async (mnemonic: string) => {
