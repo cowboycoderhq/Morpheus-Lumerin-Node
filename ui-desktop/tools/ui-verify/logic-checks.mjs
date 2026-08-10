@@ -1,4 +1,8 @@
 import { readFileSync } from 'node:fs';
+import {
+  buildGrokModelsToml,
+  grokModelKey,
+} from '../../src/main/src/grok/models-config.ts';
 // Node-runnable assertions over the PR's exported substrate utils.
 // Run: npm run logic   (uses vite-node to transform the .ts/.tsx/.js sources)
 import {
@@ -1019,7 +1023,65 @@ console.log('opencode: the config and the command we hand a terminal');
   ok('a path containing spaces is stored verbatim',
     withPlugin.plugin[0][0].includes('Application Support'));
 
-  // ---- the grok IPC chain is COMPLETE ----------------------------------------
+  // ---- Morpheus models in grok's picker --------------------------------------
+// The simple half of the integration: USING a session needs only a provider
+// entry in a documented config file. This is what replaced intercepting a
+// keystroke on grok's internal socket.
+console.log('');
+console.log('grok: models published into the managed config');
+{
+  const cfg = buildGrokModelsToml({
+    baseUrl: 'http://127.0.0.1:8137/v1',
+    apiKey: 'mor-sk-secret',
+    models: [
+      { id: 'deepseek-v4', label: 'deepseek-v4 (session)' },
+      { id: '0xabc123', label: '0xabc123 (local)' },
+    ],
+  });
+
+  ok('each model gets an entry', /\[model\.morpheus-deepseek-v4\]/.test(cfg));
+  ok('and it is prefixed, so it cannot collide with the user\'s own',
+    !/\[model\.deepseek-v4\]/.test(cfg));
+  ok('the model field is the id the endpoint advertises, not our key',
+    /model = "deepseek-v4"/.test(cfg));
+  ok('pointed at the endpoint', /base_url = "http:\/\/127\.0\.0\.1:8137\/v1"/.test(cfg));
+  ok('with the key on the model itself (a loopback model_provider fails closed)',
+    /api_key = "mor-sk-secret"/.test(cfg));
+  ok('and the OpenAI chat-completions backend', /api_backend = "chat_completions"/.test(cfg));
+
+  // It must ADD models and nothing else. This file is layered under the user's
+  // config.toml, but writing a global here would still be deciding something
+  // that is not ours to decide.
+  ok('it never sets a default model', !/\[models\]/.test(cfg) && !/default =/.test(cfg));
+  ok('it sets no other global', !/^\[(?!model\.)/m.test(cfg));
+
+  // Model ids are CHAIN DATA — anyone can register a hostile name.
+  ok('a quote in a model name cannot break out of its string',
+    buildGrokModelsToml({ baseUrl: 'u', apiKey: 'k',
+      models: [{ id: 'a"b', label: 'x' }] }).includes(String.raw`model = "a\"b"`));
+  ok('a backslash is escaped',
+    buildGrokModelsToml({ baseUrl: 'u', apiKey: 'k',
+      models: [{ id: 'a\\b', label: 'x' }] }).includes(String.raw`"a\\b"`));
+  ok('a newline in a model name is REFUSED, not encoded', (() => {
+    try {
+      buildGrokModelsToml({ baseUrl: 'u', apiKey: 'k', models: [{ id: 'a\nb', label: 'x' }] });
+      return false;
+    } catch {
+      return true;
+    }
+  })());
+  ok('a hostile id still yields a safe bare key',
+    grokModelKey('a"b/c d') === 'morpheus-a-b-c-d');
+
+  // Endpoint off -> publish NOTHING, rather than leaving a stale list that
+  // offers models which cannot answer.
+  const empty = buildGrokModelsToml({ baseUrl: '', apiKey: '', models: [] });
+  ok('an empty list publishes no models', !/\[model\./.test(empty));
+  ok('and says why, so the file is not a mystery', /open a session in the app/i.test(empty));
+  ok('and leaks no token when there is nothing to serve', !/mor-sk-/.test(empty));
+}
+
+// ---- the grok IPC chain is COMPLETE ----------------------------------------
 // A severed IPC chain typechecks and builds cleanly: `client` is `any` through
 // the HOC, so a missing method is invisible until someone uses the feature.
 // That is exactly how the whole grok bridge was lost once — a concurrent editor
