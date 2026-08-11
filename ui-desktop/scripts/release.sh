@@ -49,8 +49,12 @@ pgrep -f "electron-vite.*dev" >/dev/null &&
 security find-identity -v -p codesigning 2>/dev/null | grep -q "$ID" ||
   fail "signing identity not found in the keychain: $ID"
 
-# Fail here rather than after a ten-minute build.
-xcrun notarytool history --keychain-profile "$PROFILE" --limit 1 >/dev/null 2>&1 ||
+# Fail here rather than after a ten-minute build. NOTE: no --limit — notarytool
+# 1.1.2 has no such flag, and an earlier version of this check used one, so it
+# failed on the ARGUMENT and reported perfectly good credentials as missing.
+# Match on the success line rather than on the exit code, which is 0 either way.
+xcrun notarytool history --keychain-profile "$PROFILE" 2>&1 |
+  grep -q "Successfully received submission history" ||
   fail "notary profile '$PROFILE' is not set up. Create it with:
        xcrun notarytool store-credentials $PROFILE --apple-id <id> --team-id <TEAMID>"
 
