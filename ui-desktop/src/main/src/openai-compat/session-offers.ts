@@ -1,8 +1,8 @@
 // ============================================================================
 // When may the app interrupt you to offer a paid session?
 //
-// A terminal agent naming a starred model with no session gets a 402, and that
-// refusal is what tells the app a human wants this model. The app then brings
+// A terminal agent naming a starred model with no session gets a refusal, and
+// that refusal is what tells the app a human wants this model. The app then brings
 // itself forward with the picker. That is a window stealing focus in response to
 // an HTTP request, so the question "may we ask?" needs an answer that does not
 // depend on the caller being well behaved:

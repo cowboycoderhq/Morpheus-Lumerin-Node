@@ -332,10 +332,11 @@ export function routingHeaders(model: UsableModel): Record<string, string> {
 /**
  * What a client is told when it names a starred model with no session.
  *
- * 402 rather than 404: the model exists and the user chose it, they just have
- * not paid for it yet. Measured against the real clients — grok and opencode
- * both print this message verbatim and neither retries, so the human sees the
- * sentence and the agent does not spend anything reacting to it.
+ * This sentence, not the status code, is the whole user interface for the
+ * situation — measured against the real grok TUI and a real opencode run, both
+ * print it verbatim and send exactly one request. Which status carries it is a
+ * transport detail chosen by the same measurement; see SESSION_REQUIRED_STATUS
+ * in server.ts for why the semantically correct code is the wrong one.
  */
 export function sessionRequiredMessage(advertised: string): string {
   return (

@@ -14,7 +14,11 @@ import { writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { pathToFileURL } from 'url';
-import { OpenAiCompatServer, generateToken } from '../../src/main/src/openai-compat/server.ts';
+import {
+  OpenAiCompatServer,
+  generateToken,
+  SESSION_REQUIRED_STATUS,
+} from '../../src/main/src/openai-compat/server.ts';
 import { buildProviderPlugin } from '../../src/main/src/opencode/start-plugin.ts';
 
 let pass = 0;
@@ -922,11 +926,15 @@ console.log('opencode: the provider plugin');
 
 // ---- starred models, and what happens when one is used with no session ------
 //
-// Everything here was learned by pointing the REAL grok and opencode at a stand
-// in endpoint and watching the wire. Both print a 402 verbatim and neither
-// retries it, which is why refusing is safe. What is NOT safe is answering a
-// streaming request with a 200 carrying a non-SSE body: grok reissued that 8
-// times in 2 minutes, and on this endpoint every reissue is billed.
+// Everything here was learned by pointing the REAL grok TUI and a real opencode
+// run at a stand-in endpoint and watching the wire:
+//   - 400 with our message: both print it verbatim, one request each, exit 1.
+//   - 402 (the semantically right code): grok's TUI throws our body away and
+//     shows "You hit your weekly limit — upgrade tier", inviting the user to
+//     buy xAI credits to fix a Morpheus problem.
+//   - 409: opencode reissues it 5 times and hangs for 45 seconds.
+//   - a 200 whose body is not SSE: grok retried 8 times in 2 minutes, and on
+//     this endpoint every reissue would be billed.
 console.log('');
 console.log('openai endpoint: starred models with no session');
 {
@@ -952,7 +960,15 @@ console.log('openai endpoint: starred models with no session');
     body: JSON.stringify({ model: '0xstarved', stream: true, messages: [{ role: 'user', content: 'hi' }] }),
   });
   const body = await r.json();
-  ok('using it is refused with 402, not served', r.status === 402);
+  ok('using it is refused, not served', r.status === SESSION_REQUIRED_STATUS);
+  // Pin the measured value, and say what each rejected candidate did — the
+  // "more correct" code is the one that breaks, so this must not be tidied.
+  ok('the status is 400: the one both clients actually surface',
+    SESSION_REQUIRED_STATUS === 400);
+  ok('never 402 — grok shows its own billing upsell instead of our message',
+    SESSION_REQUIRED_STATUS !== 402);
+  ok('never 409 — opencode retries it five times and hangs',
+    SESSION_REQUIRED_STATUS !== 409);
   ok('the code is machine-readable', body.error?.code === 'session_required');
   ok('the message names the model', body.error?.message.includes('0xstarved'));
   // The mis-routing guarantee, at the wire: absent session_id means "local" to
@@ -980,7 +996,7 @@ console.log('openai endpoint: offering to open one');
     });
 
   const first = await ask();
-  ok('the refusal still comes back', first.status === 402);
+  ok('the refusal still comes back', first.status === SESSION_REQUIRED_STATUS);
   ok('and the app is asked to offer a session', offers.length === 1);
   ok('the offer carries the id the picker needs', offers[0].id === '0xstarved');
 
