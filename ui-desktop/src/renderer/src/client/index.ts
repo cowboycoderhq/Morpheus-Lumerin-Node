@@ -275,6 +275,8 @@ const createClient = function (createStore) {
     // chain transaction.
     morpheusApiRequest: utils.forwardToMainProcess('morpheus-api-request', 180000),
     // Which providers the user marked up or down, so a dead one sinks next time.
+    // A DELTA, not a whole-list write: see handlers.toggleStarredModel.
+    toggleStarredModel: utils.forwardToMainProcess('toggle-starred-model', 30000),
     getProviderPrefs: utils.forwardToMainProcess('get-provider-prefs'),
     setProviderPref: utils.forwardToMainProcess('set-provider-pref'),
     setOpencodeCwd: utils.forwardToMainProcess('set-opencode-cwd'),

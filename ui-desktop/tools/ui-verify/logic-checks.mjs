@@ -1199,6 +1199,17 @@ console.log('grok: models published into the managed config');
     ok('an empty id is ignored rather than starred',
       toggleStarredModel(['0xa'], '').join() === '0xa');
     ok('a null list is treated as empty', toggleStarredModel(null, '0xa').join() === '0xa');
+    // The renderer helper decides what the UI SHOWS. The write itself is a
+    // delta applied in main against the stored list, because computing the new
+    // array from a snapshot read when the dialog opened dropped anything
+    // pinned in between — and sessions pin their own model automatically, so
+    // that was a live way to lose one without noticing.
+    ok('the pin write is a delta channel, not a whole-list write',
+      readFileSync(new URL('../../src/renderer/src/components/chat/modals/ModelSelectionModal.tsx', import.meta.url), 'utf8')
+        .includes("sendToMainProcess('toggle-starred-model'"));
+    ok('and it no longer sends the whole array from a snapshot',
+      !readFileSync(new URL('../../src/renderer/src/components/chat/modals/ModelSelectionModal.tsx', import.meta.url), 'utf8')
+        .includes('starredModelIds: next'));
   }
 
   // ---- remembering which providers were good to you ----
@@ -1643,6 +1654,8 @@ console.log('grok: models published into the managed config');
     // Origin-bearing requests, so a browser is blocked before it reads the
     // reason. Main relays instead, and holds the token.
     ['morpheus-api-request', 'morpheusApiRequest'],
+    // A delta, not a whole-list write — see the lost-update note in handlers.
+    ['toggle-starred-model', 'toggleStarredModel'],
     ['get-provider-prefs', 'getProviderPrefs'],
     ['set-provider-pref', 'setProviderPref'],
   ];
