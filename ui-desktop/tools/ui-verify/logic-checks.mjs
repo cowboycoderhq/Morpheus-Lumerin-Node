@@ -26,6 +26,12 @@ import {
 import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import { explainSessionOpenFailure } from '../../src/renderer/src/utils/session-errors.ts';
 import {
+  applyPreference,
+  nextPreference,
+  preferenceOf,
+  sortProvidersByPreference,
+} from '../../src/renderer/src/utils/provider-prefs.ts';
+import {
   admitRequest,
   bearerMatches,
   isPickerRoute,
@@ -1167,6 +1173,46 @@ console.log('grok: models published into the managed config');
       stale.request('z').offer === true);
   }
 
+  // ---- remembering which providers were good to you ----
+  // Providers are 42-character addresses, distinguishable only by price. The
+  // only way to learn one is unreachable is to pick it and lose a session — and
+  // then remember the hex. Nobody does that, so the picker remembers instead.
+  {
+    const P = (addr, price) => ({ provider: addr, stakeMorPerHour: price });
+    const list = [P('0xCHEAPDEAD', 1), P('0xMID', 2), P('0xGOOD', 3)];
+
+    ok('with no marks it is price order',
+      sortProvidersByPreference(list, {}).map((p) => p.provider).join() ===
+        '0xCHEAPDEAD,0xMID,0xGOOD');
+
+    const prefs = { '0xgood': 'favorite', '0xcheapdead': 'disliked' };
+    const sorted = sortProvidersByPreference(list, prefs).map((p) => p.provider);
+    ok('a favourite leads even when it is the dearest', sorted[0] === '0xGOOD');
+    // THE case that motivated this: the cheapest provider is the one that ate
+    // your session. Price must not keep floating it to the top.
+    ok('a marked-down provider sinks even when it is the cheapest',
+      sorted[sorted.length - 1] === '0xCHEAPDEAD');
+    ok('and it is still listed, not hidden — it may be the only one left',
+      sorted.length === 3);
+
+    // Addresses arrive checksummed from one route and lower-case from another.
+    ok('a mark set on one spelling of an address is found by the other',
+      preferenceOf({ '0xabc': 'favorite' }, '0xABC') === 'favorite');
+    ok('marking is case-insensitive when written too',
+      applyPreference({}, '0xABC', 'disliked')['0xabc'] === 'disliked');
+
+    // The two buttons are opposites, not a cycle.
+    ok('pressing the mark it already has clears it',
+      nextPreference('favorite', 'favorite') === undefined);
+    ok('pressing the opposite switches outright, not one step',
+      nextPreference('disliked', 'favorite') === 'favorite');
+    ok('clearing removes the entry rather than storing a blank',
+      Object.keys(applyPreference({ '0xa': 'favorite' }, '0xa', undefined)).length === 0);
+    ok('an unmarked provider sorts between the two bands',
+      sortProvidersByPreference([P('0xA', 9), P('0xB', 1)], { '0xa': 'favorite' })
+        .map((p) => p.provider).join() === '0xA,0xB');
+  }
+
   // ---- a failed session open, explained to a person ----
   // The raw router text names a provider, a port and a TCP reset. It is what
   // makes a fault diagnosable and it tells a non-technical user nothing about
@@ -1393,6 +1439,8 @@ console.log('grok: models published into the managed config');
     // Origin-bearing requests, so a browser is blocked before it reads the
     // reason. Main relays instead, and holds the token.
     ['morpheus-api-request', 'morpheusApiRequest'],
+    ['get-provider-prefs', 'getProviderPrefs'],
+    ['set-provider-pref', 'setProviderPref'],
   ];
   for (const [ipcName, fnName] of CHANNELS) {
     ok(`${ipcName}: main exports its handler`,

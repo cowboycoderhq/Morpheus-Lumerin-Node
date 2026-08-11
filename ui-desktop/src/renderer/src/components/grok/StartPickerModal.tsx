@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import Form from 'react-bootstrap/Form';
@@ -10,10 +11,20 @@ import {
   IconSearch,
   IconWorldOff,
   IconCheck,
+  IconStar,
+  IconThumbDown,
 } from '@tabler/icons-react';
 import Modal from '../contracts/modals/Modal';
 import { sendToMainProcess } from '../../client/utils';
 import { explainSessionOpenFailure } from '../../utils/session-errors';
+import {
+  applyPreference,
+  nextPreference,
+  preferenceOf,
+  sortProvidersByPreference,
+  type ProviderPreference,
+  type ProviderPrefs,
+} from '../../utils/provider-prefs';
 import {
   bodyProps,
   Body,
@@ -60,6 +71,8 @@ import {
   FailureRaw,
   SuccessCallout,
   LaunchRow,
+  MarkGroup,
+  MarkBtn,
 } from './StartPickerModal.styles';
 
 // ============================================================================
@@ -237,6 +250,17 @@ function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Prop
   // attached.
   const onDoneRef = useRef(onDone);
   useEffect(() => {
+    void (async () => {
+      try {
+        const prefs: any = await sendToMainProcess('get-provider-prefs');
+        if (prefs && typeof prefs === 'object') setProviderPrefs(prefs);
+      } catch {
+        /* no marks yet, or the bridge is not up — an empty set is correct */
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
     onDoneRef.current = onDone;
   }, [onDone]);
 
@@ -257,6 +281,9 @@ function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Prop
   const [selectedModel, setSelectedModel] = useState<CatalogModel | null>(null);
 
   const [providers, setProviders] = useState<Provider[] | null>(null);
+  // Marks survive the dialog, the session and the app: the whole point is that
+  // next week's picker remembers which provider wasted your time.
+  const [providerPrefs, setProviderPrefs] = useState<ProviderPrefs>({});
   const [providersLoading, setProvidersLoading] = useState(false);
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(
@@ -367,8 +394,11 @@ function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Prop
     // Sorted, and the "cheapest" badge assigned, by PRICE — never by list
     // position, so a provider that arrives first in the response is not
     // mistaken for the cheapest one.
-    return [...providers].sort((a, b) => a.stakeMorPerHour - b.stakeMorPerHour);
-  }, [providers]);
+    // Marked-up first, marked-down last, price within each band. Price is the
+    // tiebreak rather than the primary sort because a provider that does not
+    // answer is not cheap at any price.
+    return sortProvidersByPreference(providers, providerPrefs);
+  }, [providers, providerPrefs]);
 
   const cheapestPrice = useMemo(() => {
     if (!providers || !providers.length) return null;
@@ -385,6 +415,25 @@ function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Prop
   }, [catalog]);
 
   if (!open) return null;
+
+  const markProvider = async (
+    address: string,
+    pressed: ProviderPreference,
+  ): Promise<void> => {
+    const next = nextPreference(preferenceOf(providerPrefs, address), pressed);
+    // Applied locally first so the row responds to the click immediately; main
+    // is the store of record and its answer replaces this.
+    setProviderPrefs((prev) => applyPreference(prev, address, next));
+    try {
+      const saved: any = await sendToMainProcess('set-provider-pref', {
+        provider: address,
+        preference: next ?? null,
+      });
+      if (saved && typeof saved === 'object') setProviderPrefs(saved);
+    } catch {
+      /* the local mark stands for this session */
+    }
+  };
 
   const handleSelectModel = async (m: CatalogModel) => {
     setSelectedModel(m);
@@ -706,6 +755,17 @@ function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Prop
                             key={p.bidId}
                             type="button"
                             onClick={() => handleSelectProvider(p)}
+                            style={{
+                              gridTemplateColumns: '1fr auto auto',
+                              // A marked-down provider stays selectable — it may
+                              // be the only one left — but stops competing for
+                              // attention with the ones that work.
+                              opacity:
+                                preferenceOf(providerPrefs, p.provider) ===
+                                'disliked'
+                                  ? 0.55
+                                  : 1,
+                            }}
                           >
                             <OptionMain>
                               <OptionName>
@@ -725,6 +785,68 @@ function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Prop
                               </PriceValue>
                               <PriceUnit>MOR / hour</PriceUnit>
                             </PriceBlock>
+                            {/* Marking is not choosing. Both stop the click
+                                reaching the row, or judging a provider would
+                                select it and walk you to the next step. */}
+                            <MarkGroup>
+                              <MarkBtn
+                                as="span"
+                                role="button"
+                                tabIndex={0}
+                                aria-label={
+                                  preferenceOf(providerPrefs, p.provider) ===
+                                  'favorite'
+                                    ? 'Remove favourite'
+                                    : 'Mark as favourite'
+                                }
+                                $on={
+                                  preferenceOf(providerPrefs, p.provider) ===
+                                  'favorite'
+                                }
+                                onClick={(e: React.MouseEvent) => {
+                                  e.stopPropagation();
+                                  void markProvider(p.provider, 'favorite');
+                                }}
+                                onKeyDown={(e: React.KeyboardEvent) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void markProvider(p.provider, 'favorite');
+                                  }
+                                }}
+                              >
+                                <IconStar size={16} stroke={2} />
+                              </MarkBtn>
+                              <MarkBtn
+                                as="span"
+                                role="button"
+                                tabIndex={0}
+                                aria-label={
+                                  preferenceOf(providerPrefs, p.provider) ===
+                                  'disliked'
+                                    ? 'Remove mark'
+                                    : 'Mark down'
+                                }
+                                $on={
+                                  preferenceOf(providerPrefs, p.provider) ===
+                                  'disliked'
+                                }
+                                $bad
+                                onClick={(e: React.MouseEvent) => {
+                                  e.stopPropagation();
+                                  void markProvider(p.provider, 'disliked');
+                                }}
+                                onKeyDown={(e: React.KeyboardEvent) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void markProvider(p.provider, 'disliked');
+                                  }
+                                }}
+                              >
+                                <IconThumbDown size={16} stroke={2} />
+                              </MarkBtn>
+                            </MarkGroup>
                           </OptionRow>
                         ))}
                       </OptionList>

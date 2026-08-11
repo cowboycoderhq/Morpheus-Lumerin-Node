@@ -56,6 +56,8 @@ const listeners = {
   'grok-picker-done': handlers.grokPickerDone,
   'get-pending-session-offer': handlers.getPendingSessionOffer,
   'morpheus-api-request': handlers.morpheusApiRequest,
+  'get-provider-prefs': handlers.getProviderPrefs,
+  'set-provider-pref': handlers.setProviderPref,
   'install-opencode': handlers.installOpencode,
   'open-in-opencode': handlers.openInOpencode,
   'set-opencode-cwd': handlers.setOpencodeCwd,

@@ -1464,6 +1464,34 @@ export const getPendingSessionOffer = async () => {
  * The allowlist is the point — this must stay a door to four known routes, not
  * a general-purpose proxy that a renderer bug could point anywhere.
  */
+/**
+ * Which providers the user marked up or down, and setting one.
+ *
+ * Stored beside the other user preferences rather than in the endpoint config:
+ * this is a judgement about a counterparty, not a setting for the API, and it
+ * outlives any particular model or session.
+ */
+export const getProviderPrefs = async () => (await getKey('providerPrefs')) || {}
+
+export const setProviderPref = async ({
+  provider,
+  preference
+}: {
+  provider: string
+  preference: 'favorite' | 'disliked' | null
+}) => {
+  const address = String(provider ?? '').toLowerCase()
+  if (!address) return await getProviderPrefs()
+  const prefs = { ...((await getKey('providerPrefs')) || {}) }
+  if (preference === null) {
+    delete prefs[address]
+  } else {
+    prefs[address] = preference
+  }
+  await setKey('providerPrefs', prefs)
+  return prefs
+}
+
 export const morpheusApiRequest = async (payload: {
   path: string
   method?: string
