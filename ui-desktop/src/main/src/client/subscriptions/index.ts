@@ -52,7 +52,6 @@ const listeners = {
   'get-grok-status': handlers.getGrokStatus,
   'open-in-grok': handlers.openInGrok,
   'refresh-grok-models': handlers.refreshGrokModels,
-  'set-grok-enabled': handlers.setGrokEnabled,
   'grok-picker-done': handlers.grokPickerDone,
   'get-pending-session-offer': handlers.getPendingSessionOffer,
   'morpheus-api-request': handlers.morpheusApiRequest,

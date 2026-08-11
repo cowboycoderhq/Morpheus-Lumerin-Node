@@ -265,8 +265,6 @@ const createClient = function (createStore) {
     getGrokStatus: utils.forwardToMainProcess('get-grok-status', 30000),
     openInGrok: utils.forwardToMainProcess('open-in-grok', 120000),
     refreshGrokModels: utils.forwardToMainProcess('refresh-grok-models', 30000),
-    // Enabling spawns the agent and waits for its socket — give it room.
-    setGrokEnabled: utils.forwardToMainProcess('set-grok-enabled', 60000),
     grokPickerDone: utils.forwardToMainProcess('grok-picker-done', 15000),
     // Asked on mount, so an offer raised while the app was locked is not lost.
     getPendingSessionOffer: utils.forwardToMainProcess('get-pending-session-offer'),

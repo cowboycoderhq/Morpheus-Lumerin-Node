@@ -1796,7 +1796,6 @@ console.log('grok: models published into the managed config');
   // ONE list, so a fourth channel added later cannot half-land.
   const CHANNELS = [
     ['get-grok-status', 'getGrokStatus'],
-    ['set-grok-enabled', 'setGrokEnabled'],
     ['grok-picker-done', 'grokPickerDone'],
     // Added when a locked app proved it could swallow an offer whole: the
     // picker host is inside the signed-in layout, so it is not mounted to

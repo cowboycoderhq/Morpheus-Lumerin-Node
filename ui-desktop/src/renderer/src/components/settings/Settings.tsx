@@ -64,7 +64,6 @@ const Common = (props: CommonProps) => {
   // usable number is committed; see the inputs below.
   const [capDraft, setCapDraft] = useState<Record<string, string>>({});
   const [grok, setGrok] = useState<any>(null);
-  const [grokBusy, setGrokBusy] = useState(false);
   const [ocStatus, setOcStatus] = useState<any>(null);
   const [ocBusy, setOcBusy] = useState(false);
   const [ocOutput, setOcOutput] = useState<string>('');
@@ -372,45 +371,19 @@ const Common = (props: CommonProps) => {
             )}
 
             {/* grok: /start in a terminal, choosing in this window. */}
+            {/* grok needs no switch any more.
+                This used to enable a relay on grok's own leader socket so a
+                typed /start could be intercepted. That is archived: models are
+                published to grok automatically, and using one with no session
+                is refused with an offer to open one — the same guarantee with
+                nothing of grok's to sit inside. */}
             <SectionDescription style={{ marginTop: '1.6rem' }}>
-              grok terminal integration
+              grok
             </SectionDescription>
-            <FieldRow>
-              <ToggleRow htmlFor="grok-enabled">
-                <ToggleInput
-                  id="grok-enabled"
-                  checked={Boolean(grok?.enabled)}
-                  disabled={grokBusy}
-                  onChange={async (e) => {
-                    setGrokBusy(true);
-                    try {
-                      setGrok(
-                        await props.client.setGrokEnabled(
-                          Boolean(e.target.checked),
-                        ),
-                      );
-                    } finally {
-                      setGrokBusy(false);
-                    }
-                  }}
-                />
-                <ToggleLabel>
-                  Enable <code>/start</code> in grok
-                  {grokBusy ? ' — starting…' : ''}
-                </ToggleLabel>
-              </ToggleRow>
-            </FieldRow>
-            {/* `problem` is the ONLY way a refused version, a dead agent or an
-                unavailable socket reaches the user: from the terminal all three
-                look identical to "nothing happened". Show it verbatim. */}
-            <SettingsCallout tone={grok?.problem ? 'warning' : 'info'}>
-              {grok?.problem
-                ? grok.problem
-                : grok?.enabled
-                  ? 'Type /start in any grok terminal. This window comes forward so you can choose the model, provider and length here — grok never sees the command, and no model decides to spend.'
-                  : grok?.installed === false
-                    ? 'grok is not installed. Install it and turn this on to get /start.'
-                    : 'Off. grok runs normally and /start does nothing.'}
+            <SettingsCallout tone="info">
+              {grok?.installed
+                ? 'Your models appear in grok’s /model picker automatically. Pick one there; if it has no open session you will be told, and this window will offer to open one.'
+                : 'grok is not installed. Install it from x.ai and your models will appear in its /model picker automatically.'}
             </SettingsCallout>
 
             {/* opencode setup lives inside this card because it is only

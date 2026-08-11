@@ -9,8 +9,7 @@
     "isolate": "node run.mjs",
     "frozen": "node frozen-values.mjs",
     "verify": "vite-node logic-checks.mjs && node frozen-values.mjs && node run.mjs",
-    "openai": "vite-node openai-endpoint-check.mjs",
-    "grok": "vite-node grok-relay-check.mjs"
+    "openai": "vite-node openai-endpoint-check.mjs"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
