@@ -37,6 +37,7 @@ import {
 } from '../../src/renderer/src/utils/provider-prefs.ts';
 import {
   admitRequest,
+  advertisedId,
   bearerMatches,
   isPickerRoute,
   mergeStarredModels,
@@ -885,7 +886,9 @@ console.log('openai-compat: models a client can actually use');
   // a provider the user did not choose.
   const amb = resolveModel('shared-name', [dupA, dupB]);
   ok('an ambiguous bare name is REFUSED, not guessed', amb.ok === false && amb.code === 'model_ambiguous');
-  ok('and the refusal names the alternatives', /shared-name:/.test(amb.message));
+  // `#`, not `:` — real model names contain colons ("deepseek-v4-flash:web"),
+  // so a colon-separated discriminator cannot be told from part of a name.
+  ok('and the refusal names the alternatives', /shared-name#/.test(amb.message));
 
   // Routing headers: the router routes from headers only.
   ok('a local model sends model_id and NO session_id',
@@ -1322,6 +1325,49 @@ console.log('grok: models published into the managed config');
     ok('an empty queue claims nothing', claimNewestOffer([], 5000, 1000).claim === null);
   }
 
+  // ---- telling near-identical models apart ----
+  // On chain right now: "deepseek-v4-flash", "deepseek v4 flash", and a ":web"
+  // variant of each. Four distinct models whose names differ only by
+  // punctuation — which is exactly the difference a config file erases.
+  {
+    const M = (id, name) => ({ id, name, isLocal: false, sessionId: '0xs' });
+    const all = [
+      M('0xc2c4b037ff12e0aa81178deac52aeed902b36189b9e6feae22b72324c9221130', 'deepseek-v4-flash'),
+      M('0x11a14c87772b8fe45d6c41a9136506f979aefabeaab759adb234d9335eab75de', 'deepseek-v4-flash:web'),
+      M('0xaaaa000000000000000000000000000000000000000000000000000000000001', 'deepseek v4 flash'),
+      M('0xbbbb000000000000000000000000000000000000000000000000000000000002', 'deepseek v4 flash:web'),
+    ];
+
+    const ids = all.map((m) => advertisedId(m, all));
+    ok('every model gets a distinct advertised id', new Set(ids).size === 4);
+    // The bug: comparing RAW names found no collision, so both were advertised
+    // bare — and grok's key sanitiser then collapsed them to one key, leaving a
+    // meaningless "-2" suffix on a row the user could not tell from the first.
+    const keys = ids.map((id) => grokModelKey(id));
+    ok('and a distinct grok config key, which is what -m resolves',
+      new Set(keys).size === 4);
+
+    // A real registered name contains a colon, so a colon-separated
+    // discriminator is indistinguishable from part of the name.
+    ok('the discriminator is # so it cannot be confused with a name',
+      ids.every((id) => !/:[0-9a-f]{8}$/.test(id)));
+    ok('a name that really contains a colon survives intact',
+      ids.some((id) => id.startsWith('deepseek-v4-flash:web#')));
+    ok('the discriminator is lower-case hex, like the ids it comes from',
+      ids.filter((id) => id.includes('#')).every((id) => /#[0-9a-f]{8}$/.test(id)));
+
+    // Round trip: what we advertise must come back to the SAME model. Picking
+    // the wrong one here would spend a session on a model nobody chose.
+    for (const m of all) {
+      const r = resolveModel(advertisedId(m, all), all);
+      ok(`"${m.name}" resolves back to itself`, r.ok && r.model.id === m.id);
+    }
+
+    // An unambiguous name stays clean — no suffix on models that need none.
+    const solo = [M('0xdead', 'llama-4'), M('0xbeef', 'qwen-3')];
+    ok('an unambiguous name is left alone', advertisedId(solo[0], solo) === 'llama-4');
+  }
+
   // ---- the name grok shows must START with the model ----
   // grok's picker truncates the name hard: with a "Morpheus: " prefix every row
   // read `Morpheu…`, so the one thing the user is choosing between was the part
@@ -1345,6 +1391,19 @@ console.log('grok: models published into the managed config');
     // against the real TUI. A name that overflows loses its tail, which is the
     // provenance, so the budget is the check.
     ok('the whole name fits the picker budget', name.length <= 30);
+
+    // A disambiguated model already spends the budget on its discriminator.
+    // Adding the tail would overflow, and the tail is what gets cut — so the
+    // row would be long AND unbranded. Identity wins.
+    const longToml = buildGrokModelsToml({
+      baseUrl: 'x', apiKey: 'k',
+      models: [{ id: 'deepseek-v4-flash#c2c4b037', label: 'ignored' }],
+    });
+    const longName = /name = "([^"]*)"/.exec(longToml)[1];
+    ok('a disambiguated model keeps its discriminator',
+      longName.endsWith('#c2c4b037'));
+    ok('and drops the branding rather than overflowing',
+      !longName.includes('morpheus') && longName.length <= 30);
   }
 
   // ---- what grok is told about ----

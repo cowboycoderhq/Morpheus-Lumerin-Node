@@ -38,6 +38,15 @@ export type GrokModelInput = {
   label: string;
 };
 
+/**
+ * How much room grok's picker gives a model name before it truncates.
+ *
+ * Measured against the real TUI, not guessed: at 38 and 39 characters the row
+ * was cut, at 26 and 28 it was shown whole. Anything beyond this loses its TAIL
+ * first, so what goes here decides what survives.
+ */
+export const GROK_NAME_BUDGET = 30;
+
 export type GrokModelsConfigInput = {
   baseUrl: string;
   apiKey: string;
@@ -135,7 +144,18 @@ export function buildGrokModelsToml(input: GrokModelsConfigInput): string {
     // because it is the one that gets said properly elsewhere — using a model
     // with no session returns a refusal that explains it in a sentence and the
     // app offers to open one. Provenance has no second chance to be shown.
-    lines.push(`name = ${tomlString(`${model.id} · morpheus`)}`);
+    // Identity first, and identity WINS when both cannot fit. A disambiguated
+    // id ("deepseek-v4-flash#c2c4b037") already spends the budget, and adding
+    // the tail would push it past the picker's width — where the tail is what
+    // gets cut anyway, so the row would be long AND unbranded. Dropping the
+    // tail deliberately keeps the discriminator, which is the whole reason that
+    // model needed a longer name.
+    const tail = ' · morpheus';
+    const name =
+      model.id.length + tail.length <= GROK_NAME_BUDGET
+        ? `${model.id}${tail}`
+        : model.id;
+    lines.push(`name = ${tomlString(name)}`);
     lines.push(`base_url = ${tomlString(input.baseUrl)}`);
     lines.push(`api_key = ${tomlString(input.apiKey)}`);
     // The credential that actually gets through. grok treats a loopback URL as

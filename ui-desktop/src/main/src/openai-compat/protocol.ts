@@ -227,21 +227,50 @@ export function admitRequest(
 }
 
 /**
+ * How a terminal will end up seeing this name once punctuation stops mattering.
+ *
+ * Two models called "deepseek-v4-flash" and "deepseek v4 flash" are different
+ * models on chain and identical to a config file: grok's key sanitiser turns
+ * both into `morpheus-deepseek-v4-flash`, so the picker offered two rows that
+ * differed by nothing a user could see, and the second one was suffixed `-2`.
+ * Collision has to be judged in the space the NAME LANDS IN, not the space it
+ * was written in.
+ */
+function normalizedNameKey(name: string): string {
+  return String(name ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
  * The name a client sees for a model.
  *
- * Morpheus model names are NOT unique — several providers can register the same
- * name — while OpenAI clients treat `model` as a unique key and show it in a
- * picker. So a name is used bare only when it is unambiguous among the models
- * actually being advertised; otherwise it is suffixed with a short id prefix.
- * The raw hex32 id always resolves too, so a script that hardcodes one keeps
+ * Morpheus model names are NOT unique — several providers can register the
+ * same one — while OpenAI clients treat `model` as a unique key and show it in
+ * a picker. A name is used bare only when it is unambiguous; otherwise it
+ * carries a short id so the two can be told apart and picked deliberately.
+ *
+ * TWO THINGS THIS GETS RIGHT THAT THE OBVIOUS VERSION DOES NOT:
+ *
+ *  - Ambiguity is judged on the NORMALIZED name (see above), because that is
+ *    what a terminal's config key collapses to. Comparing raw names let four
+ *    distinct chain models reduce to two grok keys.
+ *  - The separator is `#`, not `:`. Real registered names contain colons —
+ *    `deepseek-v4-flash:web` is on chain right now — so a colon-separated
+ *    discriminator is indistinguishable from part of a name. `#` appears in no
+ *    model name and survives every config sanitiser as a word break.
+ *
+ * The raw hex32 id always resolves too, so a script that hardcoded one keeps
  * working when a name later collides.
  */
 export function advertisedId(model: UsableModel, all: UsableModel[]): string {
-  const sameName = all.filter((m) => m.name === model.name);
-  if (sameName.length <= 1) {
+  const mine = normalizedNameKey(model.name);
+  const collides = all.filter((m) => normalizedNameKey(m.name) === mine);
+  if (collides.length <= 1) {
     return model.name;
   }
-  return `${model.name}:${model.id.replace(/^0x/, '').slice(0, 8)}`;
+  return `${model.name}#${model.id.replace(/^0x/, '').slice(0, 8).toLowerCase()}`;
 }
 
 /**
