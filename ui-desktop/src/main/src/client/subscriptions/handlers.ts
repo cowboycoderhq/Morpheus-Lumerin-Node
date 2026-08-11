@@ -1042,7 +1042,16 @@ const readOpenAiConfig = (): OpenAiApiConfig => {
       : base.maxDailyStakeMor,
     maxDailySessions: Number.isFinite(Number(stored.maxDailySessions))
       ? Number(stored.maxDailySessions)
-      : base.maxDailySessions
+      : base.maxDailySessions,
+    // Anything that is not a non-empty string is dropped rather than kept: these
+    // ids are written into a terminal agent's config file, and a null or an
+    // object there breaks the whole file, not just its own entry.
+    starredModelIds: Array.isArray(stored.starredModelIds)
+      ? stored.starredModelIds.filter(
+          (id: unknown): id is string => typeof id === 'string' && id.length > 0
+        )
+      : base.starredModelIds,
+    offerSessionOnUse: Boolean(stored.offerSessionOnUse)
   }
   if (merged.token !== stored.token) {
     setOpenAiApiSetting(merged)
@@ -1067,6 +1076,39 @@ const ensureOpenAiServer = (): OpenAiCompatServer => {
       config: readOpenAiConfig,
       onActivity: (activity) => {
         lastExternalActivity = activity
+      },
+      onSessionSeen: (modelId) => {
+        const cfg = readOpenAiConfig()
+        if (cfg.starredModelIds?.includes(modelId)) return
+        // Written straight to the store rather than through setOpenAiApiConfig:
+        // this fires from inside a model-list rebuild, and that path restarts
+        // the server on change.
+        setOpenAiApiSetting({
+          ...cfg,
+          starredModelIds: [...(cfg.starredModelIds ?? []), modelId]
+        })
+        log.info(`openai-compat: ${modelId} starred — it had an open session`)
+      },
+      // A terminal asked for a starred model with no session. The request has
+      // already been refused; this only offers to open one. The picker is the
+      // same one the relay used, so there is a single place where a session is
+      // chosen and a single place where the spend is confirmed.
+      onSessionRequired: (model) => {
+        const win = bringAppToFront()
+        if (!win) {
+          // Settle rather than leave it in flight: with no window there is
+          // nothing to answer the offer, and an unanswered one would block
+          // every later offer for this model until it expired.
+          ensureOpenAiServer().settleOffer(model.id, 'declined')
+          log.info(`openai-compat: no window to offer a session for ${model.advertised}`)
+          return
+        }
+        const requestId = nextOfferRequestId++
+        offerModelByRequestId.set(requestId, model.id)
+        win.webContents.send('grok-picker-request', {
+          requestId,
+          args: model.advertised
+        })
       },
       log: (message) => log.info(message)
     })
@@ -1189,6 +1231,17 @@ const provisionOpencodePlugins = async (api: OpenAiApiConfig) => {
 let grokSupervisor: GrokSupervisor | null = null
 const grokPicker = new Map<number, (outcome: { opened: boolean; note?: string }) => void>()
 
+/**
+ * Picker requests raised by the ENDPOINT rather than by the relay.
+ *
+ * Both render the same modal, so both travel on one channel and are told apart
+ * by request id. The offer ids start far above anything the relay's own counter
+ * reaches, because two live sources numbering from zero would eventually answer
+ * each other's dialogs.
+ */
+const offerModelByRequestId = new Map<number, string>()
+let nextOfferRequestId = 1_000_000_000
+
 const ensureGrokSupervisor = (): GrokSupervisor => {
   if (!grokSupervisor) {
     grokSupervisor = new GrokSupervisor({
@@ -1244,17 +1297,6 @@ const ensureGrokSupervisor = (): GrokSupervisor => {
  * a model in the picker whose session has expired fails inside grok, where the
  * user has no way to see why.
  */
-const knownGrokModelsPath = () => path.join(opencodeDir(), 'grok-known-models.json')
-
-const readKnownGrokModels = (): { id: string; label: string }[] => {
-  try {
-    const raw = JSON.parse(fs.readFileSync(knownGrokModelsPath(), 'utf8'))
-    return Array.isArray(raw) ? raw.filter((m) => m && typeof m.id === 'string') : []
-  } catch {
-    return []
-  }
-}
-
 export const refreshGrokModels = async () => {
   const api = readOpenAiConfig()
   if (!api.enabled || !ensureOpenAiServer().isRunning()) {
@@ -1272,18 +1314,11 @@ export const refreshGrokModels = async () => {
     .advertisedModels(true)
     .catch(() => [] as { id: string; label: string; isLocal: boolean }[])
 
-  // Drops local models and merges into the sticky set — both decisions live in
-  // one tested function rather than here, where nothing could check them.
-  const models = selectGrokModels(readKnownGrokModels(), advertised)
-  try {
-    fs.mkdirSync(path.dirname(knownGrokModelsPath()), { recursive: true })
-    fs.writeFileSync(knownGrokModelsPath(), JSON.stringify(models, null, 2), {
-      encoding: 'utf8',
-      mode: 0o600
-    })
-  } catch (e) {
-    log.warn(`grok models: could not remember the model list — ${String(e)}`)
-  }
+  // Drops local models — the one decision this makes, kept in a tested function
+  // rather than here, where nothing could check it. What is stable across
+  // restarts now comes from the starred set the endpoint advertises, not from a
+  // second list remembered on the side.
+  const models = selectGrokModels(advertised)
 
   writeGrokModelsConfig(
     managedConfigPath(),
@@ -1385,6 +1420,20 @@ export const grokPickerDone = async (payload: {
   note?: string
 }) => {
   grokPicker.get(payload.requestId)?.({ opened: payload.opened, note: payload.note })
+
+  // An endpoint-raised offer has no waiting turn to resolve — what it needs is
+  // the gate updated, so a decline buys quiet and an open drops the cached model
+  // list before the agent resends.
+  const offeredModelId = offerModelByRequestId.get(payload.requestId)
+  if (offeredModelId !== undefined) {
+    offerModelByRequestId.delete(payload.requestId)
+    ensureOpenAiServer().settleOffer(offeredModelId, payload.opened ? 'opened' : 'declined')
+    if (payload.opened) {
+      // Publish immediately: the model just stopped being "no session", and the
+      // agent is about to be told to try again.
+      await refreshGrokModels().catch((e) => log.warn(`grok models: ${String(e)}`))
+    }
+  }
   return { ok: true }
 }
 

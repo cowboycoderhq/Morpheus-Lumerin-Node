@@ -25,11 +25,15 @@ import {
   admitRequest,
   advertisedId,
   errorBody,
+  mergeStarredModels,
+  needsSession,
   resolveModel,
   routingHeaders,
+  sessionRequiredMessage,
   toModelList,
   type UsableModel,
 } from './protocol';
+import { SessionOfferGate } from './session-offers';
 import {
   buildCatalog,
   checkCaps,
@@ -56,6 +60,20 @@ export type OpenAiApiConfig = {
   maxDailyStakeMor: number;
   /** Ceiling on how MANY sessions may be opened today. */
   maxDailySessions: number;
+  /**
+   * Marketplace models (hex32 chain ids) the user wants available in a terminal.
+   *
+   * Advertised whether or not a session is open, which is what makes the model
+   * list stable enough for agents that read it only at startup. Using one with
+   * no session is refused, not served.
+   */
+  starredModelIds?: string[];
+  /**
+   * May a refusal bring the app forward to offer a session? Off by default:
+   * until the user has said yes, a request from a terminal can be refused but
+   * must not take over their screen.
+   */
+  offerSessionOnUse?: boolean;
 };
 
 export type ExternalActivity = {
@@ -80,6 +98,21 @@ export type ServerDeps = {
    * it is owner-settable; main mirrors it. Omitted → the documented fallback.
    */
   maxSessionSeconds?: () => number;
+  /**
+   * A starred model was used with no session open.
+   *
+   * The app answers this by bringing itself forward with the session picker. It
+   * is called at most once per model per offer — the gate upstream of it has
+   * already decided — and it must never itself open a session: the point of the
+   * whole path is that a human approves the spend in the app's own UI.
+   */
+  onSessionRequired?: (model: { id: string; name: string; advertised: string }) => void;
+  /**
+   * A model with an open session was observed. The app stars it, so it keeps
+   * being advertised after the session ends. Called on every rebuild, so the
+   * implementation must be cheap and idempotent.
+   */
+  onSessionSeen?: (modelId: string) => void;
 };
 
 export const DEFAULT_PORT = 8137;
@@ -98,6 +131,10 @@ export const defaultConfig = (): OpenAiApiConfig => ({
   maxStakeMor: 1,
   maxDailyStakeMor: 5,
   maxDailySessions: 10,
+  starredModelIds: [],
+  // Off until the user asks for it: being interrupted by a window you did not
+  // summon is not a default anyone should inherit.
+  offerSessionOnUse: false,
 });
 
 // A prompt body is small; anything large is either a mistake or an attempt to
@@ -147,6 +184,11 @@ export class OpenAiCompatServer {
   /** Applies the current config: starts, stops, or rebinds as needed. */
   async sync(): Promise<void> {
     const cfg = this.deps.config();
+    // The config decides part of what is advertised — starring a model adds it
+    // to the list. Without dropping the cache here, a model the user just
+    // starred stays invisible for up to 30 seconds, which reads as "starring is
+    // broken" and is indistinguishable from it.
+    this.modelsCache = null;
     if (!cfg.enabled) {
       await this.stop();
       return;
@@ -293,6 +335,8 @@ export class OpenAiCompatServer {
    */
   private modelsCache: { at: number; models: UsableModel[] } | null = null;
   private static readonly MODELS_TTL_MS = 30_000;
+  /** Decides whether a refusal may also interrupt the user. See session-offers.ts. */
+  private readonly offers = new SessionOfferGate();
 
   /**
    * Resolve an identifier and return the advertised list in ONE pass.
@@ -317,22 +361,42 @@ export class OpenAiCompatServer {
     };
   }
 
+  /**
+   * Record what the user did with an offer to open a session.
+   *
+   * `opened` also drops the model cache. Without that, the request that
+   * triggered the offer would be refused again for up to 30 seconds after the
+   * user paid — the worst possible moment to serve a stale list.
+   */
+  settleOffer(modelId: string, outcome: 'opened' | 'declined'): void {
+    this.offers.settle(modelId, outcome);
+    if (outcome === 'opened') {
+      this.modelsCache = null;
+    }
+  }
+
   private labelled(
     models: UsableModel[],
   ): { id: string; label: string; isLocal: boolean }[] {
-    return toModelList(models, Math.floor(Date.now() / 1000)).data.map(
-      (entry) => {
-        const isLocal = entry.owned_by === 'morpheus-local';
-        return {
-          id: entry.id,
-          label: isLocal ? `${entry.id} (local)` : `${entry.id} (session)`,
-          // Callers that publish to a CODING agent need this: a local model
-          // cannot serve tools and streaming together, which such an agent
-          // always asks for, so listing it is offering a guaranteed failure.
-          isLocal,
-        };
-      },
-    );
+    return models.map((model) => {
+      const id = advertisedId(model, models);
+      // Say which of the three a model is. "(no session)" is the one that
+      // matters: it is offered on purpose, and picking it costs money rather
+      // than answering, so the picker should not imply otherwise.
+      const state = model.isLocal
+        ? 'local'
+        : needsSession(model)
+          ? 'no session'
+          : 'session';
+      return {
+        id,
+        label: `${id} (${state})`,
+        // Callers that publish to a CODING agent need this: a local model
+        // cannot serve tools and streaming together, which such an agent
+        // always asks for, so listing it is offering a guaranteed failure.
+        isLocal: model.isLocal,
+      };
+    });
   }
 
   /** Every model a request could actually succeed against, right now. */
@@ -373,9 +437,12 @@ export class OpenAiCompatServer {
       isLocal: true,
     }));
 
+    const starred = this.deps.config().starredModelIds ?? [];
+
     if (!address) {
-      this.modelsCache = { at: Date.now(), models };
-      return models;
+      const withStarred = mergeStarredModels(models, starred);
+      this.modelsCache = { at: Date.now(), models: withStarred };
+      return withStarred;
     }
 
     // Open sessions are the newest, so a couple of pages is plenty to decide
@@ -402,12 +469,21 @@ export class OpenAiCompatServer {
           isLocal: false,
           sessionId: s.Id,
         });
+        // Having paid for a model once is the clearest possible statement that
+        // you want it available, so it stars itself. This is what keeps the
+        // list stable without asking the user to curate anything: sessions get
+        // opened from the Chat tab, the keep-alive loop and the endpoint, and
+        // noticing them HERE covers all three rather than each separately.
+        this.deps.onSessionSeen?.(s.ModelAgentId);
       }
       if (sessions.length < 200) break;
     }
 
-    this.modelsCache = { at: Date.now(), models };
-    return models;
+    // Starred last, so a model that already has an open session above keeps its
+    // session entry rather than being shadowed by a sessionless one.
+    const withStarred = mergeStarredModels(models, starred, nameById);
+    this.modelsCache = { at: Date.now(), models: withStarred };
+    return withStarred;
   }
 
   /**
@@ -993,16 +1069,61 @@ export class OpenAiCompatServer {
       return;
     }
 
-    const models = await this.usableModels();
+    let models = await this.usableModels();
     const resolution = resolveModel(body?.model, models);
     if (!resolution.ok) {
       // A marketplace model the user owns but has no session for is the single
       // most likely miss, so say what to do about it rather than "not found".
+      //
+      // NOTE: this must stay a refusal. Resolving an unknown model to some
+      // default would look helpful and bill for it — grok sends a hidden
+      // title-generation request hardcoded to `grok-4.5` at whatever base URL
+      // the selected model uses, so a fallback would turn every grok session
+      // into a second paid completion the user never asked for.
       sendJson(res, 404, errorBody(resolution.message, resolution.code));
       return;
     }
 
-    const model = resolution.model;
+    let model = resolution.model;
+
+    // Starred, but nothing to serve it with.
+    if (needsSession(model)) {
+      // Re-read before refusing. The list is cached for 30s, so a user who just
+      // opened this very session in the app would otherwise be told they have
+      // none — the most infuriating possible moment to be wrong.
+      const fresh = await this.usableModels(true);
+      const again = resolveModel(body?.model, fresh);
+      if (again.ok && !needsSession(again.model)) {
+        models = fresh;
+        model = again.model;
+      } else {
+        const advertised = advertisedId(model, models);
+        let offerNote = 'not offered (turned off)';
+        // Config first: asking the gate would claim the model's single in-flight
+        // slot, so a refusal while offers are off would silence the first real
+        // offer after the user turns them on.
+        if (this.deps.config().offerSessionOnUse) {
+          const decision = this.offers.request(model.id);
+          offerNote = decision.offer ? 'offering' : decision.reason;
+          if (decision.offer) {
+            this.deps.onSessionRequired?.({
+              id: model.id,
+              name: model.name,
+              advertised,
+            });
+          }
+        }
+        this.deps.log?.(
+          `openai-compat: refused ${advertised} — session_required; ${offerNote}`,
+        );
+        sendJson(
+          res,
+          402,
+          errorBody(sessionRequiredMessage(advertised), 'session_required'),
+        );
+        return;
+      }
+    }
     this.deps.onActivity?.({
       at: Date.now(),
       modelId: model.id,

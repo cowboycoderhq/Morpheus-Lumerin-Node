@@ -3,9 +3,9 @@ import {
   buildGrokLaunchScript,
   buildGrokModelsToml,
   grokModelKey,
-  mergeKnownModels,
   selectGrokModels,
 } from '../../src/main/src/grok/models-config.ts';
+import { SessionOfferGate } from '../../src/main/src/openai-compat/session-offers.ts';
 // Node-runnable assertions over the PR's exported substrate utils.
 // Run: npm run logic   (uses vite-node to transform the .ts/.tsx/.js sources)
 import {
@@ -24,6 +24,9 @@ import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import {
   admitRequest,
   bearerMatches,
+  mergeStarredModels,
+  needsSession,
+  sessionRequiredMessage,
   toModelList,
   resolveModel,
   routingHeaders,
@@ -1055,47 +1058,130 @@ console.log('grok: models published into the managed config');
   // own IdP session token on any endpoint it reads as first-party xAI — which
   // a 127.0.0.1 URL always is — so the key has to travel in a header it does
   // not rewrite, or every request arrives as an unexplainable 401.
-  // ---- the sticky list ----
-  // grok does not rebuild its model list when the config changes, so a list
-  // tracking live sessions exactly forced a restart on EVERY session.
+  // ---- starred models: what makes the published list stand still ----
+  // Every terminal agent reads its model list once, at startup. While the list
+  // held exactly what had a session, it changed under them and the only remedy
+  // was a restart. Starred models are the user's own set, so it changes when
+  // they say so and not when a session happens to expire.
   {
-    const a = [{ id: 'deepseek-v4-pro', label: 'deepseek-v4-pro (session)' }];
-    const b = [{ id: 'deepseek-v4-flash', label: 'deepseek-v4-flash (session)' }];
+    const localModel = { id: '0xlocal', name: 'qwen', isLocal: true };
+    const opened = {
+      id: '0xopen',
+      name: 'deepseek-v4-pro',
+      isLocal: false,
+      sessionId: '0xsess',
+    };
 
-    ok('a first session seeds the list', mergeKnownModels([], a).length === 1);
-    // THE point: a model survives its own session ending.
-    ok('a model stays listed after its session closes',
-      mergeKnownModels(a, []).map((m) => m.id).join() === 'deepseek-v4-pro');
-    ok('a second model is added, not swapped in',
-      mergeKnownModels(a, b).map((m) => m.id).join() === 'deepseek-v4-flash,deepseek-v4-pro');
-    ok('re-opening the same model does not duplicate it',
-      mergeKnownModels(a, a).length === 1);
-    ok('a live label wins over a remembered one',
-      mergeKnownModels([{ id: 'x', label: 'stale' }], [{ id: 'x', label: 'fresh' }])[0].label === 'fresh');
-    ok('the order is stable, so an unchanged set writes an identical file',
-      JSON.stringify(mergeKnownModels(a, b)) === JSON.stringify(mergeKnownModels(b, a)));
-    ok('junk entries are dropped rather than written as broken TOML',
-      mergeKnownModels([{ label: 'no id' }, null], a).length === 1);
+    ok('a starred model is advertised with no session at all',
+      mergeStarredModels([localModel], ['0xstar']).some((m) => m.id === '0xstar'));
+    // A merge that overwrote the session entry would turn a working model into
+    // a refused one — a downgrade that costs the user a session they paid for.
+    ok('a starred model that already has a session keeps it',
+      mergeStarredModels([opened], ['0xopen'])
+        .find((m) => m.id === '0xopen').sessionId === '0xsess');
+    ok('starring the same model twice lists it once',
+      mergeStarredModels([], ['0xstar', '0xstar']).length === 1);
+    ok('a case difference does not create a duplicate TOML table',
+      mergeStarredModels([opened], ['0xOPEN']).length === 1);
+    ok('a blank id is dropped rather than published as a model',
+      mergeStarredModels([], ['', '0xstar']).length === 1);
+    ok('a known name is preferred to the raw chain id',
+      mergeStarredModels([], ['0xstar'], new Map([['0xstar', 'pretty']]))[0].name === 'pretty');
   }
 
-  // ---- local models are never published to grok ----
+  // ---- a model with no session is refused, never routed ----
+  {
+    const localModel = { id: '0xlocal', name: 'qwen', isLocal: true };
+    const opened = { id: '0xopen', name: 'pro', isLocal: false, sessionId: '0xsess' };
+    const starved = { id: '0xstar', name: 'deepseek-v4-flash', isLocal: false };
+
+    ok('a marketplace model with no session needs one', needsSession(starved));
+    ok('a local model never needs a session', !needsSession(localModel));
+    ok('a model holding a session does not need another', !needsSession(opened));
+
+    // THE trap this closes: the router reads "no session_id" as "serve this
+    // locally", so forwarding a starved model would answer from a DIFFERENT
+    // model under the requested name — wrong, and shaped exactly like right.
+    let threw = false;
+    try {
+      routingHeaders(starved);
+    } catch {
+      threw = true;
+    }
+    ok('routing a model with no session throws instead of mis-routing', threw);
+    ok('routing a model WITH a session is untouched',
+      routingHeaders(opened).session_id === '0xsess');
+    ok('the refusal names the model the user actually typed',
+      sessionRequiredMessage('deepseek-v4-flash').includes('deepseek-v4-flash'));
+  }
+
+  // ---- the offer gate: agents are concurrent, and they retry ----
+  {
+    let clock = 0;
+    const gate = new SessionOfferGate({
+      now: () => clock,
+      cooldownMs: 1000,
+      inFlightTtlMs: 500,
+    });
+
+    ok('the first use of a starred model is offered a session',
+      gate.request('m').offer === true);
+    // Measured: grok fires a hidden title-generation call alongside the real
+    // turn, and both can name the same model. Two dialogs for one intent is a
+    // user paying twice for one thing.
+    ok('a concurrent request for the same model does not raise a second offer',
+      gate.request('m').offer === false);
+    ok('a different model is still offered', gate.request('other').offer === true);
+
+    gate.settle('m', 'declined');
+    ok('declining puts that model quiet', gate.request('m').reason === 'cooling_down');
+    // Measured: grok reissued a failing request 8 times in 2 minutes. With no
+    // cooldown, cancelling only means the window returns until you give in and
+    // click the expensive button — a purchase made by fatigue.
+    clock += 999;
+    ok('it is still quiet a moment before the cooldown ends',
+      gate.request('m').offer === false);
+    clock += 2;
+    ok('and offerable again once the cooldown has passed',
+      gate.request('m').offer === true);
+
+    gate.settle('m', 'opened');
+    ok('opening a session clears the model outright', gate.request('m').offer === true);
+
+    const stale = new SessionOfferGate({
+      now: () => clock,
+      cooldownMs: 1000,
+      inFlightTtlMs: 500,
+    });
+    ok('an offer in flight holds the model',
+      stale.request('z').offer === true && stale.request('z').offer === false);
+    // A renderer that is closed or never looked at would otherwise wedge this
+    // model as "asking" forever, with no way back.
+    clock += 501;
+    ok('an unanswered offer expires rather than wedging the model',
+      stale.request('z').offer === true);
+  }
+
+  // ---- what grok is told about ----
   {
     const adv = [
       { id: 'qwen2.5-1.5b-instruct', label: 'qwen (local)', isLocal: true },
       { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro (session)', isLocal: false },
+      { id: 'deepseek-v4-flash', label: 'deepseek-v4-flash (no session)', isLocal: false },
     ];
-    const picked = selectGrokModels([], adv).map((m) => m.id);
+    const picked = selectGrokModels(adv).map((m) => m.id);
     ok('a session-backed model is published', picked.includes('deepseek-v4-pro'));
+    // The redesign in one assertion: a starred model with no session is in the
+    // picker, and buying it is what using it triggers.
+    ok('a starred model with NO session is published too',
+      picked.includes('deepseek-v4-flash'));
     // grok always sends tools AND stream; the local runtime always refuses that
     // pair. Listing it is offering a guaranteed failure.
-    ok('a LOCAL model is never published to grok', !picked.includes('qwen2.5-1.5b-instruct'));
-    ok('and it cannot sneak in through the remembered set',
-      !selectGrokModels([{ id: 'qwen2.5-1.5b-instruct', label: 'x' }], [])
-        .map((m) => m.id)
-        .includes('qwen2.5-1.5b-instruct') === false);
-    ok('stickiness still holds for session models',
-      selectGrokModels([{ id: 'deepseek-v4-flash', label: 'f' }], adv)
-        .map((m) => m.id).join() === 'deepseek-v4-flash,deepseek-v4-pro');
+    ok('a LOCAL model is never published to grok',
+      !picked.includes('qwen2.5-1.5b-instruct'));
+    ok('the order is stable, so an unchanged set rewrites an identical file',
+      JSON.stringify(selectGrokModels(adv)) ===
+        JSON.stringify(selectGrokModels([...adv].reverse())));
   }
 
   // The launch command must select the model by its CONFIG KEY: `-m` resolves

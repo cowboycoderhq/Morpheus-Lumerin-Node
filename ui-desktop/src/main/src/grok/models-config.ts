@@ -175,38 +175,15 @@ export function buildGrokLaunchScript(input: {
 }
 
 /**
- * The set of models to publish, given what we knew and what is live now.
+ * What to publish to grok, out of what the endpoint advertises.
  *
- * STICKY: it only ever grows. grok reads its config at startup and does not
- * rebuild its model list when the file changes, so a list that tracked live
- * sessions exactly forced a restart every time a session opened — the user
- * opens a session, restarts, still cannot see it, and concludes it is broken.
- * A set that only grows means the file is unchanged for every session after the
- * first with a given model, so there is nothing to reload.
- *
- * The cost is honest and worth stating: an entry can outlive its session, so
- * the picker lists models that are not currently open. Picking one gets a clear
- * "no open session" from the endpoint, which is a better failure than an absent
- * model the user paid for.
- */
-export function mergeKnownModels(
-  known: readonly GrokModelInput[],
-  live: readonly GrokModelInput[],
-): GrokModelInput[] {
-  const byId = new Map<string, GrokModelInput>();
-  for (const m of known) {
-    if (m?.id) byId.set(m.id, { id: m.id, label: m.label || m.id });
-  }
-  // Live entries win on label: a session-backed label is fresher than a
-  // remembered one.
-  for (const m of live) {
-    if (m?.id) byId.set(m.id, { id: m.id, label: m.label || m.id });
-  }
-  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
-}
-
-/**
- * What to publish to grok, from what we knew and what the endpoint advertises.
+ * This used to keep its own STICKY set, growing forever, because grok reads its
+ * config once at startup: a list that tracked live sessions exactly changed
+ * every time one opened, and the user had to restart grok to see it. That
+ * workaround is gone, and the stability now comes from the endpoint itself —
+ * it advertises the user's STARRED models whether or not a session is open, so
+ * this list only changes when the user changes what they starred. One place
+ * decides what exists; this function only decides what grok is told about.
  *
  * Local models are DROPPED. grok is a coding agent: it always sends tools and
  * stream together, and the local runtime answers that with "Cannot use tools
@@ -214,11 +191,12 @@ export function mergeKnownModels(
  * up as a choice.
  */
 export function selectGrokModels(
-  known: readonly GrokModelInput[],
   advertised: readonly { id: string; label: string; isLocal?: boolean }[],
 ): GrokModelInput[] {
-  const live = advertised
-    .filter((m) => !m.isLocal)
-    .map((m) => ({ id: m.id, label: m.label }));
-  return mergeKnownModels(known, live);
+  const byId = new Map<string, GrokModelInput>();
+  for (const m of advertised) {
+    if (!m?.id || m.isLocal) continue;
+    byId.set(m.id, { id: m.id, label: m.label || m.id });
+  }
+  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
