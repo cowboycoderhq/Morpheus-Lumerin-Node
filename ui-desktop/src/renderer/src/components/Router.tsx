@@ -192,7 +192,28 @@ const GrokStartHost = withClient(({ client }: any) => {
       setRequest(payload);
     };
     (window as any).ipcRenderer?.on?.('grok-picker-request', onRequest);
+
+    // Claim anything raised before this host existed.
+    //
+    // This component lives inside the signed-in layout, so while the app is
+    // LOCKED it is not mounted and the event above lands nowhere: the window
+    // came forward showing the wallet screen, and the request that asked for it
+    // was already lost. Mounting is exactly the moment that stops being true.
+    let cancelled = false;
+    void (async () => {
+      try {
+        const pending = await client.getPendingSessionOffer();
+        if (pending && !cancelled) {
+          await onRequest(null, pending);
+        }
+      } catch {
+        // Nothing to claim, or the bridge is not ready — the next offer still
+        // arrives on the channel above.
+      }
+    })();
+
     return () => {
+      cancelled = true;
       (window as any).ipcRenderer?.removeListener?.('grok-picker-request', onRequest);
     };
   }, [client]);

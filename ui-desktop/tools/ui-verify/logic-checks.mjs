@@ -5,7 +5,10 @@ import {
   grokModelKey,
   selectGrokModels,
 } from '../../src/main/src/grok/models-config.ts';
-import { SessionOfferGate } from '../../src/main/src/openai-compat/session-offers.ts';
+import {
+  SessionOfferGate,
+  claimNewestOffer,
+} from '../../src/main/src/openai-compat/session-offers.ts';
 // Node-runnable assertions over the PR's exported substrate utils.
 // Run: npm run logic   (uses vite-node to transform the .ts/.tsx/.js sources)
 import {
@@ -1162,6 +1165,33 @@ console.log('grok: models published into the managed config');
       stale.request('z').offer === true);
   }
 
+  // ---- an offer raised while the app was locked ----
+  // The picker host lives inside the signed-in layout, so a locked app is not
+  // mounted to receive one: the window came forward on the wallet screen and
+  // the offer vanished, while the gate still believed it was in flight. It is
+  // queued now, and claimed when the host mounts — which is what unlocking does.
+  {
+    const q = (requestId, modelId, at) => [requestId, { modelId, advertised: modelId, at }];
+
+    const fresh = claimNewestOffer([q(1, '0xa', 100), q(2, '0xb', 400)], 500, 1000);
+    ok('the newest queued offer is the one shown', fresh.claim.requestId === 2);
+    ok('and nothing fresh is discarded', fresh.expired.length === 0);
+
+    // A spend prompt for a request made twenty minutes ago is an ambush.
+    const old = claimNewestOffer([q(1, '0xa', 0)], 5000, 1000);
+    ok('an offer past its window is not shown', old.claim === null);
+    ok('and it is reported so the gate can be released', old.expired[0].modelId === '0xa');
+    // Without releasing it the model stays "in flight" and can never be
+    // offered again — a dead end with no way back for the user.
+    ok('the expiry names the request to settle', old.expired[0].requestId === 1);
+
+    const mixed = claimNewestOffer([q(1, '0xa', 0), q(2, '0xb', 4900)], 5000, 1000);
+    ok('a stale offer does not hide a live one', mixed.claim.requestId === 2);
+    ok('and the stale one is still released', mixed.expired.length === 1);
+
+    ok('an empty queue claims nothing', claimNewestOffer([], 5000, 1000).claim === null);
+  }
+
   // ---- what grok is told about ----
   {
     const adv = [
@@ -1296,6 +1326,10 @@ console.log('grok: models published into the managed config');
     ['get-grok-status', 'getGrokStatus'],
     ['set-grok-enabled', 'setGrokEnabled'],
     ['grok-picker-done', 'grokPickerDone'],
+    // Added when a locked app proved it could swallow an offer whole: the
+    // picker host is inside the signed-in layout, so it is not mounted to
+    // receive one until the user unlocks.
+    ['get-pending-session-offer', 'getPendingSessionOffer'],
   ];
   for (const [ipcName, fnName] of CHANNELS) {
     ok(`${ipcName}: main exports its handler`,

@@ -54,6 +54,7 @@ const listeners = {
   'refresh-grok-models': handlers.refreshGrokModels,
   'set-grok-enabled': handlers.setGrokEnabled,
   'grok-picker-done': handlers.grokPickerDone,
+  'get-pending-session-offer': handlers.getPendingSessionOffer,
   'install-opencode': handlers.installOpencode,
   'open-in-opencode': handlers.openInOpencode,
   'set-opencode-cwd': handlers.setOpencodeCwd,
