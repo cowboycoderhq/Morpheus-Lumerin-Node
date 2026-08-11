@@ -120,7 +120,13 @@ export function buildGrokModelsToml(input: GrokModelsConfigInput): string {
     // `model` is what grok sends as the request's model field, so it must be
     // the id the endpoint advertises — not the display label, and not our key.
     lines.push(`model = ${tomlString(model.id)}`);
-    lines.push(`name = ${tomlString(`Morpheus: ${model.label}`)}`);
+    // NAME THE MODEL FIRST. grok's picker truncates this hard — with a
+    // "Morpheus: " prefix the row read `Morpheu…` and every entry looked
+    // identical, which is worse than no branding at all: the one thing the user
+    // is choosing between was the part that got cut. The provenance survives
+    // anyway in the config key (`morpheus-<id>`, what `-m` takes) and in the
+    // footer, which shows the whole string.
+    lines.push(`name = ${tomlString(model.label)}`);
     lines.push(`base_url = ${tomlString(input.baseUrl)}`);
     lines.push(`api_key = ${tomlString(input.apiKey)}`);
     // The credential that actually gets through. grok treats a loopback URL as

@@ -1176,6 +1176,38 @@ const browser = await chromium.launch();
     await p.screenshot({ path: `${SHOTS}/model-picker-price-toggle.png` });
   });
 
+  // --- the terminal PIN: visible, marketplace-only, and never a selection ----
+  // A model can be pinned so terminal agents list it without a session having
+  // been opened first. Two things must hold, and both have bitten already: a
+  // control inside a clickable row selects the row unless it stops the click,
+  // and a local model must not offer a pin at all (it is withheld from grok on
+  // purpose, so pinning one would promise what cannot happen).
+  await drive(page, 'model-picker-pin', `http://localhost:${PORT}/?case=model-picker`, async (p) => {
+    await p.waitForSelector('[data-testid="pin-model"]', { timeout: 20000 });
+
+    const rows = await p.locator('[data-testid="pin-model"]').count();
+    assert(rows === 3, `expected a pin on the 3 marketplace models, found ${rows}`);
+    // Scoped to the row itself. An earlier version matched any element
+    // CONTAINING the local model's name, which included the list and the modal
+    // — so it counted every other row's pin and failed on correct code.
+    const localPins = await p
+      .locator('[data-testid="model-row"][data-model-local="true"] [data-testid="pin-model"]')
+      .count();
+    assert(localPins === 0, `a LOCAL model offered ${localPins} terminal pins`);
+    const marketPins = await p
+      .locator('[data-testid="model-row"][data-model-local="false"] [data-testid="pin-model"]')
+      .count();
+    assert(marketPins === 3, `marketplace rows should each have a pin, found ${marketPins}`);
+
+    await p.evaluate(() => { window.__picked = []; });
+    await p.locator('[data-testid="pin-model"]').first().click();
+    await p.waitForTimeout(150);
+    const picked = await p.evaluate(() => window.__picked.length);
+    assert(picked === 0, `pinning selected the model (${picked} selections) — the click leaked to the row`);
+
+    await p.screenshot({ path: `${SHOTS}/model-picker-pin.png` });
+  });
+
   // --- sort: Standard / Cheapest / Most providers reorder the list -----------
   // Fixture prices/providers:  Test Model (min 0.001/s, 2 prov) · Aardvark
   // (0.009/s, 1) · Broadcast (0.004–0.006/s, 3). Read the on-screen order of the

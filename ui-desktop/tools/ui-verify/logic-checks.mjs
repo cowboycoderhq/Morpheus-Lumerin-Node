@@ -26,6 +26,10 @@ import {
 import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import { explainSessionOpenFailure } from '../../src/renderer/src/utils/session-errors.ts';
 import {
+  isStarredModel,
+  toggleStarredModel,
+} from '../../src/renderer/src/utils/starred-models.ts';
+import {
   applyPreference,
   nextPreference,
   preferenceOf,
@@ -1173,6 +1177,27 @@ console.log('grok: models published into the managed config');
       stale.request('z').offer === true);
   }
 
+  // ---- starring a model you have never opened ----
+  // Until this existed a model could only star itself, by having had a session,
+  // so a model you had never opened could not be reached from a terminal at all.
+  {
+    ok('starring adds it', toggleStarredModel([], '0xabc').join() === '0xabc');
+    ok('starring again removes it', toggleStarredModel(['0xabc'], '0xabc').length === 0);
+    // Chain ids arrive in either case; two spellings would look like the star
+    // silently failing, and would publish the same model twice.
+    ok('the same id in another case is the SAME star',
+      toggleStarredModel(['0xABC'], '0xabc').length === 0);
+    ok('and is recognised when read back', isStarredModel(['0xABC'], '0xabc'));
+    // The list is written into a config file an agent reads at startup. A set
+    // that reshuffles rewrites the file for unchanged content, and every
+    // rewrite is a moment for grok to be reading it.
+    ok('order is preserved, so an unchanged set writes an identical file',
+      toggleStarredModel(['0xa', '0xb'], '0xc').join() === '0xa,0xb,0xc');
+    ok('an empty id is ignored rather than starred',
+      toggleStarredModel(['0xa'], '').join() === '0xa');
+    ok('a null list is treated as empty', toggleStarredModel(null, '0xa').join() === '0xa');
+  }
+
   // ---- remembering which providers were good to you ----
   // Providers are 42-character addresses, distinguishable only by price. The
   // only way to learn one is unreachable is to pick it and lose a session — and
@@ -1295,6 +1320,24 @@ console.log('grok: models published into the managed config');
     ok('and the stale one is still released', mixed.expired.length === 1);
 
     ok('an empty queue claims nothing', claimNewestOffer([], 5000, 1000).claim === null);
+  }
+
+  // ---- the name grok shows must START with the model ----
+  // grok's picker truncates the name hard: with a "Morpheus: " prefix every row
+  // read `Morpheu…`, so the one thing the user is choosing between was the part
+  // that got cut. Branding goes last or not at all.
+  {
+    const toml = buildGrokModelsToml({
+      baseUrl: 'http://127.0.0.1:8137/v1',
+      apiKey: 'k',
+      models: [{ id: 'deepseek-v4-pro', label: 'deepseek-v4-pro (no session)' }],
+    });
+    const name = /name = "([^"]*)"/.exec(toml)[1];
+    ok('the name begins with the model, not a prefix',
+      name.startsWith('deepseek-v4-pro'));
+    ok('no branding prefix is reintroduced', !/^morpheus/i.test(name));
+    ok('and the state is still carried, after the identity',
+      name.includes('no session'));
   }
 
   // ---- what grok is told about ----
