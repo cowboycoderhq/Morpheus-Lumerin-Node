@@ -9,6 +9,7 @@ import {
   IconLoader2,
   IconSearch,
   IconWorldOff,
+  IconCheck,
 } from '@tabler/icons-react';
 import Modal from '../contracts/modals/Modal';
 import { sendToMainProcess } from '../../client/utils';
@@ -57,6 +58,8 @@ import {
   FailureAdvice,
   FailureDetails,
   FailureRaw,
+  SuccessCallout,
+  LaunchRow,
 } from './StartPickerModal.styles';
 
 // ============================================================================
@@ -75,6 +78,15 @@ type Props = {
   token: string;
   /** ALWAYS called exactly once per `open` — cancel, error, or success. */
   onDone: (outcome: { opened: boolean; note?: string }) => void;
+  /**
+   * Fired the moment a session opens, before the user dismisses anything.
+   *
+   * Separate from `onDone` because the terminal is waiting: settling the offer
+   * republishes the model list and drops the cached "no session", so a resend
+   * works while this dialog is still on screen. Waiting for a dismissal would
+   * mean the user sees "session opened" and their agent still gets refused.
+   */
+  onOpened?: (outcome: { note?: string }) => void;
 };
 
 type Step = 'model' | 'provider' | 'duration' | 'confirm';
@@ -216,7 +228,7 @@ const formatMor = (n: number | null | undefined, decimals = 4): string =>
 const truncateAddr = (addr: string): string =>
   addr.length > 14 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
 
-function StartPickerModal({ open, args, baseUrl, token, onDone }: Props) {
+function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Props) {
   const prefersReducedMotion = useReducedMotion();
 
   // `onDone` is called through a ref so a stale closure captured by the
@@ -260,6 +272,16 @@ function StartPickerModal({ open, args, baseUrl, token, onDone }: Props) {
 
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<ApiError | null>(null);
+  // The session that was opened. Holding it here is what turns a dialog that
+  // vanishes on success into one that tells you what happened and hands you the
+  // next step — which for a terminal session is always "now go use it".
+  const [opened, setOpened] = useState<{
+    model: string;
+    stakeMor: number;
+    note: string;
+  } | null>(null);
+  const [launching, setLaunching] = useState<'grok' | 'opencode' | null>(null);
+  const [launchNote, setLaunchNote] = useState<string | null>(null);
 
   const loadCatalog = async () => {
     setCatalogLoading(true);
@@ -451,10 +473,14 @@ function StartPickerModal({ open, args, baseUrl, token, onDone }: Props) {
       setOpenError(res.error);
       return;
     }
-    finish({
-      opened: true,
-      note: `Session opened for ${res.data.model} — staked ${formatMor(res.data.stakeMor)} MOR.`,
-    });
+    const note = `Session opened for ${res.data.model} — staked ${formatMor(
+      res.data.stakeMor,
+    )} MOR.`;
+    // Tell main NOW, not on dismiss: this releases the offer, drops the cached
+    // model list and republishes, so the waiting terminal can succeed on its
+    // next send rather than after the user gets round to closing this.
+    onOpened?.({ note });
+    setOpened({ model: res.data.model, stakeMor: res.data.stakeMor, note });
   };
 
   const handleBack = () => {
@@ -805,7 +831,77 @@ function StartPickerModal({ open, args, baseUrl, token, onDone }: Props) {
                       </CalloutText>
                     </WarningCallout>
                   )}
-                  {!quoteLoading && !quoteError && quote && quote.allowed && (
+                  {opened && (
+                    <>
+                      <SuccessCallout>
+                        <IconCheck size={20} stroke={2} />
+                        <CalloutText>
+                          <FailureHeadline>Session open</FailureHeadline>
+                          <FailureAdvice>{opened.note}</FailureAdvice>
+                        </CalloutText>
+                      </SuccessCallout>
+                      <StakeNote>
+                        Your terminal can use this model now. If an agent was
+                        waiting, send your request again — or start one here.
+                      </StakeNote>
+                      <LaunchRow>
+                        <PrimaryBtn
+                          disabled={launching !== null}
+                          onClick={async () => {
+                            setLaunching('grok');
+                            setLaunchNote(null);
+                            try {
+                              const r: any = await sendToMainProcess(
+                                'open-in-grok',
+                                { modelId: opened.model },
+                                120000,
+                              );
+                              setLaunchNote(
+                                r?.ok
+                                  ? 'grok is opening in a new terminal.'
+                                  : r?.message ?? 'Could not open grok.',
+                              );
+                            } catch (e: any) {
+                              setLaunchNote(String(e?.message ?? e));
+                            }
+                            setLaunching(null);
+                          }}
+                        >
+                          {launching === 'grok' ? 'Opening…' : 'Open in grok'}
+                        </PrimaryBtn>
+                        <GhostBtn
+                          disabled={launching !== null}
+                          onClick={async () => {
+                            setLaunching('opencode');
+                            setLaunchNote(null);
+                            try {
+                              const r: any = await sendToMainProcess(
+                                'open-in-opencode',
+                                { modelId: opened.model },
+                                120000,
+                              );
+                              setLaunchNote(
+                                r?.ok
+                                  ? 'opencode is opening in a new terminal.'
+                                  : r?.message ?? 'Could not open opencode.',
+                              );
+                            } catch (e: any) {
+                              setLaunchNote(String(e?.message ?? e));
+                            }
+                            setLaunching(null);
+                          }}
+                        >
+                          {launching === 'opencode'
+                            ? 'Opening…'
+                            : 'Open in opencode'}
+                        </GhostBtn>
+                      </LaunchRow>
+                      {/* Whatever happened, said plainly. A launch button that
+                          silently does nothing is the worst of both. */}
+                      {launchNote && <StakeNote>{launchNote}</StakeNote>}
+                    </>
+                  )}
+                  {!opened && !quoteLoading && !quoteError && quote && quote.allowed && (
                     <>
                       <SummaryCard>
                         <SummaryRow>
@@ -897,7 +993,13 @@ function StartPickerModal({ open, args, baseUrl, token, onDone }: Props) {
             )}
           </FooterLeft>
           <FooterRight>
-            {step === 'confirm' && quote && !quote.allowed ? (
+            {opened ? (
+              <PrimaryBtn
+                onClick={() => finish({ opened: true, note: opened.note })}
+              >
+                Done
+              </PrimaryBtn>
+            ) : step === 'confirm' && quote && !quote.allowed ? (
               <GhostBtn onClick={handleCancel}>Close</GhostBtn>
             ) : step === 'confirm' && quote && quote.allowed && openError ? (
               <>
