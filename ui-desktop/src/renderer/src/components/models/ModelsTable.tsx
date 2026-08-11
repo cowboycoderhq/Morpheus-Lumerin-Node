@@ -5,6 +5,7 @@ import styled from 'styled-components';
 import Card from 'react-bootstrap/Card';
 import { abbreviateAddress } from '../../utils';
 import { IconDownload, IconCopy, IconCoin, IconTag, IconHash, IconX } from '@tabler/icons-react';
+import { formatModelName, isSecureModel, SECURE_BADGE_TOOLTIP } from '../chat/utils';
 import ProgressBar from 'react-bootstrap/ProgressBar';
 import path from 'path';
 
@@ -255,6 +256,18 @@ const DownloadProgressContainer = styled.div`
   }
 `;
 
+const SecureTag = styled.span`
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: ${(p) => p.theme.colors.morMain};
+  border: 1px solid ${(p) => p.theme.colors.morMain};
+  white-space: nowrap;
+`;
+
 function ModelCard({ onSelect, model, openSelectDownloadFolder, toasts, client, config }) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -496,10 +509,15 @@ function ModelCard({ onSelect, model, openSelectDownloadFolder, toasts, client, 
     });
   };
 
+  const isSecure = isSecureModel(model);
+  const visibleTags = (model.Tags || []).filter(
+    (t) => String(t).toLowerCase().trim() !== 'tee',
+  );
+
   return (
     <CustomCard style={{ width: '36rem', position: 'relative' }} onClick={() => onSelect(model.Id)}>
       {isDownloading && (
-        <DownloadProgressContainer>
+        <DownloadProgressContainer onClick={(e) => e.stopPropagation()}>
           <div className="progress-header">
             <h4>Downloading Model</h4>
             <div className="cancel-button" onClick={cancelDownload}>
@@ -528,8 +546,11 @@ function ModelCard({ onSelect, model, openSelectDownloadFolder, toasts, client, 
           as={'div'}
           style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
         >
-          <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', maxWidth: '90%' }}>
-            {model.Name || "Unnamed Model"}
+          <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', maxWidth: '90%', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {formatModelName(model.Name) || "Unnamed Model"}
+            {isSecure && (
+              <SecureTag title={SECURE_BADGE_TOOLTIP}>Secure</SecureTag>
+            )}
           </span>
           <IconDownload
             className="icon-button"
@@ -597,7 +618,7 @@ function ModelCard({ onSelect, model, openSelectDownloadFolder, toasts, client, 
             </div>
           ) : null}
 
-          {model.Tags && model.Tags.length > 0 && (
+          {visibleTags.length > 0 && (
             <div className="model-info-item">
               <span className="info-label">
                 <IconTag size={16} strokeWidth={2} />
@@ -605,7 +626,7 @@ function ModelCard({ onSelect, model, openSelectDownloadFolder, toasts, client, 
               </span>
               <div className="info-value">
                 <div className="tag-container">
-                  {model.Tags.map((tag, index) => (
+                  {visibleTags.map((tag, index) => (
                     <span key={index} className="tag-item">
                       {tag}
                     </span>

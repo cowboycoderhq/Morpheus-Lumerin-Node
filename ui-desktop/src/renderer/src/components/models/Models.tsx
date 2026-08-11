@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import withModelsState from "../../store/hocs/withModelsState";
+import { modelMatchesQuery } from '../chat/utils';
 
 import { LayoutHeader } from '../common/LayoutHeader'
 import { View } from '../common/View'
@@ -31,6 +32,32 @@ const Container = styled.div`
 const IpfsStatus = styled.div`
     color: ${p => p.theme.colors.morMain};
     font-size: 1.2rem;
+`
+
+const SearchRow = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0 4px;
+`
+
+const SearchInput = styled.input`
+    flex: 1;
+    height: 38px;
+    background: rgba(0, 0, 0, 0.4);
+    color: ${p => p.theme.colors.morMain};
+    border: 1px solid ${p => p.theme.colors.morMain};
+    border-radius: 5px;
+    padding: 0 14px;
+    font-size: 1.4rem;
+    outline: none;
+    ::placeholder { color: ${p => p.theme.colors.helpertextGray}; }
+`
+
+const ResultCount = styled.span`
+    color: ${p => p.theme.colors.helpertextGray};
+    font-size: 1.2rem;
+    white-space: nowrap;
 `
 
 const Models = ({
@@ -67,8 +94,14 @@ const Models = ({
 
     const ipfsVersion = (ipfsVersionQuery.data as any)?.version ?? null;
     const isIpfsConnected = !!ipfsVersion;
-    const models = modelsQuery.data ?? [];
+    const models: any[] = (modelsQuery.data as any[]) ?? [];
     const pinnedFiles = pinnedFilesQuery.data ?? [];
+
+    const [search, setSearch] = useState('');
+    const visibleModels = useMemo(
+        () => models.filter((m: any) => modelMatchesQuery(m, search)),
+        [models, search],
+    );
 
     const reload = () => {
         queryClient.invalidateQueries({ queryKey: queryKeys.ipfsVersion });
@@ -116,6 +149,15 @@ const Models = ({
             <LayoutHeader title="Models">
                 <BtnAccent style={{ padding: '1.5rem' }} onClick={() => setOpenChangeModal(true)}>Pin Model</BtnAccent>
             </LayoutHeader>
+            <SearchRow>
+                <SearchInput
+                    data-testid="models-search"
+                    placeholder="Search models by name or tag…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                />
+                <ResultCount>{visibleModels.length} / {models.length}</ResultCount>
+            </SearchRow>
             <Container>
                 <Tabs
                     defaultActiveKey="registry"
@@ -123,7 +165,7 @@ const Models = ({
                     className="mb-3"
                 >
                     <Tab eventKey="registry" title="Registry">
-                        <ModelsTable setSelectedModel={setSelectedModel} models={models} openSelectDownloadFolder={openSelectDownloadFolder} toasts={toasts} client={client} config={config} />
+                        <ModelsTable setSelectedModel={setSelectedModel} models={visibleModels} openSelectDownloadFolder={openSelectDownloadFolder} toasts={toasts} client={client} config={config} />
                     </Tab>
                     <Tab eventKey="pinned" title="Pinned Models">
                         <PinnedFilesTable pinnedFiles={pinnedFiles} unpinFile={handleUnpinFile} toasts={toasts} />

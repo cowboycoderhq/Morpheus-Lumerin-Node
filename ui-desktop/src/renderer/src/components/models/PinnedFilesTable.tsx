@@ -3,6 +3,7 @@ import styled from 'styled-components';
 import Card from 'react-bootstrap/Card';
 import { abbreviateAddress } from '../../utils';
 import { IconPinnedOff, IconCopy, IconFile, IconTag, IconHash } from '@tabler/icons-react';
+import { SECURE_BADGE_TOOLTIP } from '../chat/utils';
 
 
 const CustomCard = styled(Card)`
@@ -193,7 +194,26 @@ interface PinnedFile {
   id: string;
 }
 
+const SecureTag = styled.span`
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: ${(p) => p.theme.colors.morMain};
+  border: 1px solid ${(p) => p.theme.colors.morMain};
+  white-space: nowrap;
+  margin-left: 8px;
+`;
+
 function ModelCard({ model, toasts, unpinFile }: { model: PinnedFile, toasts: any, unpinFile: any }) {
+  const isSecure = (model.tags || []).some(
+    (t) => String(t).toLowerCase().trim() === 'tee',
+  );
+  const visibleTags = (model.tags || []).filter(
+    (t) => String(t).toLowerCase().trim() !== 'tee',
+  );
   const onUnpinFile = (e) => {
     e.stopPropagation();
     unpinFile(model.fileCIDHash);
@@ -301,7 +321,12 @@ function ModelCard({ model, toasts, unpinFile }: { model: PinnedFile, toasts: an
               <span className="info-label">
                 <IconHash size={16} strokeWidth={2} />
                 Name:</span>
-              <span className="info-value">{model.modelName}</span>
+              <span className="info-value">
+                {model.modelName}
+                {isSecure && (
+                  <SecureTag title={SECURE_BADGE_TOOLTIP}>Secure</SecureTag>
+                )}
+              </span>
             </div>
           ) : null}
 
@@ -322,7 +347,7 @@ function ModelCard({ model, toasts, unpinFile }: { model: PinnedFile, toasts: an
             </div>
           ) : null}
 
-          {model.tags && model.tags.length > 0 ? (
+          {visibleTags.length > 0 ? (
             <div className="model-info-item">
               <span className="info-label">
                 <IconTag size={16} strokeWidth={2} />
@@ -330,7 +355,7 @@ function ModelCard({ model, toasts, unpinFile }: { model: PinnedFile, toasts: an
               </span>
               <div className="info-value">
                 <div className="tag-container">
-                  {model.tags.map((tag, index) => (
+                  {visibleTags.map((tag, index) => (
                     <span key={index} className="tag-item">
                       {tag}
                     </span>
@@ -355,9 +380,7 @@ function PinnedFilesTable({
     <Container>
       {pinnedFiles?.length ?
         pinnedFiles.map(x => (
-          <div key={x.fileCIDHash}>
-            {ModelCard({ model: x, toasts, unpinFile })}
-          </div>
+          <ModelCard key={x.fileCIDHash} model={x} toasts={toasts} unpinFile={unpinFile} />
         )) :
         <div style={{
           width: '100%',
