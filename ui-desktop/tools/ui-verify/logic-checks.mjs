@@ -24,6 +24,7 @@ import {
   modelProviderCount,
 } from '../../src/renderer/src/utils/marketplace.ts';
 import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
+import { explainSessionOpenFailure } from '../../src/renderer/src/utils/session-errors.ts';
 import {
   admitRequest,
   bearerMatches,
@@ -1164,6 +1165,42 @@ console.log('grok: models published into the managed config');
     clock += 501;
     ok('an unanswered offer expires rather than wedging the model',
       stale.request('z').offer === true);
+  }
+
+  // ---- a failed session open, explained to a person ----
+  // The raw router text names a provider, a port and a TCP reset. It is what
+  // makes a fault diagnosable and it tells a non-technical user nothing about
+  // the only three things they need: was I charged, whose fault, what now.
+  {
+    const providerDead =
+      'failed to initiate session: provider request failed: code: 400, msg: <nil>, ' +
+      'error: failed to decode response: read tcp 10.2.0.2:59378->82.67.174.173:3333: ' +
+      'read: connection reset by peer';
+    const dead = explainSessionOpenFailure(providerDead);
+    ok('a dead provider is named as the cause, in plain words',
+      /provider/i.test(dead.headline) && !/tcp|code: 400/i.test(dead.headline));
+    // Provably safe: the provider's approval precedes the chain call, so a
+    // provider that never answered means no transaction was made.
+    ok('and the user is told plainly that nothing was staked', dead.charged === 'no');
+    ok('and offered the fix that actually works', dead.offerAnotherProvider);
+
+    const cap = explainSessionOpenFailure('anything', 'cap_exceeded');
+    ok('a spend cap explains itself as a limit, not an error', /limit/i.test(cap.headline));
+    ok('and points at the setting that governs it', /Settings/i.test(cap.whatToDo));
+    ok('a cap refusal never suggests changing provider', !cap.offerAnotherProvider);
+
+    ok('a moved price says so', /price/i.test(explainSessionOpenFailure('x', 'price_moved').headline));
+    ok('an empty wallet says so',
+      /wallet/i.test(explainSessionOpenFailure('insufficient funds for gas').headline));
+
+    // THE one claim that must never be guessed. Telling someone their money is
+    // safe when it might not be is the error here that cannot be walked back.
+    const strange = explainSessionOpenFailure('something nobody has seen before');
+    ok('an unrecognised failure does NOT promise the money is safe',
+      strange.charged === 'unknown');
+    ok('and sends the user somewhere they can check for themselves',
+      /Sessions tab/i.test(strange.whatToDo));
+    ok('a null message does not throw', !!explainSessionOpenFailure(null).headline);
   }
 
   // ---- what the picker may ask main to call ----
