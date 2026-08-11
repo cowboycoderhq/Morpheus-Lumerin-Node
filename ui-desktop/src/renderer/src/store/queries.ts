@@ -9,6 +9,9 @@
 export const queryKeys = {
   // { models, providers, meta, userBalances } from withChatState.getModelsData
   modelsData: ['modelsData'] as const,
+  // local (proxy-router /v1/models) models only — milliseconds, no chain reads;
+  // lets Chat become usable before the heavy modelsData composite resolves
+  localModels: ['localModels'] as const,
   // models merged with their bids (withChatState.getBidsByModelId fan-out)
   modelsWithBids: ['modelsWithBids'] as const,
   // raw on-chain user sessions (paginated) — shared by Chat + Wallet
@@ -50,4 +53,48 @@ export const computeStakedFunds = (sessions: any[] | undefined): string => {
     console.log('Error', e);
     return '0';
   }
+};
+
+
+// Merge the model registry with every active bid on the network.
+//
+// Lives here, not inline in Chat, because the DataPrefetcher warms this exact
+// query at app start — and the Router's own comment is explicit that the prefetch
+// must use the SAME query fn and key as the consumer ("no drift, perfect cache
+// hits"). Two copies of this merge would be two chances to diverge.
+//
+// `getAllActiveBidsByModel` walks PROVIDERS (21) rather than MODELS (391); see
+// store/utils/apiCallsHelper.getActiveBidsByProvider.
+export const buildModelsWithBids = async (
+  md: any,
+  getAllActiveBidsByModel: (providers: any[]) => Promise<Map<string, any[]>>,
+): Promise<any[]> => {
+  if (!md) {
+    return [];
+  }
+
+  const providersMap = (md.providers ?? []).reduce(
+    (a: any, b: any) => ({ ...a, [b.Address.toLowerCase()]: b }),
+    {},
+  );
+
+  const bidsByModel = await getAllActiveBidsByModel(md.providers);
+
+  const merged: any[] = [];
+  for (const m of md.models ?? []) {
+    if (m.isLocal) continue;
+
+    const bids = (bidsByModel.get(m.Id) ?? [])
+      .map((b: any) => ({
+        ...b,
+        ProviderData: providersMap[b.Provider.toLowerCase()],
+        Model: m,
+      }))
+      .filter((b: any) => b.ProviderData);
+
+    if (!bids.length) continue;
+
+    merged.push({ ...m, bids });
+  }
+  return merged;
 };

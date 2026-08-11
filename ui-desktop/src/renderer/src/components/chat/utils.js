@@ -123,3 +123,43 @@ export const getTimeRemaining = (endtime) => {
       seconds
     };
   }
+
+// Model IDs are machine strings — "qwen2.5-1.5b-instruct", "deepseek-r1-70b:tee".
+// Hyphens and colons are how the registry separates tokens, not how a person
+// reads a name. This is DISPLAY ONLY: the underlying Name/Id is never changed,
+// because it is what the network matches on.
+export function formatModelName(name) {
+  if (!name) return '';
+  return String(name)
+    .replace(/[-_:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .map((word) => {
+      // Keep size/precision tokens shouting (70B, 4B, TEE, FP8), and leave
+      // version-ish tokens (qwen2.5, v4) alone rather than mangling their case.
+      if (/^\d+(\.\d+)?[bkm]$/i.test(word)) return word.toUpperCase();
+      if (/^(tee|fp\d+|gguf|moe|vl|it)$/i.test(word)) return word.toUpperCase();
+      if (/\d/.test(word)) return word.charAt(0).toUpperCase() + word.slice(1);
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+}
+
+
+// Token-based model matching, shared with the chat model picker.
+// A single contiguous `includes` means the separators in a model's name decide
+// whether you can find it: "deepseek v4 pro" would miss `deepseek-v4-pro`
+// because the hyphens are not spaces. Nobody types the hyphens.
+const normalizeSearch = (s) =>
+  String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+export function modelMatchesQuery(model, q) {
+  const query = normalizeSearch(q);
+  if (!query) return true;
+  const tokens = query.split(' ').filter(Boolean);
+  const haystack = `${normalizeSearch(model?.Name)} ${(model?.Tags || [])
+    .map(normalizeSearch)
+    .join(' ')}`.trim();
+  return tokens.every((t) => haystack.includes(t));
+}
