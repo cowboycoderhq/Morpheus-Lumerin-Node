@@ -1368,6 +1368,81 @@ console.log('grok: models published into the managed config');
     ok('an unambiguous name is left alone', advertisedId(solo[0], solo) === 'llama-4');
   }
 
+  // ---- the GENERAL property, not the four models that exposed it ----
+  // Fixing the deepseek case proves nothing about the next collision. The rule
+  // that has to hold for every pair of names anyone can register is:
+  //
+  //   if two models would end up with the SAME grok config key,
+  //   they must have been given DIFFERENT advertised ids.
+  //
+  // Anything that breaks that puts two models behind one key again, which is
+  // the actual defect — the deepseek names were only how it surfaced.
+  {
+    const M = (id, name) => ({ id, name, isLocal: false, sessionId: '0xs' });
+    const adversarial = [
+      ['a-b', 'a b'],                       // punctuation vs space
+      ['A-B', 'a-b'],                       // case
+      ['x.y', 'x-y'],                       // dot, which TOML treats specially
+      ['m  n', 'm-n'],                      // repeated separators
+      ['q_r', 'q-r'],                       // underscore, kept by the sanitiser
+      ['tab\tsep', 'tab-sep'],              // whitespace that is not a space
+      ['ünï', 'ünï'],                       // identical non-ascii
+      ['a/b', 'a:b'],                       // two different punctuation marks
+      ['end-', '-end'],                     // leading/trailing separators
+      ['deepseek-v4-flash:web', 'deepseek v4 flash:web'],
+    ];
+    let violations = 0;
+    for (const [n1, n2] of adversarial) {
+      const pair = [M('0x1111111111111111', n1), M('0x2222222222222222', n2)];
+      const [i1, i2] = pair.map((m) => advertisedId(m, pair));
+      const [k1, k2] = [i1, i2].map(grokModelKey);
+      // Same key is only acceptable if the ids were distinct AND the keys were
+      // then made distinct too — i.e. never two models behind one key.
+      if (k1 === k2) violations++;
+      if (i1 === i2 && n1 !== n2) violations++;
+    }
+    ok(`no name pair puts two models behind one key (${adversarial.length} adversarial pairs)`,
+      violations === 0);
+
+    // And the reverse direction: a name crafted to LOOK like a discriminator.
+    // Anyone can register one, so it must not be able to impersonate another
+    // model's disambiguated id. Bounded outcome: a refusal, never a wrong pick.
+    const impostor = [
+      M('0xc2c4b037aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'foo'),
+      M('0x9999999999999999999999999999999999999999999999999999999999999999', 'foo#c2c4b037'),
+    ];
+    const r = resolveModel('foo#c2c4b037', impostor);
+    ok('a name posing as a discriminator never resolves to the OTHER model',
+      !r.ok || r.model.name === 'foo#c2c4b037');
+
+    // Ten hand-picked pairs are ten examples, not a property. Anyone can
+    // register any name, so fuzz the space that actually matters: the
+    // punctuation, case and whitespace that config sanitisers erase. Seeded, so
+    // a failure is reproducible rather than a story about a run nobody kept.
+    let seed = 20260811;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const alphabet = 'ab09-_. :/#\t'.split('');
+    let fuzzViolations = 0;
+    let firstBad = null;
+    for (let i = 0; i < 4000; i++) {
+      const mk = () => {
+        let out = '';
+        const len = 1 + Math.floor(rnd() * 8);
+        for (let j = 0; j < len; j++) out += alphabet[Math.floor(rnd() * alphabet.length)];
+        return out;
+      };
+      const [n1, n2] = [mk(), mk()];
+      const pair = [M('0x1111111111111111', n1), M('0x2222222222222222', n2)];
+      const [i1, i2] = pair.map((m) => advertisedId(m, pair));
+      if (grokModelKey(i1) === grokModelKey(i2)) {
+        fuzzViolations++;
+        firstBad = firstBad || [n1, n2, i1, i2];
+      }
+    }
+    ok(`no key collision over 4000 fuzzed name pairs${firstBad ? ` (first: ${JSON.stringify(firstBad)})` : ''}`,
+      fuzzViolations === 0);
+  }
+
   // ---- the name grok shows must START with the model ----
   // grok's picker truncates the name hard: with a "Morpheus: " prefix every row
   // read `Morpheu…`, so the one thing the user is choosing between was the part
