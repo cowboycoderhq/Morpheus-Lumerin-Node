@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useContext } from 'react';
 import styled, { keyframes } from 'styled-components';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   IconCopy,
   IconExternalLink,
+  IconArrowUpRight,
   IconArrowDownLeft,
   IconChartBar,
   IconLock,
@@ -340,8 +341,28 @@ const Dashboard = ({
   const [activeModal, setActiveModal] = useState(null);
   const context = useContext(ToastsContext);
 
+  const queryClient = useQueryClient();
+
   const onCloseModal = () => setActiveModal(null);
-  const onTabSwitch = (modal) => setActiveModal(modal);
+  const onTabSwitch = (modal) => {
+    setActiveModal(modal);
+    // A completed transfer needs the balance + activity to reflect it. The
+    // router can index the tx a little after broadcast, so refresh now and
+    // again shortly after.
+    if (modal === 'success') {
+      const refresh = () => {
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.balances(address),
+        });
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.transactions(address),
+        });
+      };
+      refresh();
+      setTimeout(refresh, 4000);
+      setTimeout(refresh, 12000);
+    }
+  };
 
   // Cached, stale-while-revalidate data. Revisiting the wallet tab renders the
   // last-known balances/transactions/staked instantly and refreshes silently.
@@ -486,6 +507,16 @@ const Dashboard = ({
               </StatValue>
             </StatText>
           </StatCard>
+
+          <ActionTile data-testid="send-tile" onClick={() => onTabSwitch('send')}>
+            <StatIcon>
+              <IconArrowUpRight size={22} />
+            </StatIcon>
+            <ActionText>
+              <ActionTitle>Send</ActionTitle>
+              <ActionSub>Transfer {morSymbol} or ETH</ActionSub>
+            </ActionText>
+          </ActionTile>
 
           <ActionTile onClick={() => onTabSwitch('receive')}>
             <StatIcon>
