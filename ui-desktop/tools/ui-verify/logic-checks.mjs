@@ -27,6 +27,7 @@ import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import {
   admitRequest,
   bearerMatches,
+  isPickerRoute,
   mergeStarredModels,
   needsSession,
   sessionRequiredMessage,
@@ -1165,6 +1166,27 @@ console.log('grok: models published into the managed config');
       stale.request('z').offer === true);
   }
 
+  // ---- what the picker may ask main to call ----
+  // Main relays these because the renderer is a browser and the endpoint
+  // refuses browsers. The relay carries the bearer token and one of the routes
+  // SPENDS, so it must stay a door to four routes, not a proxy.
+  {
+    ok('the catalog is allowed', isPickerRoute('/morpheus/v1/catalog'));
+    ok('providers is allowed WITH its query string',
+      isPickerRoute('/morpheus/v1/providers?model=0xabc'));
+    ok('the spending route is allowed', isPickerRoute('/morpheus/v1/sessions'));
+    // A prefix match would let a crafted path walk out of the list.
+    ok('a path that walks out of the list is refused',
+      !isPickerRoute('/morpheus/v1/catalog/../../v1/chat/completions'));
+    ok('a suffix on an allowed route is refused',
+      !isPickerRoute('/morpheus/v1/catalogue'));
+    ok('chat completions is NOT reachable through the relay',
+      !isPickerRoute('/v1/chat/completions'));
+    ok('an absolute URL to somewhere else is refused',
+      !isPickerRoute('http://evil.example/morpheus/v1/catalog'));
+    ok('an empty path is refused', !isPickerRoute(''));
+  }
+
   // ---- an offer raised while the app was locked ----
   // The picker host lives inside the signed-in layout, so a locked app is not
   // mounted to receive one: the window came forward on the wallet screen and
@@ -1330,6 +1352,10 @@ console.log('grok: models published into the managed config');
     // picker host is inside the signed-in layout, so it is not mounted to
     // receive one until the user unlocks.
     ['get-pending-session-offer', 'getPendingSessionOffer'],
+    // The picker cannot fetch our own endpoint from the renderer: it refuses
+    // Origin-bearing requests, so a browser is blocked before it reads the
+    // reason. Main relays instead, and holds the token.
+    ['morpheus-api-request', 'morpheusApiRequest'],
   ];
   for (const [ipcName, fnName] of CHANNELS) {
     ok(`${ipcName}: main exports its handler`,

@@ -24,6 +24,7 @@ import {
   type ExternalActivity
 } from '../../openai-compat/server'
 import { claimNewestOffer } from '../../openai-compat/session-offers'
+import { isPickerRoute } from '../../openai-compat/protocol'
 import { getOpenAiApiSetting, setOpenAiApiSetting } from '../settings'
 import {
   buildLaunchScript,
@@ -1445,6 +1446,66 @@ export const getPendingSessionOffer = async () => {
     ensureOpenAiServer().settleOffer(dead.modelId, 'declined')
   }
   return claim
+}
+
+/**
+ * The picker's calls to our own endpoint, made from MAIN.
+ *
+ * The renderer cannot call it directly, and should not be able to: the endpoint
+ * refuses any request carrying an `Origin` header and sends no CORS headers,
+ * because a web page must never be able to reach a port that can spend MOR. A
+ * renderer IS a browser, so its fetch was blocked before it could even read the
+ * refusal — the picker showed "Failed to fetch" with nothing to explain it.
+ *
+ * Relaying through main fixes it without weakening anything: node's fetch sends
+ * no Origin, the browser rule stays exactly as strict for actual pages, and the
+ * bearer token stops being handed to the renderer at all.
+ *
+ * The allowlist is the point — this must stay a door to four known routes, not
+ * a general-purpose proxy that a renderer bug could point anywhere.
+ */
+export const morpheusApiRequest = async (payload: {
+  path: string
+  method?: string
+  body?: unknown
+}) => {
+  const path = String(payload?.path ?? '')
+  if (!isPickerRoute(path)) {
+    return { ok: false, status: 400, data: { error: { message: `Refusing to call ${path}.` } } }
+  }
+
+  const api = readOpenAiConfig()
+  if (!api.enabled || !ensureOpenAiServer().isRunning()) {
+    return {
+      ok: false,
+      status: 503,
+      data: {
+        error: {
+          message:
+            'The OpenAI-compatible endpoint is not running. Turn it on in Settings → OpenAI-compatible API.'
+        }
+      }
+    }
+  }
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${api.port}${path}`, {
+      method: payload?.method ?? 'GET',
+      headers: {
+        'content-type': 'application/json',
+        Authorization: `Bearer ${api.token}`
+      },
+      body: payload?.body === undefined ? undefined : JSON.stringify(payload.body)
+    })
+    const data = await res.json().catch(() => null)
+    return { ok: res.ok, status: res.status, data }
+  } catch (e) {
+    return {
+      ok: false,
+      status: 0,
+      data: { error: { message: `Could not reach the local endpoint: ${String(e)}` } }
+    }
+  }
 }
 
 export const grokPickerDone = async (payload: {
