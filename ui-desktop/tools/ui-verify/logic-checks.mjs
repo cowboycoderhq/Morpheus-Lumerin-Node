@@ -1336,8 +1336,15 @@ console.log('grok: models published into the managed config');
     ok('the name begins with the model, not a prefix',
       name.startsWith('deepseek-v4-pro'));
     ok('no branding prefix is reintroduced', !/^morpheus/i.test(name));
-    ok('and the state is still carried, after the identity',
-      name.includes('no session'));
+    // Removing the branding outright was the opposite mistake: the word then
+    // appeared nowhere in grok's picker, so searching for "morpheus" found
+    // nothing and the model read as missing.
+    ok('the word morpheus is still findable, at the END',
+      /morpheus\s*$/i.test(name));
+    // grok's picker truncates at roughly 28 characters — measured three times
+    // against the real TUI. A name that overflows loses its tail, which is the
+    // provenance, so the budget is the check.
+    ok('the whole name fits the picker budget', name.length <= 30);
   }
 
   // ---- what grok is told about ----

@@ -120,13 +120,22 @@ export function buildGrokModelsToml(input: GrokModelsConfigInput): string {
     // `model` is what grok sends as the request's model field, so it must be
     // the id the endpoint advertises — not the display label, and not our key.
     lines.push(`model = ${tomlString(model.id)}`);
-    // NAME THE MODEL FIRST. grok's picker truncates this hard — with a
-    // "Morpheus: " prefix the row read `Morpheu…` and every entry looked
-    // identical, which is worse than no branding at all: the one thing the user
-    // is choosing between was the part that got cut. The provenance survives
-    // anyway in the config key (`morpheus-<id>`, what `-m` takes) and in the
-    // footer, which shows the whole string.
-    lines.push(`name = ${tomlString(model.label)}`);
+    // THE NAME HAS A BUDGET OF ABOUT 28 CHARACTERS. Measured against the real
+    // picker, three times:
+    //
+    //   "Morpheus: deepseek-v4-pro (no session)"  38 -> row read `Morpheu…`,
+    //       so the one thing being chosen between was the part that got cut
+    //   "deepseek-v4-pro (no session)"            28 -> shown whole, but the
+    //       word Morpheus then appeared NOWHERE, so scanning or searching for
+    //       it found nothing and the model read as missing
+    //   "deepseek-v4-pro (no session) · morpheus" 39 -> truncated again, and
+    //       the tail is what goes, so the provenance was lost anyway
+    //
+    // Two of the three things fit: identity and provenance. The state loses,
+    // because it is the one that gets said properly elsewhere — using a model
+    // with no session returns a refusal that explains it in a sentence and the
+    // app offers to open one. Provenance has no second chance to be shown.
+    lines.push(`name = ${tomlString(`${model.id} · morpheus`)}`);
     lines.push(`base_url = ${tomlString(input.baseUrl)}`);
     lines.push(`api_key = ${tomlString(input.apiKey)}`);
     // The credential that actually gets through. grok treats a loopback URL as
