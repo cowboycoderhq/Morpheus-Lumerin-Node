@@ -29,7 +29,7 @@ import { explainSessionOpenFailure } from '../../src/renderer/src/utils/session-
 import {
   isStarredModel,
   toggleStarredModel,
-} from '../../src/renderer/src/utils/starred-models.ts';
+} from '../../src/shared/starred-models.ts';
 import {
   applyPreference,
   nextPreference,
@@ -1201,14 +1201,38 @@ console.log('grok: models published into the managed config');
     ok('an empty id is ignored rather than starred',
       toggleStarredModel(['0xa'], '').join() === '0xa');
     ok('a null list is treated as empty', toggleStarredModel(null, '0xa').join() === '0xa');
+    // THE LOST UPDATE ITSELF, played out. Pins have two authors: you, and a
+    // session opening (which pins its own model). The renderer holds a copy
+    // from when the dialog opened, so anything the OTHER author added in the
+    // meantime is invisible to it.
+    {
+      const rendererSnapshot = ['0xA'];      // what the dialog read on open
+      const storedNow = ['0xA', '0xB'];      // a session pinned 0xB since then
+
+      // What the old code sent: the whole array, computed from the snapshot.
+      const wholeListWrite = toggleStarredModel(rendererSnapshot, '0xC');
+      ok('the old whole-list write silently dropped the other pin',
+        !wholeListWrite.includes('0xB'));
+
+      // What main does now: the same toggle, applied to the CURRENT list.
+      const delta = toggleStarredModel(storedNow, '0xC');
+      ok('applying the delta to the stored list keeps it',
+        delta.includes('0xB') && delta.includes('0xA') && delta.includes('0xC'));
+      // And unpinning is equally safe from a stale view.
+      ok('unpinning from a stale view removes only the model you clicked',
+        toggleStarredModel(storedNow, '0xA').join() === '0xB');
+    }
+
     // The renderer helper decides what the UI SHOWS. The write itself is a
-    // delta applied in main against the stored list, because computing the new
-    // array from a snapshot read when the dialog opened dropped anything
-    // pinned in between — and sessions pin their own model automatically, so
-    // that was a live way to lose one without noticing.
+    // delta applied in main against the stored list, and BOTH sides now call
+    // the same function — two implementations of one rule is exactly what let
+    // opencode keep receiving local models for weeks.
     ok('the pin write is a delta channel, not a whole-list write',
       readFileSync(new URL('../../src/renderer/src/components/chat/modals/ModelSelectionModal.tsx', import.meta.url), 'utf8')
         .includes("sendToMainProcess('toggle-starred-model'"));
+    const mainSrc = readFileSync(new URL('../../src/main/src/client/subscriptions/handlers.ts', import.meta.url), 'utf8');
+    ok('main applies the SHARED toggle rather than its own copy',
+      mainSrc.includes('applyStarToggle(cfg.starredModelIds'));
     ok('and it no longer sends the whole array from a snapshot',
       !readFileSync(new URL('../../src/renderer/src/components/chat/modals/ModelSelectionModal.tsx', import.meta.url), 'utf8')
         .includes('starredModelIds: next'));

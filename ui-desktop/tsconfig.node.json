@@ -3,7 +3,7 @@
   "include": [
     "electron.vite.config.*",
     "orchestrator.config.*",
-    "src/main/**/*",
+    "src/main/**/*", "src/shared/**/*",
     "src/preload/**/*",
     "env.schema.ts",
     "validator.ts"
