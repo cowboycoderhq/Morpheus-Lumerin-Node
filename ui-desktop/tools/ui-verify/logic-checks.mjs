@@ -39,6 +39,7 @@ import {
   admitRequest,
   advertisedId,
   bearerMatches,
+  forCodingAgents,
   isPickerRoute,
   mergeStarredModels,
   needsSession,
@@ -1510,6 +1511,33 @@ console.log('grok: models published into the managed config');
       longName.endsWith('#c2c4b037'));
     ok('and drops the branding rather than overflowing',
       !longName.includes('morpheus') && longName.length <= 30);
+  }
+
+  // ---- the local-model rule, now shared by BOTH integrations ----
+  // grok and opencode always send tools together with stream; the bundled local
+  // runtime refuses that pair every time. The rule was implemented in grok's
+  // publisher only, so opencode kept being handed models that cannot answer it
+  // — the same defect surviving because the rule had a home, not a definition.
+  {
+    const adv = [
+      { id: 'qwen-local', label: 'qwen (local)', isLocal: true },
+      { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro', isLocal: false },
+      { id: 'no-flag', label: 'unflagged' },
+    ];
+    const kept = forCodingAgents(adv).map((m) => m.id);
+    ok('a local model is withheld from coding agents', !kept.includes('qwen-local'));
+    ok('a marketplace model is kept', kept.includes('deepseek-v4-pro'));
+    ok('an unflagged model is kept, not dropped by accident', kept.includes('no-flag'));
+
+    // Both publishers must route through it — the point of the fix is that
+    // there is one definition, not two implementations that agree today.
+    const handlers = readFileSync(new URL('../../src/main/src/client/subscriptions/handlers.ts', import.meta.url), 'utf8');
+    ok('the opencode descriptor filters through the shared rule',
+      /forCodingAgents\(\s*\n?\s*await ensureOpenAiServer\(\)/.test(handlers));
+    const grokPub = readFileSync(new URL('../../src/main/src/grok/models-config.ts', import.meta.url), 'utf8');
+    ok('and so does the grok publisher', grokPub.includes('forCodingAgents(advertised)'));
+    ok('neither keeps its own isLocal test',
+      !/m\.isLocal/.test(grokPub) && !/\.isLocal/.test(handlers));
   }
 
   // ---- what grok is told about ----

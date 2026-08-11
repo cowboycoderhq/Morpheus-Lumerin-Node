@@ -25,6 +25,7 @@
 // ============================================================================
 
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { forCodingAgents } from '../openai-compat/protocol';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -245,8 +246,11 @@ export function selectGrokModels(
   advertised: readonly { id: string; label: string; isLocal?: boolean }[],
 ): GrokModelInput[] {
   const byId = new Map<string, GrokModelInput>();
-  for (const m of advertised) {
-    if (!m?.id || m.isLocal) continue;
+  // The local-model rule lives in ONE place now (see forCodingAgents): it was
+  // implemented here and nowhere else, so opencode went on being handed models
+  // that cannot answer it.
+  for (const m of forCodingAgents(advertised)) {
+    if (!m?.id) continue;
     byId.set(m.id, { id: m.id, label: m.label || m.id });
   }
   return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));

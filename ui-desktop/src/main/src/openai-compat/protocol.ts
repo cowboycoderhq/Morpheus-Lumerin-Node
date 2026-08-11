@@ -103,6 +103,29 @@ export function isPickerRoute(path: string): boolean {
   return (PICKER_ROUTES as readonly string[]).includes(routePath);
 }
 
+/**
+ * What a CODING AGENT may be offered — the one rule, in one place.
+ *
+ * Local models are dropped. grok and opencode both always send `tools` together
+ * with `stream`, and the bundled local runtime answers that pair with "Cannot
+ * use tools with stream" every single time. Listing one is offering a
+ * guaranteed failure dressed up as a choice, and the failure surfaces inside
+ * the other tool where the user has nothing to go on.
+ *
+ * This lived only in grok's publisher, so opencode kept being handed local
+ * models — the same defect, unfixed, because the rule had a home rather than a
+ * definition. Both integrations now ask the same function.
+ *
+ * NOTE this governs what is PUBLISHED to agents, not what the endpoint serves:
+ * a direct client (curl, an SDK, anything not sending tools) can still use a
+ * local model, and should be able to.
+ */
+export function forCodingAgents<T extends { isLocal?: boolean }>(
+  models: readonly T[],
+): T[] {
+  return models.filter((m) => !m?.isLocal);
+}
+
 export type OpenAiModelEntry = {
   id: string;
   object: 'model';
