@@ -1176,6 +1176,41 @@ const browser = await chromium.launch();
     await p.screenshot({ path: `${SHOTS}/model-picker-price-toggle.png` });
   });
 
+  // --- the session picker's search text must be READABLE -------------------
+  // It shipped near-black on a near-black field: the search worked and was
+  // invisible while you used it. A screenshot diff would have passed it and a
+  // DOM assertion cannot see it, so this measures the computed colours.
+  await drive(page, 'start-picker-search-contrast', `http://localhost:${PORT}/?case=start-picker-search`, async (p) => {
+    const input = p.locator('input').first();
+    await input.waitFor({ timeout: 20000 });
+    await input.fill('deepseek');
+    // Measure BLURRED. A first version measured only while focused, and
+    // `.form-control:focus` supplies its own colour — so deleting the rule that
+    // actually shipped broken left the check green. Typed text has to stay
+    // readable after you click away, which is also when it is hardest to fix by
+    // eye, because you have to remember it was ever wrong.
+    await input.evaluate((el) => el.blur());
+
+    const seen = await input.evaluate((el) => {
+      const text = getComputedStyle(el).color;
+      // The field itself is transparent; walk up to whatever actually paints.
+      let node = el, bg = 'rgba(0, 0, 0, 0)';
+      while (node && bg === 'rgba(0, 0, 0, 0)') {
+        bg = getComputedStyle(node).backgroundColor;
+        node = node.parentElement;
+      }
+      return { text, bg };
+    });
+    const lum = (c) => {
+      const n = (c.match(/\d+/g) || [0, 0, 0]).map(Number);
+      return 0.299 * n[0] + 0.587 * n[1] + 0.114 * n[2];
+    };
+    const delta = Math.abs(lum(seen.text) - lum(seen.bg));
+    assert(delta > 60, `typed text is unreadable: ${seen.text} on ${seen.bg} (delta ${delta.toFixed(0)})`);
+
+    await p.screenshot({ path: `${SHOTS}/start-picker-search-contrast.png` });
+  });
+
   // --- the terminal PIN: visible, marketplace-only, and never a selection ----
   // A model can be pinned so terminal agents list it without a session having
   // been opened first. Two things must hold, and both have bitten already: a
