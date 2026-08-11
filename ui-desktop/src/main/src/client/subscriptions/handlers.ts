@@ -1334,11 +1334,21 @@ export const refreshGrokModels = async () => {
   // second list remembered on the side.
   const models = selectGrokModels(advertised)
 
-  lastPublishedToml = buildGrokModelsToml({
-    baseUrl: `http://127.0.0.1:${api.port}/v1`,
-    apiKey: api.token,
-    models
-  })
+  lastPublishedToml = buildGrokModelsToml(
+    {
+      baseUrl: `http://127.0.0.1:${api.port}/v1`,
+      apiKey: api.token,
+      models
+    },
+    // Should never fire: ids are disambiguated before they get here. If it does,
+    // the live catalog contains a name pair the rule does not cover — which is
+    // precisely what synthetic tests cannot tell us.
+    (c) =>
+      log.warn(
+        `grok models: two models share the config key ${c.key} — "${c.first}" and "${c.second}". ` +
+          `One was renamed to keep the file parseable; the id rule needs widening.`
+      )
+  )
   writeGrokModelsConfig(managedConfigPath(), lastPublishedToml)
   return { models: models.length }
 }

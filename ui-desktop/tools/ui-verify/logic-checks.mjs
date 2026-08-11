@@ -1368,6 +1368,26 @@ console.log('grok: models published into the managed config');
     ok('an unambiguous name is left alone', advertisedId(solo[0], solo) === 'llama-4');
   }
 
+  // ---- the fallback that used to hide a violation now reports it ----
+  // Synthetic tests cannot see the live catalog. If a real name pair gets past
+  // the rule, the dedupe still runs (a duplicate TOML table would take the whole
+  // file down, not one model) but it must no longer do so quietly.
+  {
+    const seen = [];
+    buildGrokModelsToml(
+      { baseUrl: 'x', apiKey: 'k', models: [{ id: 'a b', label: 'a b' }, { id: 'a-b', label: 'a-b' }] },
+      (c) => seen.push(c),
+    );
+    ok('a key collision is reported, not silently renamed', seen.length === 1);
+    ok('and it names both models so the pair can be found',
+      seen[0].first === 'a b' && seen[0].second === 'a-b');
+    // The file must still parse — one broken model beats a broken file.
+    const toml = buildGrokModelsToml({ baseUrl: 'x', apiKey: 'k',
+      models: [{ id: 'a b', label: 'a b' }, { id: 'a-b', label: 'a-b' }] });
+    const keys = [...toml.matchAll(/^\[model\.([^\]]+)\]$/gm)].map((m) => m[1]);
+    ok('and the two still get distinct tables', new Set(keys).size === 2);
+  }
+
   // ---- the GENERAL property, not the four models that exposed it ----
   // Fixing the deepseek case proves nothing about the next collision. The rule
   // that has to hold for every pair of names anyone can register is:
