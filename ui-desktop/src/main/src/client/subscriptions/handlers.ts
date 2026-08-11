@@ -25,6 +25,7 @@ import {
 } from '../../openai-compat/server'
 import { claimNewestOffer } from '../../openai-compat/session-offers'
 import { forCodingAgents, isPickerRoute } from '../../openai-compat/protocol'
+import { patchGrokUserConfig } from '../../grok/user-config'
 import { getOpenAiApiSetting, setOpenAiApiSetting } from '../settings'
 import {
   buildLaunchScript,
@@ -1402,12 +1403,58 @@ const watchGrokConfig = (): void => {
   }
 }
 
+/**
+ * Stop grok deleting our model list, once per launch.
+ *
+ * Runs only when grok is actually installed — a config.toml conjured into a
+ * ~/.grok that does not exist would be litter in someone's home directory for a
+ * tool they never asked about.
+ *
+ * The previous file is copied beside it before anything is written, once, so a
+ * later run cannot overwrite the original backup with our own output.
+ */
+const ensureGrokSyncDisabled = (): void => {
+  const grokHome = path.join(os.homedir(), '.grok')
+  if (!fs.existsSync(grokHome)) return
+
+  const configPath = path.join(grokHome, 'config.toml')
+  let existing: string | null = null
+  try {
+    existing = fs.readFileSync(configPath, 'utf8')
+  } catch {
+    existing = null // no config yet; patchGrokUserConfig handles that
+  }
+
+  const patch = patchGrokUserConfig(existing)
+  if (!patch.toml) {
+    log.info(`grok config: ${patch.outcome} — ${patch.note}`)
+    return
+  }
+
+  try {
+    if (existing !== null) {
+      const backup = `${configPath}.before-morpheus`
+      // Never clobber an existing backup: the first one is the user's own file,
+      // and a second run would replace it with a copy of our edit.
+      if (!fs.existsSync(backup)) {
+        fs.writeFileSync(backup, existing, { encoding: 'utf8', mode: 0o600 })
+      }
+    }
+    fs.writeFileSync(configPath, patch.toml, { encoding: 'utf8' })
+    log.info(`grok config: ${patch.note} (${configPath})`)
+  } catch (e) {
+    // Not fatal — the watcher still restores the file, just more slowly.
+    log.warn(`grok config: could not turn off the managed-config sync — ${String(e)}`)
+  }
+}
+
 const startGrokModelsRefresh = (): void => {
   if (grokModelsTimer) return
   const tick = () => {
     refreshGrokModels().catch((e) => log.warn(`grok models: ${String(e)}`))
   }
   tick()
+  ensureGrokSyncDisabled()
   watchGrokConfig()
   grokModelsTimer = setInterval(tick, 60_000)
   grokModelsTimer.unref?.()

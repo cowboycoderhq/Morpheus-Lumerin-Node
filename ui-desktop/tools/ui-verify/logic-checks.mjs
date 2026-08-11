@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { patchGrokUserConfig } from '../../src/main/src/grok/user-config.ts';
 import {
   buildGrokLaunchScript,
   buildGrokModelsToml,
@@ -1511,6 +1512,51 @@ console.log('grok: models published into the managed config');
       longName.endsWith('#c2c4b037'));
     ok('and drops the branding rather than overflowing',
       !longName.includes('morpheus') && longName.length <= 30);
+  }
+
+  // ---- turning off grok's managed-config sync, in the USER's own file ----
+  // The one file this integration has never touched. grok deletes our model
+  // list every couple of minutes and only this switch stops it, so the write
+  // has to be surgical: additive, idempotent, never overriding a choice, and
+  // above all never producing something grok cannot parse — a broken terminal
+  // is a far worse outcome than a model list that occasionally vanishes.
+  {
+    // Nothing there yet.
+    const fresh = patchGrokUserConfig(null);
+    ok('an absent config gets the setting', fresh.outcome === 'added');
+    ok('and it lands under [features]',
+      /\[features\][\s\S]*managed_config = false/.test(fresh.toml));
+
+    // A [features] table already exists — appending a second one would be a
+    // DUPLICATE TABLE, which TOML forbids, and grok would fail to start.
+    const withTable = patchGrokUserConfig(
+      '[cli]\nmodel = "grok-4.5"\n\n[features]\ntelemetry = false\n',
+    );
+    ok('an existing [features] table is written INTO, not duplicated',
+      (withTable.toml.match(/^\[features\]$/gm) || []).length === 1);
+    ok('and the settings already in it survive', /telemetry = false/.test(withTable.toml));
+    ok('as does everything outside it', /model = "grok-4.5"/.test(withTable.toml));
+
+    // Idempotence: running every launch must change the file at most once.
+    const twice = patchGrokUserConfig(fresh.toml);
+    ok('running again changes nothing', twice.toml === null && twice.outcome === 'already-disabled');
+
+    // A choice the user made outranks us, even when it breaks us.
+    const theirs = patchGrokUserConfig('[features]\nmanaged_config = true\n');
+    ok('a user who turned it ON keeps it on', theirs.toml === null);
+    ok('and is told what that costs them', theirs.outcome === 'left-enabled-by-user');
+
+    // Something that is not TOML at all is left completely alone.
+    const junk = patchGrokUserConfig('<<<not toml>>>');
+    ok('an unrecognisable file is never written to', junk.toml === null);
+
+    // The output has to actually parse. Comments, sections, key = value only.
+    for (const [name, out] of [['fresh', fresh.toml], ['existing table', withTable.toml]]) {
+      const bad = out
+        .split(/\r?\n/)
+        .filter((l) => l.trim() && !/^\s*#/.test(l) && !/^\[[^\]]+\]$/.test(l.trim()) && !/^[A-Za-z_][\w-]*\s*=/.test(l.trim()));
+      ok(`the ${name} output is parseable TOML`, bad.length === 0);
+    }
   }
 
   // ---- the local-model rule, now shared by BOTH integrations ----
