@@ -108,6 +108,7 @@ export class SessionOfferGate {
    */
   request(modelId: string): OfferDecision {
     const t = this.now();
+    this.forget(t);
     const entry = this.byModel.get(modelId) ?? {};
 
     if (entry.quietUntil !== undefined && t < entry.quietUntil) {
@@ -137,6 +138,30 @@ export class SessionOfferGate {
       return;
     }
     this.byModel.set(modelId, { quietUntil: this.now() + this.cooldownMs });
+  }
+
+  /**
+   * Drop entries that can no longer affect a decision.
+   *
+   * A decline used to leave a record that outlived its own cooldown, so the map
+   * accumulated one entry per model ever refused and never shed any. Bounded by
+   * the catalog rather than unbounded, which is why it was easy to miss — and
+   * exactly the kind of thing that is free to fix now and archaeology later.
+   */
+  private forget(t: number): void {
+    for (const [id, e] of this.byModel) {
+      const quietOver = e.quietUntil !== undefined && t >= e.quietUntil;
+      const flightOver =
+        e.inFlightAt !== undefined && t - e.inFlightAt >= this.inFlightTtlMs;
+      if ((e.quietUntil === undefined || quietOver) && (e.inFlightAt === undefined || flightOver)) {
+        this.byModel.delete(id);
+      }
+    }
+  }
+
+  /** How many models the gate is still tracking. Diagnostic only. */
+  tracking(): number {
+    return this.byModel.size;
   }
 
   /** Test/diagnostic view. Never used to make a decision. */

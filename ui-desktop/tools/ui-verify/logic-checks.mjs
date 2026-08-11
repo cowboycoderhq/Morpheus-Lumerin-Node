@@ -1168,6 +1168,23 @@ console.log('grok: models published into the managed config');
     gate.settle('m', 'opened');
     ok('opening a session clears the model outright', gate.request('m').offer === true);
 
+    // The gate used to remember every model it ever refused, forever: a decline
+    // wrote an entry that outlived its own cooldown and nothing ever removed
+    // it. Bounded by the catalog rather than unbounded, which is precisely why
+    // it would never have been noticed.
+    {
+      let t2 = 0;
+      const g = new SessionOfferGate({ now: () => t2, cooldownMs: 100, inFlightTtlMs: 100 });
+      for (let i = 0; i < 50; i++) {
+        g.request(`m${i}`);
+        g.settle(`m${i}`, 'declined');
+      }
+      ok('every declined model is tracked while its cooldown runs', g.tracking() === 50);
+      t2 += 1000; // all cooldowns long expired
+      g.request('anything');
+      ok('and forgotten once they can no longer affect a decision', g.tracking() <= 1);
+    }
+
     const stale = new SessionOfferGate({
       now: () => clock,
       cooldownMs: 1000,
@@ -1312,6 +1329,43 @@ console.log('grok: models published into the managed config');
     ok('and sends the user somewhere they can check for themselves',
       /Sessions tab/i.test(strange.whatToDo));
     ok('a null message does not throw', !!explainSessionOpenFailure(null).headline);
+  }
+
+  // ---- main-process behaviour that only source can attest to ----
+  // These three cannot be exercised here (handlers.ts pulls in electron), so
+  // they are asserted at the seam. Each one is a defect that shipped tonight.
+  {
+    const h = readFileSync(new URL('../../src/main/src/client/subscriptions/handlers.ts', import.meta.url), 'utf8');
+
+    // Editing a third-party tool's config because someone opened Settings, for
+    // a feature they never switched on, is not ours to do.
+    ok('the grok config is only patched when the endpoint is ENABLED',
+      /const ensureGrokSyncDisabled[\s\S]{0,400}?if \(!readOpenAiConfig\(\)\.enabled\) return/.test(h));
+
+    // refreshGrokModels forces a router rebuild — a second on a good day, and
+    // 108 on the day that taught us to measure. A pin must not wait on it.
+    ok('pinning does not block on a router round trip',
+      /void refreshGrokModels\(\)[\s\S]{0,120}?return \{ starredModelIds \}/.test(h));
+
+    // An offer raised when no renderer could answer, and never asked for
+    // afterwards, used to sit in the map for the life of the process.
+    ok('queued offers are pruned when a new one is raised',
+      /OFFER_TTL_MS\) offerModelByRequestId\.delete\(id\)/.test(h));
+  }
+
+  // ---- the picker holds no credential and makes no direct request ----
+  // It used to fetch our endpoint itself, which the endpoint refuses (browsers
+  // are turned away by design), and it was handed a base URL and bearer token
+  // to do it with. Main relays now; the props and the parameters are gone, and
+  // these keep them gone — a signature that still promised them is how someone
+  // reintroduces the direct call that cannot work.
+  {
+    const picker = readFileSync(new URL('../../src/renderer/src/components/grok/StartPickerModal.tsx', import.meta.url), 'utf8');
+    ok('the picker never calls fetch directly', !/[^.\w]fetch\s*\(/.test(picker));
+    ok('and takes no baseUrl/token props', !/\bbaseUrl:\s*string|\btoken:\s*string/.test(picker));
+    const router = readFileSync(new URL('../../src/renderer/src/components/Router.tsx', import.meta.url), 'utf8');
+    ok('the host no longer reads the endpoint config to feed them',
+      !/getOpenAiApiConfig/.test(router));
   }
 
   // ---- what the picker may ask main to call ----

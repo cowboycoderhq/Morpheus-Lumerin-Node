@@ -16,8 +16,6 @@ mount(
   <StartPickerModal
     open
     args=""
-    baseUrl=""
-    token=""
     onDone={(o) => window.__done.push(o)}
   />,
 );

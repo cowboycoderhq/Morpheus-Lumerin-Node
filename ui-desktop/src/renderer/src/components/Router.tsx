@@ -178,17 +178,13 @@ const SessionPrefetcher = withClient(({ client }: any) => {
  */
 const GrokStartHost = withClient(({ client }: any) => {
   const [request, setRequest] = useState<any>(null);
-  const [api, setApi] = useState<any>(null);
 
   useEffect(() => {
+    // No endpoint config is read here any more. It used to be fetched purely to
+    // pass the picker a base URL and a bearer token; the picker's calls go
+    // through main now, which reads the live values itself — so this window
+    // never holds the credential and can never hold a stale one.
     const onRequest = async (_e: any, payload: any) => {
-      // Read the endpoint fresh: the port or token may have moved since this
-      // window opened, and a stale pair fails as an unexplainable 401.
-      try {
-        setApi(await client.getOpenAiApiConfig());
-      } catch {
-        setApi(null);
-      }
       setRequest(payload);
     };
     (window as any).ipcRenderer?.on?.('grok-picker-request', onRequest);
@@ -223,8 +219,6 @@ const GrokStartHost = withClient(({ client }: any) => {
     <StartPickerModal
       open
       args={request.args ?? ''}
-      baseUrl={api?.port ? `http://127.0.0.1:${api.port}` : ''}
-      token={api?.token ?? ''}
       // Reported the moment the session opens, so the offer is released and the
       // model list republished while the dialog is still up — a terminal that
       // was refused can succeed on its next send instead of after a dismissal.
