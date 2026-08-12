@@ -1638,6 +1638,29 @@ console.log('grok: models published into the managed config');
     }
   }
 
+  // ---- Settings must SAY that pinning is what fills the terminal ----
+  // The step was invisible: models had to be pinned before grok or opencode
+  // showed anything, and the only way to find that out was to open a terminal
+  // and stare at an empty picker. Copy is the fix, so copy is what is pinned.
+  {
+    const settings = readFileSync(new URL('../../src/renderer/src/components/settings/Settings.tsx', import.meta.url), 'utf8');
+    ok('there is a section for choosing terminal models',
+      settings.includes('Models in your terminal'));
+    ok('an empty pin list warns rather than sitting quiet',
+      /Nothing is pinned yet/.test(settings));
+    ok('and says plainly that pinning neither costs nor opens anything',
+      /Pinning costs nothing and opens nothing/.test(settings));
+    // Both terminals must point BACK at it, or the dependency is only
+    // discoverable from one direction.
+    ok('grok’s block names the pin requirement when nothing is pinned',
+      /nothing is pinned[\s\S]{0,120}Pin one above/.test(settings));
+    ok('opencode’s block does too',
+      (settings.match(/Pin one above/g) || []).length >= 2);
+    // Pinning writes through the delta channel, never a whole-list write.
+    ok('Settings pins via the delta channel',
+      /client\.toggleStarredModel\(\{ modelId \}\)/.test(settings));
+  }
+
   // ---- installing grok: the right tool, by its own documented method ----
   {
     const cmd = grokInstallCommand();

@@ -9,6 +9,7 @@ import {
   IconPlugConnected,
   IconServerCog,
   IconTrash,
+  IconX,
 } from '@tabler/icons-react';
 import { Client } from 'src/renderer/src/client';
 import { StartupItemComponent } from '@renderer/components/StartupItem';
@@ -32,6 +33,10 @@ import {
   ToggleInput,
   ToggleLabel,
   ToggleRow,
+  PinnedList,
+  PinnedChip,
+  SearchResults,
+  SearchRow,
 } from './Settings.styles';
 
 // The 'aurora' variant is presented to users as "Jarvis". The internal key stays
@@ -67,10 +72,71 @@ const Common = (props: CommonProps) => {
   const [ocStatus, setOcStatus] = useState<any>(null);
   const [ocBusy, setOcBusy] = useState(false);
   const [ocOutput, setOcOutput] = useState<string>('');
+  const [catalog, setCatalog] = useState<{ id: string; name: string }[]>([]);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [modelSearch, setModelSearch] = useState('');
+  const [pinBusy, setPinBusy] = useState('');
   const [grokBusy, setGrokBusy] = useState(false);
   const [grokOutput, setGrokOutput] = useState<string>('');
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  // The marketplace list, for turning pinned chain ids into names a person can
+  // read — and for choosing new ones. Fetched through main, because this window
+  // cannot call the endpoint directly (it refuses browsers, deliberately).
   const { variant, setVariant } = useThemeVariant();
+
+  const pinnedIds: string[] = apiCfg?.starredModelIds ?? [];
+  const isPinned = (id: string) =>
+    pinnedIds.some((x) => x.toLowerCase() === id.toLowerCase());
+  // A pinned model whose name we have not loaded still has to render as
+  // something: the raw id, shortened, beats an empty chip.
+  const modelName = (id: string) =>
+    catalog.find((m) => m.id.toLowerCase() === id.toLowerCase())?.name ??
+    `${id.slice(0, 10)}…`;
+  const matchingModels = catalog
+    .filter((m) => {
+      const q = modelSearch.trim().toLowerCase();
+      if (!q) return false;
+      return m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q);
+    })
+    .slice(0, 25);
+
+  const togglePin = async (modelId: string) => {
+    setPinBusy(modelId);
+    try {
+      const r: any = await props.client.toggleStarredModel({ modelId });
+      if (Array.isArray(r?.starredModelIds)) {
+        setApiCfg((prev: any) => ({ ...prev, starredModelIds: r.starredModelIds }));
+      }
+    } finally {
+      setPinBusy('');
+    }
+  };
+
+  useEffect(() => {
+    if (!apiCfg?.running) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r: any = await props.client.morpheusApiRequest({
+          path: '/morpheus/v1/catalog',
+        });
+        if (cancelled) return;
+        if (r?.ok && Array.isArray(r.data?.models)) {
+          setCatalog(r.data.models);
+          setCatalogError(null);
+        } else {
+          setCatalogError(
+            r?.data?.error?.message ?? 'Could not load the model list.',
+          );
+        }
+      } catch (e: any) {
+        if (!cancelled) setCatalogError(String(e?.message ?? e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiCfg?.running, props.client]);
 
   useEffect(() => {
     (async () => {
@@ -284,6 +350,72 @@ const Common = (props: CommonProps) => {
                 : 'While this is off, nothing reaching the endpoint can cause a blockchain transaction — it can only use sessions you already opened.'}
             </SettingsCallout>
 
+            {/* WHICH MODELS YOUR TERMINAL SEES.
+                This was the missing step: models had to be pinned before grok
+                or opencode showed anything, and the only way to discover that
+                was to open a terminal and find an empty picker. It is stated
+                here, in the same card as the endpoint it governs. */}
+            <SectionDescription style={{ marginTop: '1.6rem' }}>
+              Models in your terminal
+            </SectionDescription>
+            <SettingsCallout tone={pinnedIds.length ? 'info' : 'warning'}>
+              {pinnedIds.length
+                ? 'These appear in grok and opencode. Pinning costs nothing and opens nothing — using one without a session is refused, and this app offers to open it.'
+                : 'Nothing is pinned yet, so grok and opencode will show no Morpheus models. Pin one below. Pinning costs nothing and opens nothing — it makes the model selectable in your terminal.'}
+            </SettingsCallout>
+
+            {pinnedIds.length > 0 && (
+              <PinnedList>
+                {pinnedIds.map((id: string) => (
+                  <PinnedChip key={id} title={id}>
+                    {modelName(id)}
+                    <button
+                      aria-label={`Unpin ${modelName(id)}`}
+                      disabled={pinBusy === id}
+                      onClick={() => void togglePin(id)}
+                    >
+                      <IconX size={14} stroke={2} />
+                    </button>
+                  </PinnedChip>
+                ))}
+              </PinnedList>
+            )}
+
+            <FieldRow style={{ marginTop: '1.2rem' }}>
+              <TextInput
+                id="pin-model-search"
+                placeholder="Search the marketplace to pin a model…"
+                value={modelSearch}
+                onChange={(e: any) => setModelSearch(e?.value ?? '')}
+              />
+            </FieldRow>
+            {catalogError && (
+              <SettingsCallout tone="warning">{catalogError}</SettingsCallout>
+            )}
+            {modelSearch.trim().length > 0 && (
+              <SearchResults>
+                {matchingModels.length === 0 && (
+                  <SearchRow as="div" style={{ cursor: 'default' }}>
+                    No model matches “{modelSearch.trim()}”.
+                  </SearchRow>
+                )}
+                {matchingModels.map((m) => (
+                  <SearchRow
+                    key={m.id}
+                    type="button"
+                    disabled={pinBusy === m.id}
+                    onClick={() => void togglePin(m.id)}
+                  >
+                    <span>
+                      {isPinned(m.id) ? '✓ ' : ''}
+                      {m.name}
+                    </span>
+                    <span className="id">{m.id}</span>
+                  </SearchRow>
+                ))}
+              </SearchResults>
+            )}
+
             {/* Distinct from the switch above, and deliberately so: that one
                 lets a tool spend on its own, this one only lets a tool make the
                 app ASK. Every session it leads to is still opened by hand,
@@ -383,9 +515,11 @@ const Common = (props: CommonProps) => {
               grok
             </SectionDescription>
             <SettingsCallout tone="info">
-              {grok?.installed
-                ? 'Your models appear in grok’s /model picker automatically. Pick one there; if it has no open session you will be told, and this window will offer to open one.'
-                : 'grok is a terminal coding agent from xAI. Install it and your models appear in its /model picker automatically.'}
+              {!grok?.installed
+                ? 'grok is a terminal coding agent from xAI. Install it and your pinned models appear in its /model picker.'
+                : pinnedIds.length
+                  ? 'Your pinned models appear in grok’s /model picker. Pick one there; if it has no open session you will be told, and this window will offer to open one.'
+                  : 'grok is installed, but nothing is pinned — its /model picker will show no Morpheus models. Pin one above.'}
             </SettingsCallout>
             {grok?.installed === false && (
               <>
@@ -434,9 +568,11 @@ const Common = (props: CommonProps) => {
             {/* opencode setup lives inside this card because it is only
                 meaningful once the endpoint it talks to is running. */}
             <SectionDescription style={{ marginTop: '1.6rem' }}>
-              {ocStatus?.installed
-                ? `opencode ${ocStatus.version} is installed. Open it below and run /start, or open a session in Chat for a one-click handoff.`
-                : 'opencode is not installed. It is a terminal coding agent that can drive the models above.'}
+              {!ocStatus?.installed
+                ? 'opencode is not installed. It is a terminal coding agent that can drive your pinned models.'
+                : pinnedIds.length
+                  ? `opencode ${ocStatus.version} is installed. Your pinned models appear in its model list; open it below, or hand off from a session in Chat.`
+                  : `opencode ${ocStatus.version} is installed, but nothing is pinned — it will show no Morpheus models. Pin one above.`}
             </SectionDescription>
             {ocStatus?.installed && (
               <Btn

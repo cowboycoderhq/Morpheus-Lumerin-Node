@@ -197,3 +197,81 @@ export const ConfirmActions = styled(Flex.Row)`
   gap: 1.2rem;
   justify-content: flex-end;
 `;
+
+
+/* ---- pinned terminal models ---------------------------------------------
+   The list a user curates so grok and opencode have something to show. Kept
+   plain: this is a management surface, not a shop — the marketplace picker in
+   Chat is where models are browsed and compared. */
+
+export const PinnedList = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1rem;
+`;
+
+export const PinnedChip = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.9rem;
+  border-radius: ${(p) => p.theme.radii.pill};
+  background: ${(p) => p.theme.colors.brandTint(0.12)};
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.3)};
+  color: ${(p) => p.theme.colors.textPrimary};
+  font-size: 1.2rem;
+  max-width: 100%;
+
+  button {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    opacity: 0.65;
+    &:hover { opacity: 1; }
+    &:focus-visible {
+      outline: 2px solid ${(p) => p.theme.colors.brandTint(0.6)};
+      outline-offset: 2px;
+    }
+  }
+`;
+
+export const SearchResults = styled.div`
+  margin-top: 0.8rem;
+  max-height: 20rem;
+  overflow-y: auto;
+  border: 1px solid ${(p) => p.theme.colors.glassBorder};
+  border-radius: 8px;
+`;
+
+export const SearchRow = styled.button`
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  padding: 0.9rem 1.2rem;
+  cursor: pointer;
+  color: ${(p) => p.theme.colors.textPrimary};
+  font-size: 1.2rem;
+  border-bottom: 1px solid ${(p) => p.theme.colors.glassBorder};
+
+  &:last-child { border-bottom: none; }
+  &:hover { background: ${(p) => p.theme.colors.brandTint(0.08)}; }
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.6)};
+    outline-offset: -2px;
+  }
+
+  span.id {
+    color: ${(p) => p.theme.colors.textSecondary};
+    font-size: 1rem;
+    /* Chain ids are long; never let one push the name out of view. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 45%;
+  }
+`;
