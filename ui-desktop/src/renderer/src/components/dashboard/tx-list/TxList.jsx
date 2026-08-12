@@ -113,7 +113,7 @@ const TxRowContainer = styled.div`
   }
 `;
 
-export const TxList = ({ transactions, loading, isRefreshing, syncStatus }) => {
+export const TxList = ({ transactions, loading, isRefreshing, syncStatus, onReceiveClick }) => {
   const hasRows = +transactions.length > 0;
 
   const rowRenderer = ({ key, style, index }) => (
@@ -149,7 +149,7 @@ export const TxList = ({ transactions, loading, isRefreshing, syncStatus }) => {
             {loading || syncStatus === 'syncing' ? (
               <ScanningTxPlaceholder />
             ) : (
-              <NoTxPlaceholder />
+              <NoTxPlaceholder onReceiveClick={onReceiveClick} />
             )}
           </Center>
         ) : (

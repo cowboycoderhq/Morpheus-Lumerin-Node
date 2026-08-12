@@ -29,12 +29,32 @@ const Sub = styled.div`
   color: rgba(255, 255, 255, 0.35);
 `;
 
-export default function NoTxPlaceholder() {
+const ReceiveLink = styled.button`
+  margin-top: 1.6rem;
+  background: transparent;
+  border: 1px solid ${(p) => p.theme.colors.morMain};
+  color: ${(p) => p.theme.colors.morMain};
+  border-radius: 5px;
+  padding: 8px 18px;
+  font-size: 1.3rem;
+  font-weight: 600;
+  cursor: pointer;
+  :hover {
+    opacity: 0.85;
+  }
+`;
+
+export default function NoTxPlaceholder({ onReceiveClick }) {
   return (
     <Container data-testid="no-tx-placeholder">
       <IconReceipt size={48} stroke={1.5} />
       <Label>No transactions yet</Label>
       <Sub>Your on-chain activity will appear here.</Sub>
+      {onReceiveClick && (
+        <ReceiveLink data-testid="empty-receive-btn" onClick={onReceiveClick}>
+          Add funds
+        </ReceiveLink>
+      )}
     </Container>
   );
 }

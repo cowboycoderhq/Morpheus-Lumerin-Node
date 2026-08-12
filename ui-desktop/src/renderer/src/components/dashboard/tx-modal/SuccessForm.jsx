@@ -111,8 +111,8 @@ export function SuccessForm(props) {
           {/* <Currency isActive={props.amountInput > 0}>$</Currency> */}
           <AmountInput
             placeholder={0}
-            isActive={props.coinAmount > 0}
             value={props.coinAmount}
+            readOnly
           />
         </AmountContainer>
         {/* <SubAmount>≈ {LMRtoUSD(props.coinAmount)}</SubAmount> */}

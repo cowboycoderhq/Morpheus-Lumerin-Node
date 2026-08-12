@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useContext } from 'react';
+import { useLocation } from 'react-router-dom';
 import styled, { keyframes } from 'styled-components';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -338,7 +339,8 @@ const Dashboard = ({
   explorerUrl,
   ...props
 }) => {
-  const [activeModal, setActiveModal] = useState(null);
+  const location = useLocation();
+  const [activeModal, setActiveModal] = useState(location.state?.openModal ?? null);
   const context = useContext(ToastsContext);
 
   const queryClient = useQueryClient();
@@ -543,6 +545,7 @@ const Dashboard = ({
 
         <TxList
           loadNextTransactions={() => {}}
+          onReceiveClick={() => onTabSwitch('receive')}
           hasTransactions={!!transactions.length}
           syncStatus={syncStatus}
           loading={transactionsQuery.isLoading}
