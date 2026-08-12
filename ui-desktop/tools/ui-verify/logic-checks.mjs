@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { patchGrokUserConfig } from '../../src/main/src/grok/user-config.ts';
+import { notesToShow, RELEASE_NOTES } from '../../src/shared/release-notes.ts';
 import { grokInstallCommand } from '../../src/main/src/grok/install.ts';
 import {
   buildGrokLaunchScript,
@@ -1638,6 +1639,43 @@ console.log('grok: models published into the managed config');
     }
   }
 
+  // ---- telling an existing user what they just got ----
+  // A tester who updates sees an identical app: the setup wizard is behind them
+  // and every new capability lives on a screen they have no reason to open.
+  {
+    const notes = [
+      { version: '1.2.0', headline: 'c', items: [] },
+      { version: '1.1.0', headline: 'b', items: [] },
+      { version: '1.0.0', headline: 'a', items: [] },
+    ];
+
+    ok('an unchanged version shows nothing',
+      notesToShow('1.1.0', '1.1.0', notes).length === 0);
+    // Skipping a build must not lose what arrived in it.
+    ok('everything since what they last saw is shown',
+      notesToShow('1.2.0', '1.0.0', notes).map((n) => n.version).join() === '1.2.0,1.1.0');
+    // A brand-new user reading three releases of history learns nothing about
+    // the app they just installed.
+    ok('a first run shows only the current release',
+      notesToShow('1.2.0', null, notes).map((n) => n.version).join() === '1.2.0');
+    ok('an unrecognised stored version is treated like a first run',
+      notesToShow('1.2.0', '9.9.9', notes).map((n) => n.version).join() === '1.2.0');
+    // A build with no note of its own still owes them everything that landed
+    // since: those changes are new TO THEM, whoever shipped them and whenever.
+    ok('a build with no note still shows what arrived since they last looked',
+      notesToShow('1.5.0', '1.0.0', notes).map((n) => n.version).join() === '1.2.0,1.1.0');
+
+    // The shipped notes must actually match the shipped version, or the modal
+    // is silent on the release it exists to announce.
+    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+    ok(`RELEASE_NOTES has an entry for the current version (${pkg.version})`,
+      RELEASE_NOTES.some((n) => n.version === pkg.version));
+    ok('and its actions are ones the modal knows how to run',
+      RELEASE_NOTES.every((n) =>
+        (n.actions ?? []).every((a) =>
+          ['install-grok', 'pin-models', 'open-settings'].includes(a.kind))));
+  }
+
   // ---- Settings must SAY that pinning is what fills the terminal ----
   // The step was invisible: models had to be pinned before grok or opencode
   // showed anything, and the only way to find that out was to open a terminal
@@ -1840,6 +1878,8 @@ console.log('grok: models published into the managed config');
   const CHANNELS = [
     ['get-grok-status', 'getGrokStatus'],
     ['install-grok', 'installGrok'],
+    ['get-whats-new-state', 'getWhatsNewState'],
+    ['mark-whats-new-seen', 'markWhatsNewSeen'],
     ['grok-picker-done', 'grokPickerDone'],
     // Added when a locked app proved it could swallow an offer whole: the
     // picker host is inside the signed-in layout, so it is not mounted to

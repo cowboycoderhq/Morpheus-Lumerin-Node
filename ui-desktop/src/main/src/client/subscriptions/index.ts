@@ -51,6 +51,8 @@ const listeners = {
   'get-opencode-status': handlers.getOpencodeStatus,
   'get-grok-status': handlers.getGrokStatus,
   'install-grok': handlers.installGrok,
+  'get-whats-new-state': handlers.getWhatsNewState,
+  'mark-whats-new-seen': handlers.markWhatsNewSeen,
   'open-in-grok': handlers.openInGrok,
   'refresh-grok-models': handlers.refreshGrokModels,
   'grok-picker-done': handlers.grokPickerDone,

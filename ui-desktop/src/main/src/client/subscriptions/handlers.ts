@@ -1503,6 +1503,30 @@ export const getGrokStatus = async () => {
  * button that fails silently is worse than no button — the user is left with a
  * tool that is not there and no idea why.
  */
+/**
+ * What the user last saw, and what version they are on now.
+ *
+ * The version comes from the app itself rather than from anything shipped in
+ * the renderer, so a stale bundle cannot claim to be a release it is not.
+ */
+export const getWhatsNewState = async () => ({
+  version: app.getVersion(),
+  lastSeenVersion: (getKey('lastSeenVersion') as string | undefined) ?? null
+})
+
+/**
+ * Record that this version's notes have been read.
+ *
+ * Written only when the user dismisses, never on show: a modal closed by a
+ * crash, or by quitting mid-read, should appear again rather than silently
+ * count as read.
+ */
+export const markWhatsNewSeen = async () => {
+  const version = app.getVersion()
+  setKey('lastSeenVersion', version)
+  return { version }
+}
+
 export const installGrok = async () => {
   const { file, args, display } = grokInstallCommand()
   log.info(`grok: running installer — ${display}`)
