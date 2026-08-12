@@ -26,6 +26,7 @@ import {
 import { claimNewestOffer, OFFER_TTL_MS } from '../../openai-compat/session-offers'
 import { forCodingAgents, isPickerRoute } from '../../openai-compat/protocol'
 import { patchGrokUserConfig } from '../../grok/user-config'
+import { grokInstallCommand } from '../../grok/install'
 import { toggleStarredModel as applyStarToggle } from '../../../../shared/starred-models'
 import { getOpenAiApiSetting, setOpenAiApiSetting } from '../settings'
 import {
@@ -1486,7 +1487,44 @@ export const openInGrok = async ({ modelId, cwd }: { modelId: string; cwd?: stri
 export const getGrokStatus = async () => {
   startGrokModelsRefresh()
   const grokPath = detectGrokPath()
-  return { installed: !!grokPath, grokPath }
+  return {
+    installed: !!grokPath,
+    grokPath,
+    // So the UI can show exactly what an install would run, before it runs.
+    installCommand: grokInstallCommand().display
+  }
+}
+
+/**
+ * Install grok, the way grok documents.
+ *
+ * Mirrors installOpencode deliberately: same shape, same 10-minute ceiling,
+ * same rule that the installer's own output comes back either way. An install
+ * button that fails silently is worse than no button — the user is left with a
+ * tool that is not there and no idea why.
+ */
+export const installGrok = async () => {
+  const { file, args, display } = grokInstallCommand()
+  log.info(`grok: running installer — ${display}`)
+  try {
+    const { stdout, stderr } = await promisify(execFile)(file, args, {
+      timeout: 10 * 60 * 1000,
+      maxBuffer: 4 * 1024 * 1024
+    })
+    const grokPath = detectGrokPath()
+    return {
+      ok: !!grokPath,
+      status: { installed: !!grokPath, grokPath, installCommand: display },
+      output: `${stdout}\n${stderr}`.trim()
+    }
+  } catch (e: any) {
+    const grokPath = detectGrokPath()
+    return {
+      ok: false,
+      status: { installed: !!grokPath, grokPath, installCommand: display },
+      output: `${e?.stdout ?? ''}\n${e?.stderr ?? ''}\n${String(e?.message ?? e)}`.trim()
+    }
+  }
 }
 
 /** The renderer reporting what the user chose. */

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { patchGrokUserConfig } from '../../src/main/src/grok/user-config.ts';
+import { grokInstallCommand } from '../../src/main/src/grok/install.ts';
 import {
   buildGrokLaunchScript,
   buildGrokModelsToml,
@@ -1637,6 +1638,25 @@ console.log('grok: models published into the managed config');
     }
   }
 
+  // ---- installing grok: the right tool, by its own documented method ----
+  {
+    const cmd = grokInstallCommand();
+    // grok documents `curl -fsSL https://x.ai/cli/install.sh | bash`, and this
+    // must match it: inventing a different mechanism means shipping our own
+    // idea of how to install someone else's tool.
+    ok('it uses x.ai’s own installer', cmd.display.includes('x.ai/cli/install.sh'));
+    ok('over https', !/http:\/\//.test(cmd.display));
+    // THE TRAP: `brew install grok` is a DIFFERENT program — jordansissel's
+    // regex tool. Installing it would leave a working `grok` binary that has
+    // nothing to do with xAI, which is far more confusing than a failure.
+    ok('and never brew, where the name belongs to something else',
+      !/brew/i.test(cmd.display));
+    ok('it runs through a login shell, so the installer has a PATH',
+      cmd.args[0] === '-lc');
+    ok('and the command shown to the user IS the command that runs',
+      cmd.args[1] === cmd.display);
+  }
+
   // ---- the local-model rule, now shared by BOTH integrations ----
   // grok and opencode always send tools together with stream; the bundled local
   // runtime refuses that pair every time. The rule was implemented in grok's
@@ -1796,6 +1816,7 @@ console.log('grok: models published into the managed config');
   // ONE list, so a fourth channel added later cannot half-land.
   const CHANNELS = [
     ['get-grok-status', 'getGrokStatus'],
+    ['install-grok', 'installGrok'],
     ['grok-picker-done', 'grokPickerDone'],
     // Added when a locked app proved it could swallow an offer whole: the
     // picker host is inside the signed-in layout, so it is not mounted to
