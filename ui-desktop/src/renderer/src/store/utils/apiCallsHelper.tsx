@@ -39,6 +39,46 @@ export const getSessionsByUser = async (url, user, headers) => {
     return sessions;
 }
 
+// Fetch ALL active bids by walking PROVIDERS instead of MODELS.
+//
+// The marketplace list used to be built with one request per model — 339 calls,
+// each hitting the chain, which is why "Loading marketplace options…" ran for
+// minutes. But every active bid belongs to a provider, and there are 21
+// providers against 391 models. Walking providers returns the identical bid set
+// in ~16x fewer requests. (It is also no less correct: the caller already drops
+// any bid whose provider is not in the provider map.)
+export const getActiveBidsByProvider = async (url, providerId, headers) => {
+  if (!providerId || !url) {
+    return [];
+  }
+
+  const page = async (offset, limit) => {
+    try {
+      const path = `${url}/blockchain/providers/${providerId}/bids/active?offset=${offset}&limit=${limit}`;
+      const response = await fetch(path, { headers });
+      if (!response.ok) return [];
+      const data = await response.json();
+      return data.bids ?? [];
+    } catch (e) {
+      console.log('Error', e);
+      return [];
+    }
+  };
+
+  const limit = 100;
+  let offset = 0;
+  const bids: any[] = [];
+  // Paginate to exhaustion — a provider with more than `limit` bids would
+  // otherwise be silently truncated.
+  for (;;) {
+    const batch = await page(offset, limit);
+    bids.push(...batch);
+    if (batch.length < limit) break;
+    offset += limit;
+  }
+  return bids;
+};
+
 export const getBidsByModelId = async (url, modelId, headers) => {
   if(!modelId || !url) {
     return;

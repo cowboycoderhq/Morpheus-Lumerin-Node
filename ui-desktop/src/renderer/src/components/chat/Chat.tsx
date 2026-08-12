@@ -64,9 +64,9 @@ import {
 import { Cooldown } from './Cooldown';
 import ImageViewer from 'react-simple-image-viewer';
 import { ChatData, HistoryMessage } from './interfaces';
-import { formatValue } from '../../utils/coinValue';
+import { formatMor } from '../../utils/coinValue';
 import { ApiGateway } from 'src/main/src/client/apiGateway';
-import { queryKeys } from '../../store/queries';
+import { queryKeys, buildModelsWithBids } from '../../store/queries';
 
 let abort = false;
 let cancelScroll = false;
@@ -103,6 +103,7 @@ type ChatProps = {
   getProvidersAvailability: (providers: any[]) => Promise<any[]>;
   getBidInfo: (id: string) => Promise<any>;
   getBidsByModelId: (id: string) => Promise<any>;
+  getAllActiveBidsByModel: (providers: any[]) => Promise<Map<string, any[]>>;
   onOpenSession: (props: {
     modelId: string;
     duration: number;
@@ -171,43 +172,10 @@ const Chat = (props: ChatProps) => {
   const modelsWithBidsQuery = useQuery({
     queryKey: queryKeys.modelsWithBids,
     enabled: !!modelsDataQuery.data,
-    queryFn: async () => {
-      const md = modelsDataQuery.data;
-      const providersMap = md.providers.reduce(
-        (a: any, b: any) => ({ ...a, [b.Address.toLowerCase()]: b }),
-        {},
-      );
-      const merged = (
-        await Promise.all(
-          md.models.map(async (m: any) => {
-            const id = m.Id;
-            if (m.isLocal) {
-              return { id };
-            }
-            const bids = (await props.getBidsByModelId(id))
-              .map((b: any) => ({
-                ...b,
-                ProviderData: providersMap[b.Provider.toLowerCase()],
-                Model: m,
-              }))
-              .filter((b: any) => b.ProviderData);
-
-            if (!bids.length) {
-              return null;
-            }
-
-            return { id, bids };
-          }),
-        )
-      ).reduce((acc: any[], next: any) => {
-        if (!next) {
-          return acc;
-        }
-        const model = md.models.find((m: any) => m.Id == next.id);
-        return [...acc, { ...model, bids: next.bids }];
-      }, []);
-      return merged;
-    },
+    // Walk PROVIDERS (~21) once instead of fanning out one bid query per MODEL
+    // (~391), which made the picker take minutes to populate. Same bid set.
+    queryFn: () =>
+      buildModelsWithBids(modelsDataQuery.data, props.getAllActiveBidsByModel),
   });
 
   const availabilityQuery = useQuery({
@@ -281,13 +249,14 @@ const Chat = (props: ChatProps) => {
       ? abbreviateAddress(selectedBid?.Provider, 6)
       : 'Unknown';
   const isDisabled = (!activeSession && !isLocal) || isReadonly;
-  const stakedFunds = activeSession
-    ? (
-        ((activeSession.EndsAt - activeSession.OpenedAt) *
-          activeSession.PricePerSecond) /
-        10 ** 18
-      ).toFixed(2)
-    : 0;
+  // Staked MOR is the on-chain Stake on the session, not session cost. The old
+  // (EndsAt-OpenedAt)*PricePerSecond was the cost (~321x too small) and rendered
+  // real stakes as "0.00". Read Stake directly; formatMor null-guards tiny values.
+  const stakedFunds = activeSession?.Stake
+    ? formatMor(Number(activeSession.Stake), 18)
+    : activeSession
+      ? '0'
+      : 0;
 
   // One-time selection of the default chat once the (possibly cached) model and
   // session data is available. Runs in a layout effect so that on a warm cache
@@ -412,6 +381,8 @@ const Chat = (props: ChatProps) => {
     }
   };
 
+  const MIN_REQUEST_SECONDS = 5 * 60 + 60; // 5-min contract floor + 1-min cushion
+
   const calculateAcceptableDuration = (
     pricePerSecond: number,
     balance: number,
@@ -428,11 +399,17 @@ const Chat = (props: ChatProps) => {
         (Number(stakingInfo.supply) * pricePerSecond),
     );
 
-    if (targetDuration - delta < 5 * 60) {
-      return 5 * 60;
+    // Both branches used to be able to land on exactly the 5-min contract
+    // minimum — the value the router truncates into a SessionTooShort() revert.
+    // Floor everything at MIN_REQUEST_SECONDS instead.
+    if (targetDuration - delta < MIN_REQUEST_SECONDS) {
+      return MIN_REQUEST_SECONDS;
     }
 
-    return targetDuration - (targetDuration % 60) - delta;
+    return Math.max(
+      targetDuration - (targetDuration % 60) - delta,
+      MIN_REQUEST_SECONDS,
+    );
   };
 
   const calculateAcceptableDurationForDirectPay = (stakingInfo: {
@@ -1184,7 +1161,7 @@ const Chat = (props: ChatProps) => {
     const maxPrice = Math.max(...prices);
 
     setRequiredStake({
-      min: calculateStake(maxPrice, 5),
+      min: calculateStake(maxPrice, MIN_REQUEST_SECONDS / 60),
       max: calculateStake(maxPrice, 24 * 60),
     });
   };
@@ -1198,13 +1175,23 @@ const Chat = (props: ChatProps) => {
     const isCreateSessionMode =
       isNewChat && !isLocal && !activeSession && !isLoading;
 
-    // for stake mode
-    const isEnoughFunds = Number(balances.mor) > Number(requiredStake.min);
+    // Stake mode: only "enough" once we actually KNOW the requirement (min>0).
+    // An unknown (0) requirement used to read as affordable and enabled a doomed
+    // Stake button. Use >= so an exact balance qualifies.
+    const stakeKnown = Number(requiredStake.min) > 0;
+    const isEnoughFunds =
+      stakeKnown && Number(balances.mor) >= Number(requiredStake.min);
 
-    // for direct pay mode TODO: fixme
-    const requiredStakeForDirectPay = (5 * 3600 * meta.supply) / meta.budget;
+    // Direct pay: price the requirement off the dearest live bid x the session
+    // floor. The old (5*3600*supply)/budget was priceless and trivially true.
+    const dearestBid = Math.max(
+      0,
+      ...(selectedModel?.bids ?? []).map((x: any) => Number(x.PricePerSecond)),
+    );
+    const requiredStakeForDirectPay = dearestBid * MIN_REQUEST_SECONDS;
     const isEnoughFundsForDirectPay =
-      Number(balances.mor) > Number(requiredStakeForDirectPay);
+      requiredStakeForDirectPay > 0 &&
+      Number(balances.mor) >= requiredStakeForDirectPay;
 
     return (
       <>
@@ -1215,8 +1202,8 @@ const Chat = (props: ChatProps) => {
               <ChatIntroInnerText>
                 Stake MOR to get a free compute. Session will last from 5 mins
                 up to 24 hours depending on the amount you stake (min:{' '}
-                {formatValue(requiredStake.min, 18)} MOR, max:{' '}
-                {formatValue(requiredStake.max, 18)} MOR). You can claim your
+                {formatMor(requiredStake.min, 18) ?? '…'} MOR, max:{' '}
+                {formatMor(requiredStake.max, 18) ?? '…'} MOR). You can claim your
                 stake in 24h.
               </ChatIntroInnerText>
               <div style={{ display: 'flex', justifyContent: 'center' }}>

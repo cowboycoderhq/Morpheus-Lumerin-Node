@@ -12,7 +12,7 @@ import {
   IconHome,
   IconShieldLock,
 } from '@tabler/icons-react';
-import { formatSmallNumber, SECURE_TAG, SECURE_BADGE_TOOLTIP } from '../utils';
+import { formatSmallNumber, SECURE_TAG, SECURE_BADGE_TOOLTIP, formatModelName } from '../utils';
 
 type IconCmp = React.ComponentType<any>;
 
@@ -320,7 +320,7 @@ function ModelRow(props: {
       <NameStack>
         <NameLine>
           <StatusDot $online={isOnline} />
-          <NameText>{model.Name}</NameText>
+          <NameText>{formatModelName(model.Name)}</NameText>
         </NameLine>
         <MetaLine>
           {modalityKeys.slice(0, 1).map((key) => (
