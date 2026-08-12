@@ -21,17 +21,13 @@ const withSettingsState = WrappedComponent => {
 
     getConfig = async () => {
       try {
-        const authHeaders = await this.props.client.getAuthHeaders();
-        const path = `${this.props.config.chain.localProxyRouterUrl}/config`;
-        const response = await fetch(path, {
-          headers: authHeaders
-        });
-        const data = await response.json();
-        return data;
+        // Fetch the derived config from the main process instead of the renderer,
+        // so a transient 500 during router boot doesn't paint an error into devtools.
+        return await this.props.client.getProxyRouterDerivedConfig();
       }
       catch (e) {
         console.log("Error", e)
-        return [];
+        return {};
       }
     }
 

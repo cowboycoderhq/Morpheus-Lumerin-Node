@@ -47,6 +47,9 @@ const Main = styled.div`
   overflow-y: hidden;
   min-height: 100vh;
   position: relative;
+  /* Contain child z-indexes so a screen's overlay (e.g. a loading cover) can't
+     stack above the sidebar rail in the narrow (<800px) overlay layout. */
+  isolation: isolate;
 `;
 
 // Warms the shared session cache as soon as the main app shell mounts, so the
