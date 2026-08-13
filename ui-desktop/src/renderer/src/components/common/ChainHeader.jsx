@@ -50,12 +50,12 @@ const ChainContainer = styled.div`
     display: flex;
     align-items: center;
     gap: 10px;
-    color: white;
+    color: ${p => p.theme.colors.textPrimary};
     font-size: 1.2rem;
     padding: 0.6rem 1.2rem;
-    background: rgba(255,255,255,0.04);
+    background: ${p => p.theme.colors.brandTint(0.04)};
     border-width: 1px;
-    border: 1px solid rgba(255,255,255,0.04);
+    border: 1px solid ${p => p.theme.colors.brandTint(0.22)};
 `
 
 const getChainLogo = (chainId) => {

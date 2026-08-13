@@ -25,16 +25,21 @@ const TitleRow = styled.div`
 `;
 
 const Title = styled.label`
-  font-size: 2.4rem;
+  font-family: ${(p) => p.theme.fontUI};
+  /* Page titles speak in the HUD's voice: uppercase, wide tracking, cyan with
+     a faint glow — the console header, not a document heading. */
+  font-size: ${(p) => p.theme.type.base};
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  text-shadow: 0 0 18px ${(p) => p.theme.colors.brandTint(0.45)};
   line-height: 3rem;
   white-space: nowrap;
   margin: 0;
   font-weight: 600;
-  color: ${(p) => p.theme.colors.morMain};
+  color: ${(p) => p.theme.colors.brand};
   margin-bottom: 4.8px;
   margin-right: 2.4rem;
   cursor: default;
-  /* width: 100%; */
 
   @media (min-width: 1140px) {
   }

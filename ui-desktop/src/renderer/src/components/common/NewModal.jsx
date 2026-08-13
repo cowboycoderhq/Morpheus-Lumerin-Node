@@ -6,6 +6,7 @@ import withNewContractModalState from '../../store/hocs/withNewContractModalStat
 import { BaseBtn } from '.';
 
 const Modal = styled.div`
+  border-radius: ${(p) => p.theme.radii.lg};
   display: flex;
   flex-direction: column;
   position: fixed;
@@ -15,8 +16,7 @@ const Modal = styled.div`
   width: 100%;
   height: 100%;
   overflow: auto;
-  background-color: rgb(0, 0, 0);
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: ${p => p.theme.colors.scrim};
   align-items: center;
   justify-content: center;
 `;
@@ -27,7 +27,7 @@ const Body = styled.div`
   background-color: ${p => p.theme.colors.light};
   width: 50%;
   height: 80%;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   padding: 3rem 5%;
 
   @media (min-height: 700px) {
@@ -89,7 +89,7 @@ const Input = styled.input`
   width: 80%;
   padding: 4px 8px;
   margin: 0.4rem 0 0.2rem 0;
-  border-radius: 3px;
+  border-radius: ${(p) => p.theme.radii.sm};
   border-style: solid;
   border-color: ${p => p.theme.colors.lightBG};
   border-width: 1px;
@@ -127,7 +127,7 @@ const LeftBtn = styled(BaseBtn)`
   width: 45%;
   height: 40px;
   font-size: 1rem;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   border: 1px solid ${p => p.theme.colors.primary};
   background-color: ${p => p.theme.colors.light};
   color: ${p => p.theme.colors.primary};
@@ -141,7 +141,7 @@ const RightBtn = styled(BaseBtn)`
   width: 45%;
   height: 40px;
   font-size: 1rem;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   background-color: ${p => p.theme.colors.primary};
   color: ${p => p.theme.colors.light};
 

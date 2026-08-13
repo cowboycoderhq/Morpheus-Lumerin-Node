@@ -3,11 +3,13 @@ import styled from 'styled-components';
 import React from 'react';
 
 const Container = styled.div`
+  border-radius: ${(p) => p.theme.radii.lg};
   min-height: 100%;
   background-color: ${p => p.theme.colors.light};
 `;
 
 const Header = styled.header`
+  border-radius: ${(p) => p.theme.radii.md};
   background-color: ${p => p.theme.colors.light};
 
   padding: 4.5rem 4.8rem;

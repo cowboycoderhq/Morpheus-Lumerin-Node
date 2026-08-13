@@ -18,8 +18,10 @@ import Tabs from './Tabs';
 import Text from './Text';
 import Flex from './Flex';
 import Sp from './Spacing';
+import { Checkbox } from './Checkbox';
 
 export {
+  Checkbox,
   DisplayValue,
   AmountFields,
   PasswordStrengthMeter,

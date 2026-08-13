@@ -7,42 +7,50 @@ import { ErrorMsg, Label } from './TextInput.styles';
 import SelectorCaret from '../icons/SelectorCaret';
 
 const MenuButton = styled(DropdownMenu.Trigger)`
-  background-color: #fff;
-  color: ${p => p.theme.colors.dark};
-  font-size: 1.3rem;
+  background-color: ${p => p.theme.colors.glassSurface};
+  border: 1px solid ${p => p.theme.colors.glassBorder};
+  color: ${p => p.theme.colors.textPrimary};
+  font-family: ${p => p.theme.fontUI};
+  font-size: ${p => p.theme.type.sm};
   font-weight: 600;
   letter-spacing: 0.5px;
   padding: 0;
-  border: none;
-  border-radius: 15px;
-  display: block;
+  border-radius: ${p => p.theme.radii.md};
+  display: flex;
   height: 4.8rem;
   text-align: left;
   width: 100%;
   line-height: 4rem;
   margin-top: 0.8rem;
   cursor: pointer;
-  display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 2px 0 0px
-    ${p => (p.hasErrors ? p.theme.colors.danger : 'transparent')};
+  transition: border-color ${p => p.theme.motion.duration.base} ${p =>
+    p.theme.motion.easing.standard};
+  border-color: ${p => (p.hasErrors ? p.theme.colors.danger : p.theme.colors.glassBorder)};
 
   &[disabled] {
     cursor: not-allowed;
+    opacity: 0.5;
   }
 
   &:focus {
     outline: none;
-    box-shadow: 0 2px 0 0px ${p => p.theme.colors.primary};
-    box-shadow: ${p =>
-      p.noFocus && p.value && p.value.length > 0
-        ? 'none'
-        : `0 2px 0 0px ${p.theme.colors.primary}`};
+    border-color: ${p => {
+      if (p.hasErrors) return p.theme.colors.danger;
+      if (p.noFocus && p.value && p.value.length > 0) {
+        return p.theme.colors.glassBorder;
+      }
+      return p.theme.colors.brand;
+    }};
   }
 
   @media (min-height: 600px) {
     height: 5.6rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 `;
 
@@ -55,12 +63,12 @@ const CaretContainer = styled.div`
   background-color: transparent;
   padding: 1.6rem 1.2rem 1.6rem 1.3rem;
   svg {
-    fill: ${p => p.theme.colors.primary};
+    fill: ${p => p.theme.colors.textSecondary};
   }
 
   [aria-expanded='true'] & {
     svg {
-      fill: ${p => p.theme.colors.primary};
+      fill: ${p => p.theme.colors.brand};
     }
   }
 
@@ -70,22 +78,28 @@ const CaretContainer = styled.div`
 `;
 
 const MenuList = styled(DropdownMenu.Content)`
-  background-color: ${p => p.theme.colors.light};
+  background-color: ${p => p.theme.colors.voidElevated};
+  border: 1px solid ${p => p.theme.colors.glassBorder};
+  border-radius: ${p => p.theme.radii.md};
+  box-shadow: ${p => p.theme.shadows.elevated};
   width: var(--radix-dropdown-menu-trigger-width);
+  overflow: hidden;
 `;
 
 const MenuItem = styled(DropdownMenu.Item)`
-  color: ${p => p.theme.colors.copy};
+  border-radius: ${(p) => p.theme.radii.md};
+  color: ${p => p.theme.colors.textPrimary};
+  font-family: ${p => p.theme.fontUI};
   width: 100%;
-  font-size: 1.3rem;
+  font-size: ${p => p.theme.type.sm};
   font-weight: 600;
   letter-spacing: 0.5px;
   padding: 1.2rem 1.6rem;
   cursor: pointer;
 
   &[data-highlighted] {
-    background-color: #eaf7fc;
-    color: ${p => p.theme.colors.primary};
+    background-color: ${p => p.theme.colors.glassSurfaceHover};
+    color: ${p => p.theme.colors.brand};
     outline: none;
   }
 `;

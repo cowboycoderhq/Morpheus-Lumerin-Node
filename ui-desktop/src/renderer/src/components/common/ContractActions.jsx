@@ -49,12 +49,12 @@ const CaretContainer = styled.div`
   background-color: transparent;
   padding: 0.8rem 1rem;
   svg {
-    fill: ${p => p.theme.colors.ligth};
+    fill: ${p => p.theme.colors.light};
   }
 
   [aria-expanded='true'] & {
     svg {
-      fill: ${p => p.theme.colors.ligth};
+      fill: ${p => p.theme.colors.light};
     }
   }
 
@@ -64,11 +64,13 @@ const CaretContainer = styled.div`
 `;
 
 const MenuList = styled(DropdownMenu.Content)`
+  border-radius: ${(p) => p.theme.radii.md};
   background-color: ${p => p.theme.colors.light};
   width: var(--radix-dropdown-menu-trigger-width);
 `;
 
 const MenuItem = styled(DropdownMenu.Item)`
+  border-radius: ${(p) => p.theme.radii.md};
   color: ${p => p.theme.colors.primary};
   width: 100%;
   font-size: 1.3rem;
@@ -78,7 +80,7 @@ const MenuItem = styled(DropdownMenu.Item)`
   cursor: pointer;
 
   &[data-highlighted] {
-    background-color: #eaf7fc;
+    background-color: ${p => p.theme.colors.brandTint(0.1)};
     color: ${p => p.theme.colors.primary};
     outline: none;
   }
