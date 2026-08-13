@@ -11,6 +11,13 @@ import { StartupItemComponent } from '@renderer/components/StartupItem';
 import withServicesState from '@renderer/store/hocs/withServicesState';
 import { LoadingState } from 'src/main/orchestrator/orchestrator.types';
 import { ToastsContext } from '@renderer/components/toasts';
+import { THEME_VARIANTS, ThemeVariant } from '../../ui/theme';
+import { useThemeVariant } from '../../ui/ThemeVariantContext';
+
+const THEME_LABELS: Record<ThemeVariant, string> = {
+  aurora: 'Aurora',
+  classic: 'Classic',
+};
 
 type CommonProps = {
   client: Client;
@@ -26,6 +33,7 @@ const Common = (props: CommonProps) => {
   const [ethNodeUrl, setEthUrl] = useState<string>('');
   const [useFailover, setUseFailover] = useState<boolean>(false);
   const [confirmingReset, setConfirmingReset] = useState<boolean>(false);
+  const { variant, setVariant } = useThemeVariant();
 
   useEffect(() => {
     (async () => {
@@ -41,6 +49,29 @@ const Common = (props: CommonProps) => {
 
   return (
     <>
+      <Sp mt={3}>
+        <Subtitle>Appearance</Subtitle>
+        <StyledParagraph>
+          Choose how the app looks. Aurora is the futuristic cyan/glass theme;
+          Classic is the calm Morpheus green. You can switch anytime.
+        </StyledParagraph>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {THEME_VARIANTS.map((v) => {
+            const active = v === variant;
+            return (
+              <StyledBtn
+                key={v}
+                data-testid={`theme-${v}`}
+                aria-pressed={active}
+                style={{ opacity: active ? 1 : 0.55 }}
+                onClick={() => setVariant(v)}
+              >
+                {active ? `✓ ${THEME_LABELS[v]}` : THEME_LABELS[v]}
+              </StyledBtn>
+            );
+          })}
+        </div>
+      </Sp>
       <Sp mt={3}>
         <Subtitle>Reset</Subtitle>
         <StyledParagraph>Set up your wallet from scratch.</StyledParagraph>
