@@ -32,7 +32,7 @@ const listeners = {
   'get-todays-budget': handlers.getTodaysBudget,
   'get-supply': handlers.getTokenSupply,
   'get-auth-headers': handlers.getAuthHeaders,
-  // Transfers. These were NEVER registered: the renderer bound send-eth/send-lmr
+  // Transfers. These were NEVER registered: the renderer bound send-eth/send-mor
   // and main listened for neither, so a send hung until the 750s IPC timeout.
   // The router signs and pays gas (POST /blockchain/send/{eth,mor}).
   'send-eth': handlers.sendEth,

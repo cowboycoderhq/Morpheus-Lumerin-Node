@@ -41,12 +41,12 @@ export const getSessionsByUser = async (url, user, headers) => {
 
 // Fetch ALL active bids by walking PROVIDERS instead of MODELS.
 //
-// The marketplace list used to be built with one request per model — 339 calls,
-// each hitting the chain, which is why "Loading marketplace options…" ran for
-// minutes. But every active bid belongs to a provider, and there are 21
-// providers against 391 models. Walking providers returns the identical bid set
-// in ~16x fewer requests. (It is also no less correct: the caller already drops
-// any bid whose provider is not in the provider map.)
+// The marketplace list used to be built with one chain request per model, which
+// is why "Loading marketplace options…" ran for a long time. Every active bid
+// belongs to a provider, and there are far fewer providers than models, so
+// walking providers returns the identical bid set in far fewer requests — and is
+// no less correct: the caller already drops any bid whose provider is not in the
+// provider map.
 export const getActiveBidsByProvider = async (url, providerId, headers) => {
   if (!providerId || !url) {
     return [];
