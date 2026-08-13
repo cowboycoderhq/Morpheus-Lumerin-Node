@@ -1,4 +1,4 @@
-import { app, dialog } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
 import restart from '../electron-restart'
 import dbManager from '../database'
 import storage from '../storage'
@@ -471,8 +471,16 @@ export const resetWallet = async () => {
   } catch (e) {
     log.error('Cache clear failed during reset', e)
   }
-  app.relaunch()
-  app.quit()
+  if (app.isPackaged) {
+    app.relaunch()
+    app.quit()
+  } else {
+    // In electron-vite dev, app.relaunch() reloads the packaged renderer path
+    // (which dev serves from memory, not disk) and shows a blank screen. The
+    // wallet is already cleared above, so reload the window instead — it
+    // re-initialises straight to onboarding. Production keeps the full relaunch.
+    BrowserWindow.getAllWindows()[0]?.webContents.reload()
+  }
 }
 
 export const getAgentUsers = async (): Promise<AgentUserRes | null> => {
