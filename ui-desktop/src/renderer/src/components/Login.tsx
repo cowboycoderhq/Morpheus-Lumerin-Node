@@ -116,4 +116,5 @@ function Login({ onInputChange, onSubmit, password, errors, status, error, logou
   )
 }
 
+export { Login }
 export default withLoginState(Login)
