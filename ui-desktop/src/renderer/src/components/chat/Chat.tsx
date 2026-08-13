@@ -252,8 +252,9 @@ const Chat = (props: ChatProps) => {
       : 'Unknown';
   const isDisabled = (!activeSession && !isLocal) || isReadonly;
   // Staked MOR is the on-chain Stake on the session, not session cost. The old
-  // (EndsAt-OpenedAt)*PricePerSecond was the cost (~321x too small) and rendered
-  // real stakes as "0.00". Read Stake directly; formatMor null-guards tiny values.
+  // (EndsAt-OpenedAt)*PricePerSecond was the cost — far smaller than the stake —
+  // so real stakes rendered as "0.00". Read Stake directly; formatMor null-guards
+  // tiny values.
   const stakedFunds = activeSession?.Stake
     ? formatMor(Number(activeSession.Stake), 18)
     : activeSession
