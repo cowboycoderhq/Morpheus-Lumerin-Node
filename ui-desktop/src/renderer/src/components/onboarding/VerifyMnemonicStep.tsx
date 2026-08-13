@@ -9,7 +9,7 @@ import AltLayoutNarrow from '../common/AltLayoutNarrow';
 const VerifyMnemonicStep = props => {
   const id = 'mnemonicAgain';
   return (
-    <AltLayout title="Recovery Passphrase" data-testid="onboarding-container">
+    <AltLayout title="Recovery Passphrase" onBack={props.onBack} data-testid="onboarding-container">
       <form data-testid="mnemonic-form" onSubmit={props.onMnemonicAccepted}>
         <AltLayoutNarrow>
           <Message>

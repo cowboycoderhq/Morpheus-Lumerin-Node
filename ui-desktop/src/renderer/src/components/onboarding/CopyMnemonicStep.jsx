@@ -25,7 +25,7 @@ export default class CopyMnemonicStep extends React.Component {
 
   render() {
     return (
-      <AltLayout title="Recovery Mnemonic" data-testid="onboarding-container">
+      <AltLayout title="Recovery Mnemonic" onBack={this.props.onBack} data-testid="onboarding-container">
         <AltLayoutNarrow>
           <Message>
             Copy the following word list and keep it in a safe place. You will

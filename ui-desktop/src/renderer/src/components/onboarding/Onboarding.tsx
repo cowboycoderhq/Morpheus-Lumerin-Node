@@ -50,6 +50,8 @@ Onboarding.propTypes = {
     'verify-mnemonic',
     'ask-for-terms',
     'copy-mnemonic',
+    'import-flow',
+    'set-custom-eth',
     'config-proxy-router'
   ]).isRequired
 }
