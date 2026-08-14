@@ -4,11 +4,15 @@ import React from 'react';
 import styled from 'styled-components';
 import { useForm } from 'react-hook-form';
 
-import { TextInput, AltLayout, Btn, Sp, AltLayoutNarrow } from '../common';
+import { TextInput, AltLayout, Btn, Sp, AltLayoutNarrow, Checkbox } from '../common';
 import SecondaryBtn from './SecondaryBtn';
 
-const Subtext = styled.span`
+// A label, not a span: this row's raw input became a real <Checkbox>, and the
+// text beside a checkbox should toggle it. It was a span, so the only hit target
+// was the box itself.
+const Subtext = styled.label`
   color: ${p => p.theme.colors.dark};
+  cursor: pointer;
 `;
 
 const ProxyRouterConfigStep = props => {
@@ -27,15 +31,16 @@ const ProxyRouterConfigStep = props => {
           data-testid="pr-config-form"
         >
           <div style={{ display: 'flex' }}>
-            <input
+            <Checkbox
               style={{ marginLeft: '0' }}
               data-testid="use-titan-lightning"
               onChange={onCheckboxToggle}
               checked={props.isTitanLightning}
-              type="checkbox"
               id="isTitanLightning"
             />
-            <Subtext>Use Titan Pool for Lightning Payouts</Subtext>
+            <Subtext htmlFor="isTitanLightning">
+              Use Titan Pool for Lightning Payouts
+            </Subtext>
           </div>
           {props.isTitanLightning ? (
             <Sp mt={2}>

@@ -17,5 +17,11 @@ export default defineConfig({
       src: resolve(uiDesktop, 'src'),
     },
   },
+  // Same reason as the aliases above: mirror what electron.vite.config declares
+  // for the renderer. Product code imports termsAndConditions.md as an asset and
+  // fetches the URL; without this vite serves the markdown AS JavaScript, and
+  // the parse error reads as "TermsStep is broken" rather than "the harness
+  // isn't configured like the app".
+  assetsInclude: ['**/*.png', '**/*.svg', '**/*.md'],
   server: { port: 5233, fs: { allow: [uiDesktop] } },
 });

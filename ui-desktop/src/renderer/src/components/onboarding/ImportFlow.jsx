@@ -2,9 +2,10 @@ import TermsAndConditions from '../common/TermsAndConditions';
 import PropTypes from 'prop-types';
 import styled from 'styled-components';
 import React, { useState } from 'react';
-import { TextInput, AltLayout, AltLayoutNarrow, Btn, Sp } from '../common';
+import { TextInput, AltLayoutNarrow, Btn, Sp } from '../common';
 import { abbreviateAddress } from '../../utils';
 
+import { WizardChrome } from './WizardChrome';
 import Message from './Message';
 
 const DisclaimerWarning = styled.div`
@@ -18,8 +19,9 @@ const DisclaimerWarning = styled.div`
 const DisclaimerMessage = styled.div`
   width: 100%;
   height: 130px;
-  border-radius: 2px;
-  background-color: rgba(0, 0, 0, 0.5);
+  border-radius: ${(p) => p.theme.radii.sm};
+  background: ${(p) => p.theme.colors.glassSurface};
+  border: 1px solid ${(p) => p.theme.colors.glassBorder};
   color: ${(p) => p.theme.colors.dark};
   overflow: auto;
   font-size: 12px;
@@ -44,18 +46,22 @@ const Mnemonic = styled.div`
   word-spacing: 1.6rem;
 `;
 
+// `grey` and `white` were named CSS literals, which pin the control to one look
+// exactly as a hex literal would — and read as innocuous, so a sweep for hex or
+// rgb() walks straight past them. Under aurora this select kept a flat grey
+// border while everything around it went cyan.
 const Select = styled.select`
   outline: 0;
-  border: 1px solid grey;
+  border: 1px solid ${(p) => p.theme.colors.glassBorder};
   padding: 1.2rem 2.4rem;
   letter-spacing: 1.4px;
   line-height: 1.2rem;
   font-size: 1.2rem;
   background: transparent;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   font-weight: bold;
   font: inherit;
-  color: white;
+  color: ${(p) => p.theme.colors.textPrimary};
 `;
 
 export const ImportFlow = (props) => {
@@ -88,7 +94,7 @@ export const ImportFlow = (props) => {
   };
 
   return (
-    <AltLayout
+    <WizardChrome
       title="Access to wallet"
       onBack={handleBack}
       data-testid="onboarding-container"
@@ -224,7 +230,7 @@ export const ImportFlow = (props) => {
           </Sp>
         )}
       </AltLayoutNarrow>
-    </AltLayout>
+    </WizardChrome>
   );
 };
 
