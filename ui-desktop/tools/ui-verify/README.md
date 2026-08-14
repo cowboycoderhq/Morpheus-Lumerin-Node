@@ -16,8 +16,9 @@ cd ui-desktop/tools/ui-verify
 npm install
 npx playwright install chromium   # one-time browser download, if not already present
 npm run logic      # node-runnable assertions over the exported utils
+npm run frozen     # colour literals that would survive a theme swap
 npm run isolate    # isolation-render + Playwright drive of key components
-npm run verify     # both
+npm run verify     # all three
 ```
 
 ## What it proves
@@ -35,6 +36,29 @@ Assertions over the PR's exported substrate utils (run through `vite-node` so th
 - **`store/queries.buildModelsWithBids`** — merges the model registry with active
   bids from an injected provider-walking fetcher: skips local models, drops bids
   whose provider isn't in the map, attaches `ProviderData`/`Model`.
+
+### `frozen-values.mjs` (`npm run frozen`)
+
+The theme system's blind spot. A swap works only if every colour-valued
+declaration derives from `props.theme`; a literal is perfectly valid CSS and
+simply frozen, so typecheck, build, and a render of the component's own look all
+pass while the surface refuses to swap.
+
+Two things make it an audit rather than a checklist:
+
+- **It queries the invariant** — *a colour-valued declaration that never mentions
+  `theme`* — not a list of literals someone remembered. A hand-listed query
+  (`#hex`, `rgba(`, plus the colour names you can recall) can only rediscover what
+  its author already knew; that is how `border: 1px solid grey` and `color: white`
+  survived a sweep in `ImportFlow.jsx`. The named-colour set here is the full CSS
+  spec list, so it can surface a spelling nobody thought of.
+- **It splits findings by reachability from `App.tsx`**, resolving every import
+  specifier to a file (basename matching conflates `dashboard/tx-list/Filter.jsx`
+  with `contracts-list/Filter.jsx` — different files, one dead). This repo carries
+  a dead legacy marketplace holding ~40 of the 41 raw hits. A frozen value in code
+  that never renders is not a defect, and a gate that is permanently red is a gate
+  nobody runs. Live findings fail; dead ones are reported. `--all` fails on both,
+  for when the dead code is being removed.
 
 ### `isolate/` (`npm run isolate`)
 Each case mounts ONE real product component in the app's real `ThemeProvider`

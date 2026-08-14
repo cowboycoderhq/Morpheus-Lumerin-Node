@@ -7,7 +7,8 @@
   "scripts": {
     "logic": "vite-node logic-checks.mjs",
     "isolate": "node run.mjs",
-    "verify": "vite-node logic-checks.mjs && node run.mjs"
+    "frozen": "node frozen-values.mjs",
+    "verify": "vite-node logic-checks.mjs && node frozen-values.mjs && node run.mjs"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
