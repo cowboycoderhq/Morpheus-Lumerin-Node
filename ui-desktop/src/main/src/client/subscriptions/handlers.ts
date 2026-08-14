@@ -1519,6 +1519,33 @@ export const getGrokStatus = async () => {
  * The version comes from the app itself rather than from anything shipped in
  * the renderer, so a stale bundle cannot claim to be a release it is not.
  */
+/**
+ * The tail of the app's own log, for the setup failure card.
+ *
+ * A frozen setup used to end with "open a terminal and run tail" — which is the
+ * app failing twice: once by breaking, once by making its own diagnosis
+ * somebody else's job. The card shows this and the copy button carries it.
+ *
+ * Redacted through the same function that guards the log itself: this text is
+ * meant to be pasted into a bug report by someone who will not read it first.
+ */
+export const getMainLogTail = async ({ lines = 60 }: { lines?: number } = {}) => {
+  const candidates = [
+    path.join(app.getPath('logs'), 'main.log'),
+    path.join(app.getPath('userData'), 'logs', 'main.log')
+  ]
+  for (const file of candidates) {
+    try {
+      const text = fs.readFileSync(file, 'utf8')
+      const tail = text.split(/\r?\n/).slice(-Math.max(1, lines)).join('\n')
+      return { file, text: redactSecretsInText(tail) }
+    } catch {
+      /* try the next location */
+    }
+  }
+  return { file: candidates[0], text: '' }
+}
+
 export const getWhatsNewState = async () => ({
   version: app.getVersion(),
   lastSeenVersion: (getKey('lastSeenVersion') as string | undefined) ?? null

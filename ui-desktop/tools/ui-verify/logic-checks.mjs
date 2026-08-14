@@ -1272,6 +1272,31 @@ console.log('grok: models published into the managed config');
     ok('a null message does not throw', !!explainSessionOpenFailure(null).headline);
   }
 
+  // ---- a frozen setup must SAY something ----
+  // A tester's install sat on "Connecting to the Morpheus network — just a
+  // moment, sorting something out…" indefinitely. The per-key stuck-clock could
+  // not fire: it only runs while a service is actively 'starting', and a
+  // service stuck in 'pending' or a download stalled without erroring reset it
+  // on every tick. Silence forever, with nothing to click.
+  {
+    const heal = readFileSync(new URL('../../src/renderer/src/components/setup/useSelfHeal.ts', import.meta.url), 'utf8');
+    ok('a stall watchdog exists that does not care WHY', /STALL_MS/.test(heal));
+    ok('it escalates when nothing has changed for long enough',
+      /now - stallRef\.current\.since > STALL_MS/.test(heal));
+    // A slow download must never be mistaken for a dead one.
+    ok('and it fingerprints download PROGRESS, not just status',
+      /d\.name, d\.status, d\.progress/.test(heal));
+
+    // The card must carry the log, not a path to go and find it.
+    const card = readFileSync(new URL('../../src/renderer/src/components/setup/RemediationCard.tsx', import.meta.url), 'utf8');
+    ok('the failure card fetches the app log itself',
+      /get-main-log-tail/.test(card));
+    ok('and puts it in what the user copies',
+      /buildDiagnostics\(escalation, logTail\)/.test(card));
+    ok('rather than telling them to open a terminal',
+      !/~\/Library\/Logs\/morpheus-app\/main\.log`/.test(card));
+  }
+
   // ---- an optional integration must not be able to stop the app booting ----
   // A tester's fresh install froze on "Connecting to the Morpheus network".
   // Nothing here was proven to be the cause — the services path is untouched by
@@ -1848,6 +1873,7 @@ console.log('grok: models published into the managed config');
   const CHANNELS = [
     ['get-grok-status', 'getGrokStatus'],
     ['install-grok', 'installGrok'],
+    ['get-main-log-tail', 'getMainLogTail'],
     ['get-whats-new-state', 'getWhatsNewState'],
     ['mark-whats-new-seen', 'markWhatsNewSeen'],
     ['grok-picker-done', 'grokPickerDone'],

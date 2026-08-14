@@ -7,7 +7,8 @@
 // app uses) — no theater.
 // ============================================================================
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { sendToMainProcess } from '../../client/utils';
 import styled from 'styled-components';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
@@ -181,7 +182,7 @@ const redactDiagnostics = (s: string): string =>
     // a bare basic-auth cookie (user:token) in service stderr, outside a header
     .replace(/\b[\w.-]{2,40}:[A-Za-z0-9+/=_-]{20,}={0,2}\b/g, '[REDACTED_COOKIE]');
 
-const buildDiagnostics = (e: EscalationInfo) => {
+const buildDiagnostics = (e: EscalationInfo, logTail = '') => {
   const version =
     typeof (window as any).getAppVersion === 'function'
       ? (window as any).getAppVersion()
@@ -198,7 +199,9 @@ const buildDiagnostics = (e: EscalationInfo) => {
     `--- service output (last lines) ---`,
     e.stderr?.trim() || '(no output captured)',
     ``,
-    `full log: ~/Library/Logs/morpheus-app/main.log`,
+    ``,
+    `--- app log (last lines) ---`,
+    logTail.trim() || '(log not readable)',
   ].join('\n');
 
   return redactDiagnostics(raw);
@@ -212,12 +215,31 @@ export default function RemediationCard({
 }: RemediationCardProps) {
   const reduceMotion = useReducedMotion();
   const { message, icon: Icon } = copy[escalation.kind];
+  // The app's own log, fetched when this card appears. A failure that ends with
+  // "go and run tail in a terminal" is the app making its own diagnosis somebody
+  // else's job — and the person it asks is the one least able to do it.
+  const [logTail, setLogTail] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r: any = await sendToMainProcess('get-main-log-tail', { lines: 60 });
+        if (!cancelled && r?.text) setLogTail(r.text);
+      } catch {
+        /* the card is still useful without it */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>(
     'idle',
   );
 
   const onCopy = async () => {
-    const text = buildDiagnostics(escalation);
+    const text = buildDiagnostics(escalation, logTail);
     try {
       // The preload's clipboard bridge, NOT navigator.clipboard: main/index.ts
       // denies every permission except media, and `clipboard-sanitized-write`
@@ -260,7 +282,7 @@ export default function RemediationCard({
         {(escalation.message || escalation.stderr) && (
           <Details data-testid="setup-error-details">
             <summary>Technical details</summary>
-            <Trace>{buildDiagnostics(escalation)}</Trace>
+            <Trace>{buildDiagnostics(escalation, logTail)}</Trace>
           </Details>
         )}
 
