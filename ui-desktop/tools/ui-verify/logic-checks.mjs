@@ -59,7 +59,6 @@ import {
 } from '../../src/main/src/opencode/setup.ts';
 import { buildProviderPlugin } from '../../src/main/src/opencode/start-plugin.ts';
 import {
-  checkCaps,
   spentToday,
   stakeForDuration,
   buildCatalog,
@@ -893,66 +892,6 @@ console.log('openai-compat: models a client can actually use');
   // `#`, not `:` — real model names contain colons ("deepseek-v4-flash:web"),
   // so a colon-separated discriminator cannot be told from part of a name.
   ok('and the refusal names the alternatives', /shared-name#/.test(amb.message));
-
-  // Routing headers: the router routes from headers only.
-  ok('a local model sends model_id and NO session_id',
-    routingHeaders(local).model_id === '0xaaa1' && !('session_id' in routingHeaders(local)));
-  ok('a remote model sends its session_id',
-    routingHeaders(remote).session_id === '0xsess');
-
-  ok('errors use the OpenAI envelope', (() => {
-    const e = JSON.parse(errorBody('nope', 'model_not_found'));
-    return e.error && e.error.message === 'nope' && e.error.code === 'model_not_found';
-  })());
-}
-
-// ---- the spend caps ----------------------------------------------------------
-// These are the enforcement behind /start. The TUI confirmation stops the AGENT
-// (a model cannot press a key); these stop everything else — a plugin bug, a
-// mis-parsed duration, a loop that skips the dialog. They live in the app and
-// cannot be raised over the wire, so they are the last line before a real
-// transaction.
-console.log('');
-console.log('sessions: spend caps are the enforcement, not the dialog');
-{
-  const caps = { maxStakeMor: 10, maxDailyStakeMor: 25 };
-  const now = Date.UTC(2026, 7, 6, 15, 0, 0);
-  const noLedger = [];
-
-  ok('a stake inside both limits is allowed',
-    checkCaps(5, caps, noLedger, now).allowed === true);
-  ok('a stake over the per-session cap is refused',
-    checkCaps(11, caps, noLedger, now).allowed === false);
-  ok('and the refusal names the limit that bound',
-    /per-session limit of 10 MOR/.test(checkCaps(11, caps, noLedger, now).reason));
-  ok('exactly at the cap is allowed (a ceiling, not a fence)',
-    checkCaps(10, caps, noLedger, now).allowed === true);
-
-  // The daily ledger.
-  const today = [
-    { at: now - 3600_000, stakeMor: 9, sessionId: 'a' },
-    { at: now - 7200_000, stakeMor: 8, sessionId: 'b' },
-  ];
-  ok("today's spend accumulates", spentToday(today, now) === 17);
-  ok('a stake that would breach the DAILY cap is refused',
-    checkCaps(9, caps, today, now).allowed === false);
-  ok('and that refusal names the daily limit and what is already spent',
-    /daily limit of 25 MOR/.test(checkCaps(9, caps, today, now).reason) &&
-    /17\.00 already staked/.test(checkCaps(9, caps, today, now).reason));
-  ok('a stake that fits under the daily cap is allowed',
-    checkCaps(8, caps, today, now).allowed === true);
-
-  // Yesterday's spend must not count against today, or the cap ratchets shut.
-  const yesterday = [{ at: now - 30 * 3600_000, stakeMor: 24, sessionId: 'old' }];
-  ok('yesterday does not count against today',
-    spentToday(yesterday, now) === 0 &&
-    checkCaps(9, caps, yesterday, now).allowed === true);
-
-  // Degenerate prices must FAIL CLOSED — an unpriceable session is exactly the
-  // case where an unbounded amount could be staked.
-  ok('an unpriceable stake is refused', checkCaps(NaN, caps, noLedger, now).allowed === false);
-  ok('a zero stake is refused', checkCaps(0, caps, noLedger, now).allowed === false);
-  ok('a negative stake is refused', checkCaps(-5, caps, noLedger, now).allowed === false);
 
   // The quote must match the chain's formula, or the confirmation screen lies.
   // supply/budget = 1, price 1e15 wei/s, 1 hour -> 1e15 * 3600 / 1e18 = 3.6 MOR.

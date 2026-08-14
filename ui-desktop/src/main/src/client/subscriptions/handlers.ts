@@ -1034,20 +1034,6 @@ const readOpenAiConfig = (): OpenAiApiConfig => {
     enabled: Boolean(stored.enabled),
     port: Number(stored.port) || base.port,
     token: typeof stored.token === 'string' && stored.token ? stored.token : base.token,
-    allowAutoOpen: Boolean(stored.allowAutoOpen),
-    maxStakeMor: Number.isFinite(Number(stored.maxStakeMor))
-      ? Number(stored.maxStakeMor)
-      : base.maxStakeMor,
-    // Fall back to the DEFAULT, never to "unbounded", when a stored config
-    // predates these caps or carries junk. A cap that silently becomes
-    // infinite on a malformed read is worse than having no cap, because the
-    // UI still shows one.
-    maxDailyStakeMor: Number.isFinite(Number(stored.maxDailyStakeMor))
-      ? Number(stored.maxDailyStakeMor)
-      : base.maxDailyStakeMor,
-    maxDailySessions: Number.isFinite(Number(stored.maxDailySessions))
-      ? Number(stored.maxDailySessions)
-      : base.maxDailySessions,
     // Anything that is not a non-empty string is dropped rather than kept: these
     // ids are written into a terminal agent's config file, and a null or an
     // object there breaks the whole file, not just its own entry.
@@ -1056,7 +1042,9 @@ const readOpenAiConfig = (): OpenAiApiConfig => {
           (id: unknown): id is string => typeof id === 'string' && id.length > 0
         )
       : base.starredModelIds,
-    offerSessionOnUse: Boolean(stored.offerSessionOnUse)
+    // Not a setting any more: a stored `false` from an older build must not
+    // leave someone permanently un-offered with no way to turn it back on.
+    offerSessionOnUse: true
   }
   if (merged.token !== stored.token) {
     setOpenAiApiSetting(merged)
