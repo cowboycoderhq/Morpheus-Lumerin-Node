@@ -3,7 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <title>ui-verify · isolate</title>
-    <style>body { margin: 0; background: #020d08; font-family: system-ui, sans-serif; }</style>
+    <style>
+      /* The app's index.html sets a 10px root and EVERY rem in the product is
+         authored against it (1.6rem = 16px). Without this the isolate renders
+         each rem at the browser's 16px default — 1.6x oversized — so layout
+         read here is fiction: it invented a clipped "PROVIDER HU" nav label
+         that the real app renders fine. Keep this in sync with
+         src/renderer/index.html or this harness measures a different app. */
+      html { font-size: 10px; }
+      body { margin: 0; background: #020d08; font-family: system-ui, sans-serif; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
