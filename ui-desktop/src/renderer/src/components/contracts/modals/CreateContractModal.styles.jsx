@@ -14,20 +14,20 @@ const CloseButton = styled.button`
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: ${(p) => p.theme.radii.sm};
   padding: 0;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.7);
+  color: ${(p) => p.theme.colors.textSecondary};
   transition: background 0.12s ease, color 0.12s ease;
   z-index: 21;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 1);
+    background: ${(p) => p.theme.colors.glassSurfaceHover};
+    color: ${(p) => p.theme.colors.textPrimary};
   }
 
   &:focus-visible {
-    outline: 2px solid rgba(32, 220, 142, 0.5);
+    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.5)};
     outline-offset: 2px;
   }
 `;
@@ -49,26 +49,29 @@ export const Modal = styled.div`
   min-width: 330px;
   height: 100%;
   overflow: auto;
-  background-color: rgb(0, 0, 0);
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: ${(p) => p.theme.colors.void};
+  background-color: ${(p) => p.theme.colors.scrim};
   align-items: center;
   justify-content: center;
-  color: ${p => p.theme.colors.primaryDark};
+  color: ${(p) => p.theme.colors.textPrimary};
 `;
 
 export const Body = styled.div`
   position: fixed;
   z-index: 20;
-  background-color: ${p => p.theme.colors.light};
   width: ${p => p.width || '45%'};
   height: ${p => p.height || 'fit-content'};
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.md};
   padding: 3rem 5%;
   max-width: ${p => p.maxWidth || '600px'};
   max-height: ${p => p.maxHeight || '800px'};
-  background-color: #173629;
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  /* Was a hard-coded green (#173629) left over from the pre-Aurora palette.
+     Every modal in the app reuses this Body, and its translucent children let
+     it show through — which is why whole panels still read green. The surface
+     is the deep void blue, from the theme, not a literal. */
+  background-color: ${(p) => p.theme.colors.primary};
+  color: ${(p) => p.theme.colors.textPrimary};
+  border: 1px solid ${(p) => p.theme.colors.glassBorder};
 
   @media (min-height: 700px) {
     padding: 5rem;
@@ -106,7 +109,7 @@ export const ContractLink = styled.div`
   cursor: pointer;
   display: flex;
   align-items: center;
-  color: #014353;
+  color: ${(p) => p.theme.colors.textPrimary};
 `;
 
 export const InstructionLink = styled.div`
@@ -117,7 +120,7 @@ export const InstructionLink = styled.div`
   cursor: pointer;
   display: flex;
   align-items: center;
-  color: #014353;
+  color: ${(p) => p.theme.colors.textPrimary};
 `;
 
 export const Form = styled.form`
@@ -148,13 +151,13 @@ export const Input = styled.input`
   padding: 4px 8px;
   outline: 0;
   border: 0px;
-  background: #eaf7fc;
-  border-radius: 5px;
+  background: ${(p) => p.theme.colors.moneySurfaceBg};
+  border-radius: ${(p) => p.theme.radii.sm};
   padding: 1.5rem 1.5rem;
   margin-top: 0.25rem;
 
   ::placeholder {
-    color: rgba(1, 67, 83, 0.56);
+    color: ${(p) => p.theme.colors.textMuted};
   }
 
   ${props =>
@@ -169,11 +172,11 @@ export const Select = styled.select`
   margin: 0.4rem 0 0.2rem 0;
   outline: 0;
   border: 0px;
-  background: #eaf7fc;
+  background: ${(p) => p.theme.colors.moneySurfaceBg};
   border-radius: 15px;
   padding: 1.5rem 1.5rem;
   margin-top: 0.25rem;
-  color: rgba(1, 67, 83, 0.56);
+  color: ${(p) => p.theme.colors.textMuted};
 `;
 
 export const Label = styled.label`
@@ -200,10 +203,10 @@ export const LeftBtn = styled(BaseBtn)`
   width: 45%;
   height: 40px;
   font-size: 1.5rem;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   border: 1px solid ${p => p.theme.colors.primary};
   background-color: ${p => p.theme.colors.morMain};
-  color: black;
+  color: ${(p) => p.theme.colors.textPrimary};
 
   @media (min-width: 1040px) {
     margin-left: 0;
@@ -214,9 +217,9 @@ export const RightBtn = styled(BaseBtn)`
   width: 45%;
   height: 40px;
   font-size: 1.5rem;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   background-color: ${p => p.theme.colors.morMain};
-  color: black;
+  color: ${(p) => p.theme.colors.textPrimary};
   font-weight: 600;
 
   @media (min-width: 1040px) {
@@ -226,7 +229,7 @@ export const RightBtn = styled(BaseBtn)`
 
 export const ErrorLabel = styled(Sublabel)`
   padding: 5px 0 0 5px;
-  color: red;
+  color: ${(p) => p.theme.colors.danger};
 `;
 
 export const ApplyBtn = styled(RightBtn)`
@@ -248,9 +251,9 @@ export const ProfitLabel = styled.div`
   text-align: center;
   margin-top: 1.5rem;
   padding: 1rem 0;
-  background: rgba(0, 0, 0, 0.02);
+  background: ${(p) => p.theme.colors.glassSurface};
   border-radius: 0.5rem;
-  border: 1px solid rgba(0, 0, 0, 0.125);
+  border: 1px solid ${(p) => p.theme.colors.glassBorder};
 `;
 
 export const ProfitMessageLabel = styled.div`
@@ -263,7 +266,7 @@ export const ProfitMessageLabel = styled.div`
   opacity: 0.65;
   cursor: default;
   padding: 0 1rem;
-  border-bottom: ${p => (p.show ? '1px solid rgba(0,0,0,.125)' : '')};
+  border-bottom: ${p => (p.show ? `1px solid ${p.theme.colors.glassBorder}` : '')};
   padding-bottom: ${p => (p.show ? '1rem' : '')};
 `;
 
@@ -271,19 +274,19 @@ export const SearchContainer = styled.div`
     input {
       background-color: transparent;
       border: 1px solid ${p => p.theme.colors.morMain};
-      color: white;
+      color: ${p => p.theme.colors.textPrimary};
     }
     input::placeholder {
-      color: white;
+      color: ${p => p.theme.colors.textPrimary};
     }
     .form-control:focus {
-      color: white;
+      color: ${p => p.theme.colors.textPrimary};
       background-color: transparent;
       border-color: ${p => p.theme.colors.morMain};
     }
     .input-group-text {
       background-color: transparent;
       border: 1px solid ${p => p.theme.colors.morMain};
-      color: white;
+      color: ${p => p.theme.colors.textPrimary};
     }
 `

@@ -20,11 +20,11 @@ import Sort from './Sort';
 import { Btn } from '../../common';
 
 const Stats = styled.div`
-  color: #0e4353;
+  color: ${(p) => p.theme.colors.textPrimary};
   display: flex;
   justify-content: space-between;
   width: 100%;
-  background: white;
+  background: ${(p) => p.theme.colors.moneySurfaceBg};
   border-radius: 8px;
   gap: 10px;
   flex-wrap: wrap;
@@ -37,7 +37,7 @@ const StatValue = styled.div`
   flex-grow: 1;
   flex-shrink: 0;
   flex-basis: 0;
-  background-color: white;
+  background-color: ${(p) => p.theme.colors.moneySurfaceBg};
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -45,7 +45,7 @@ const StatValue = styled.div`
   font-size: 1.5rem;
   padding: 0 4rem;
   :not(:last-child) {
-    border-right: 1.75px solid #a8a8a8;
+    border-right: 1.75px solid ${(p) => p.theme.colors.moneySurfaceBorder};
   }
 
   h3 {

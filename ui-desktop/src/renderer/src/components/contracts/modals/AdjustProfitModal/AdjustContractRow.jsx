@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { abbreviateAddress } from '../../../../utils';
-import styled from 'styled-components';
+import styled, { useTheme } from 'styled-components';
 import { RightBtn } from '../CreateContractModal.styles';
 
 const RowContainer = styled.div`
@@ -35,7 +35,7 @@ const Circle = styled.div`
   display: inline-block;
 
   background: ${p => p.color};
-  color: #fff;
+  color: ${p => p.theme.colors.light};
   text-align: center;
 `;
 
@@ -50,19 +50,20 @@ export const Input = styled.input`
   padding: 4px 8px;
   outline: 0;
   border: 0px;
-  background: #eaf7fc;
+  background: ${p => p.theme.colors.moneySurfaceBg};
   margin: 0 12px;
   width: 35%;
   font-size: 16px;
   font-weight: 400;
-  color: #0e4353;
+  color: ${(p) => p.theme.colors.textPrimary};
   min-width: 60px;
   ::placeholder {
-    color: rgba(1, 67, 83, 0.56);
+    color: ${p => p.theme.colors.textMuted};
   }
 `;
 
 function AdjustContractRow({ item, onAdjust }) {
+  const theme = useTheme();
   const [price, setPrice] = useState(item.estimatedPrice);
   const profit = item.profit;
 
@@ -72,7 +73,7 @@ function AdjustContractRow({ item, onAdjust }) {
         <ContractValue>{abbreviateAddress(item.id, 4)}</ContractValue>
       </FlexCenter>
       <FlexCenter>
-        <span style={{ color: item.zeroRate > 1 ? 'green' : 'darkred' }}>
+        <span style={{ color: item.zeroRate > 1 ? theme.colors.success : theme.colors.danger }}>
           {item.zeroRate > 1
             ? ((item.zeroRate - 1) * 100).toFixed(0)
             : (-(1 - item.zeroRate) * 100).toFixed(0)}{' '}

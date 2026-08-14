@@ -14,7 +14,7 @@ const responsiveHeader = width => css`
 
 const Container = styled.div`
   // position: sticky;
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   // top: 4.1rem;
   // left: 0;
   // right: 0;

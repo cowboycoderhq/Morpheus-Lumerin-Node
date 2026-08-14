@@ -5,7 +5,7 @@ import React from 'react';
 import { Modal, BaseBtn } from '../common';
 
 const Container = styled.div`
-  border-radius: 5px;
+  border-radius: ${(p) => p.theme.radii.sm};
   background-color: ${p => p.theme.colors.light};
   padding: 2.4rem 1.6rem 1.6rem 1.6rem;
 `;
