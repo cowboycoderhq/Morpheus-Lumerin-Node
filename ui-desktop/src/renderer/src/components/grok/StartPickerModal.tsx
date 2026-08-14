@@ -84,7 +84,7 @@ import {
 
 type Props = {
   open: boolean;
-  /** Free text typed after `/start`, may be ''. Prefills the model search. */
+  /** Prefills the model search — the advertised id a terminal asked for. */
   args: string;
   /** ALWAYS called exactly once per `open` — cancel, error, or success. */
   onDone: (outcome: { opened: boolean; note?: string }) => void;

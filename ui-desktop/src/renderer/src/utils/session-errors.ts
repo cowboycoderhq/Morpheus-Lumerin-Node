@@ -72,9 +72,9 @@ export function explainSessionOpenFailure(
   }
   if (code === 'auto_open_disabled') {
     return {
-      headline: 'This app is not allowed to open sessions from outside itself.',
+      headline: 'A tool tried to open this session, and is not allowed to.',
       whatToDo:
-        'Turn on "Let /start in opencode stake MOR" in Settings → OpenAI-compatible API, then try again.',
+        'Open it from this window instead — that always works. To let tools do it unattended, turn on "Let a tool holding the key above stake MOR without asking" in Settings → OpenAI-compatible API.',
       charged: 'no',
       offerAnotherProvider: false,
     };

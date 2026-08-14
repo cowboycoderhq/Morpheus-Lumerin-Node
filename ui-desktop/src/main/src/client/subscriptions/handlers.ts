@@ -1670,7 +1670,10 @@ export const morpheusApiRequest = async (payload: {
       method: payload?.method ?? 'GET',
       headers: {
         'content-type': 'application/json',
-        Authorization: `Bearer ${api.token}`
+        Authorization: `Bearer ${api.token}`,
+        // Proves this came from the app's own window rather than from a tool
+        // holding the key. Never leaves this process; see appProofHeader.
+        ...ensureOpenAiServer().appProofHeader()
       },
       body: payload?.body === undefined ? undefined : JSON.stringify(payload.body)
     })

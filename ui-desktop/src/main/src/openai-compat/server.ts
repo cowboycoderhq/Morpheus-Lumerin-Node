@@ -360,6 +360,26 @@ export class OpenAiCompatServer {
   private readonly offers = new SessionOfferGate();
 
   /**
+   * Proof that a request came from THIS app's own window, not from a tool.
+   *
+   * Generated per process, held only in memory, never written to a config, a
+   * descriptor or a log. Main attaches it when the session picker — which the
+   * user is looking at, and clicking in — asks to open a session. Anything
+   * holding the bearer token still cannot forge it, because it has never been
+   * anywhere a token holder can read.
+   *
+   * This exists because the alternative was making the app's own picker depend
+   * on "let outside tools spend on their own", which is a different permission
+   * entirely and made no sense to grant for a button in this window.
+   */
+  private readonly internalKey = generateToken();
+
+  /** For main to attach to its own relayed calls. Never leaves the process. */
+  appProofHeader(): Record<string, string> {
+    return { 'x-morpheus-app': this.internalKey };
+  }
+
+  /**
    * Resolve an identifier and return the advertised list in ONE pass.
    *
    * Exists so the handoff cannot re-fetch: it needs both the resolved id and
@@ -854,12 +874,26 @@ export class OpenAiCompatServer {
     res: ServerResponse,
   ): Promise<void> {
     const cfg = this.deps.config();
-    if (!cfg.allowAutoOpen) {
+    // WHO IS ASKING decides which permission applies.
+    //
+    // The app's own session picker is a human clicking a confirm button in this
+    // window, having been shown the model, the provider, the length and the
+    // stake. Requiring "let outside tools spend on their own" for that was a
+    // mistake: it is a different permission, and granting it to use a dialog in
+    // this app would have meant granting a tool the right to spend unattended.
+    //
+    // Everything else on this route — the confirm flag, the caps, the
+    // confirmed-stake ceiling — still applies to both.
+    const fromThisApp =
+      typeof req.headers['x-morpheus-app'] === 'string' &&
+      req.headers['x-morpheus-app'] === this.internalKey;
+
+    if (!fromThisApp && !cfg.allowAutoOpen) {
       sendJson(
         res,
         403,
         errorBody(
-          'Opening sessions from outside the app is turned off. Enable it in the app under Settings → OpenAI-compatible API. This is off by default so that a tool holding this token cannot spend without you having said it may.',
+          'A tool holding this key is not allowed to open sessions on its own. Turn that on in the app under Settings → OpenAI-compatible API if you want it. Opening a session from the app itself does not need it.',
           'auto_open_disabled',
           'permission_error',
         ),
