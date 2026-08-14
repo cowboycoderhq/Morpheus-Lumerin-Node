@@ -1665,6 +1665,20 @@ console.log('grok: models published into the managed config');
     ok('a build with no note still shows what arrived since they last looked',
       notesToShow('1.5.0', '1.0.0', notes).map((n) => n.version).join() === '1.2.0,1.1.0');
 
+    // The automatic notice failed silently for a tester: one IPC call, one
+    // catch, no retry, no message. Both halves of that are now asserted.
+    const whatsNew = readFileSync(new URL('../../src/renderer/src/components/WhatsNew.tsx', import.meta.url), 'utf8');
+    ok('the state fetch retries rather than giving up on the first failure',
+      /for \(let attempt = 0; attempt < 3/.test(whatsNew));
+    ok('and says so in the console when it cannot read state',
+      /console\.warn\("what's new: no version from main/.test(whatsNew));
+    // A path that does not depend on stored state, an IPC round trip AND a
+    // version match all working — three quiet failure points, one of which
+    // just fired.
+    ok('the notes can be opened on demand', /forceOpen/.test(whatsNew));
+    const settings = readFileSync(new URL('../../src/renderer/src/components/settings/Settings.tsx', import.meta.url), 'utf8');
+    ok('and Settings offers that button', /What’s new in this version/.test(settings));
+
     // The shipped notes must actually match the shipped version, or the modal
     // is silent on the release it exists to announce.
     const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
