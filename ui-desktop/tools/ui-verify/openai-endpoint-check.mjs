@@ -942,14 +942,17 @@ console.log('openai endpoint: offering to open one');
   ok('and the app is asked to offer a session', offers.length === 1);
   ok('the offer carries the id the picker needs', offers[0].id === '0xstarved');
 
-  // grok sends a hidden title-generation call beside the real turn. Two dialogs
-  // for one intent is a user paying twice.
+  // Two requests for one model while a dialog is up must not raise a second —
+  // that would replace the dialog being filled in and orphan the first.
   await Promise.all([ask(), ask()]);
   ok('concurrent requests raise no further offers', offers.length === 1);
 
+  // ANSWERING FREES IT. There is no cooldown: someone who closed a dialog and
+  // asks again wants the dialog, and making them wait is the behaviour this was
+  // reported as a bug for.
   server.settleOffer('0xstarved', 'declined');
   await ask();
-  ok('after a decline the retries stay quiet', offers.length === 1);
+  ok('asking again after closing one offers immediately', offers.length === 2);
 }
 
 console.log('');
@@ -960,6 +963,7 @@ console.log('openai endpoint: an unknown model is refused, never defaulted');
   // an unknown id to some default, that hidden call would open and bill a
   // second completion on every single grok session.
   const chatsBefore = upstreamCalls.filter((c) => c.url === '/v1/chat/completions').length;
+  const offersBeforeUnknown = offers.length;
   const r = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
     headers: { ...auth, 'content-type': 'application/json' },
@@ -971,7 +975,10 @@ console.log('openai endpoint: an unknown model is refused, never defaulted');
     body.error?.code === 'model_not_found');
   ok('nothing was forwarded for it',
     upstreamCalls.filter((c) => c.url === '/v1/chat/completions').length === chatsBefore);
-  ok('and it raised no offer to spend', offers.length === 1);
+  // The count is whatever the previous block left; what matters is that an
+  // UNKNOWN model adds nothing to it — a name we do not serve must never
+  // summon a window asking someone to pay for it.
+  ok('and it raised no offer to spend', offers.length === offersBeforeUnknown);
 }
 
 // ---- opening is reserved to this app, with no setting to change it ---------

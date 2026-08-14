@@ -1079,11 +1079,7 @@ console.log('grok: models published into the managed config');
   // ---- the offer gate: agents are concurrent, and they retry ----
   {
     let clock = 0;
-    const gate = new SessionOfferGate({
-      now: () => clock,
-      cooldownMs: 1000,
-      inFlightTtlMs: 500,
-    });
+    const gate = new SessionOfferGate({ now: () => clock, inFlightTtlMs: 500 });
 
     ok('the first use of a starred model is offered a session',
       gate.request('m').offer === true);
@@ -1094,25 +1090,16 @@ console.log('grok: models published into the managed config');
       gate.request('m').offer === false);
     ok('a different model is still offered', gate.request('other').offer === true);
 
-    gate.settle('m', 'declined');
-    const quiet = gate.request('m');
-    ok('declining puts that model quiet', quiet.reason === 'cooling_down');
-    // The refusal must carry HOW LONG. A silently suppressed offer is
-    // indistinguishable from a broken feature — which is how a 5-minute
-    // cooldown got reported as "it only works the first time".
-    ok('and says how long the quiet lasts', quiet.retryInMs > 0);
-    // Measured: grok reissued a failing request 8 times in 2 minutes. With no
-    // cooldown, cancelling only means the window returns until you give in and
-    // click the expensive button — a purchase made by fatigue.
-    clock += 999;
-    ok('it is still quiet a moment before the cooldown ends',
-      gate.request('m').offer === false);
-    clock += 2;
-    ok('and offerable again once the cooldown has passed',
+    // A DISMISSAL FREES THE MODEL. There is no cooldown, and removing it is the
+    // fix for "the app only opens the first time": the loop it guarded against
+    // does not happen (measured — one request per user send, no retry, on both
+    // clients), and the only thing it suppressed was a person asking again.
+    gate.settle('m');
+    ok('closing a dialog lets you ask again immediately',
       gate.request('m').offer === true);
 
-    gate.settle('m', 'opened');
-    ok('opening a session clears the model outright', gate.request('m').offer === true);
+    gate.settle('m');
+    ok('and opening a session clears it too', gate.request('m').offer === true);
 
     // The gate used to remember every model it ever refused, forever: a decline
     // wrote an entry that outlived its own cooldown and nothing ever removed
@@ -1120,22 +1107,25 @@ console.log('grok: models published into the managed config');
     // it would never have been noticed.
     {
       let t2 = 0;
-      const g = new SessionOfferGate({ now: () => t2, cooldownMs: 100, inFlightTtlMs: 100 });
+      const g = new SessionOfferGate({ now: () => t2, inFlightTtlMs: 100 });
+      // Fifty dialogs raised and answered: the gate should be holding nothing,
+      // because an answered offer frees its model outright.
       for (let i = 0; i < 50; i++) {
         g.request(`m${i}`);
-        g.settle(`m${i}`, 'declined');
+        g.settle(`m${i}`);
       }
-      ok('every declined model is tracked while its cooldown runs', g.tracking() === 50);
-      t2 += 1000; // all cooldowns long expired
+      ok('an answered offer leaves nothing behind', g.tracking() === 0);
+
+      // Fifty raised and never answered: those DO occupy a slot, and must be
+      // forgotten once they can no longer affect a decision.
+      for (let i = 0; i < 50; i++) g.request(`u${i}`);
+      ok('unanswered offers hold their models', g.tracking() === 50);
+      t2 += 1000;
       g.request('anything');
-      ok('and forgotten once they can no longer affect a decision', g.tracking() <= 1);
+      ok('and are forgotten once they expire', g.tracking() <= 1);
     }
 
-    const stale = new SessionOfferGate({
-      now: () => clock,
-      cooldownMs: 1000,
-      inFlightTtlMs: 500,
-    });
+    const stale = new SessionOfferGate({ now: () => clock, inFlightTtlMs: 500 });
     const held = (stale.request('z'), stale.request('z'));
     ok('an offer in flight holds the model', held.offer === false);
     ok('and that refusal says how long too', held.retryInMs > 0);
@@ -1284,15 +1274,15 @@ console.log('grok: models published into the managed config');
   // retry storm being absorbed, it is a person being ignored.
   {
     const src = readFileSync(new URL('../../src/main/src/openai-compat/session-offers.ts', import.meta.url), 'utf8');
-    ok('a dismissal buys seconds of quiet, not minutes',
-      /this\.cooldownMs = options\.cooldownMs \?\? 45_000/.test(src));
+    ok('there is no cooldown left to suppress a person asking again',
+      !/cooldownMs/.test(src) && !/quietUntil/.test(src));
     ok('and an unanswered offer expires in minutes, not ten of them',
       /OFFER_TTL_MS = 2 \* 60_000/.test(src));
 
     // The endpoint must pass the reason on rather than swallowing it.
     const server = readFileSync(new URL('../../src/main/src/openai-compat/server.ts', import.meta.url), 'utf8');
     ok('the refusal tells the terminal why no window appeared',
-      /not asking again for \$\{secs\}s/.test(server));
+      /already asking about this model/.test(server));
 
     // And a torn-down window must release the slot it was holding.
     const router = readFileSync(new URL('../../src/renderer/src/components/Router.tsx', import.meta.url), 'utf8');
