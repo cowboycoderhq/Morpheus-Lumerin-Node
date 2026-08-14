@@ -1272,6 +1272,23 @@ console.log('grok: models published into the managed config');
     ok('a null message does not throw', !!explainSessionOpenFailure(null).headline);
   }
 
+  // ---- an optional integration must not be able to stop the app booting ----
+  // A tester's fresh install froze on "Connecting to the Morpheus network".
+  // Nothing here was proven to be the cause — the services path is untouched by
+  // any of this work — but the grok publisher runs inside a setImmediate at
+  // startup and touches a directory another program owns, so a synchronous
+  // throw there would surface exactly like that: main dead, renderer frozen on
+  // whatever screen it happened to be showing.
+  {
+    const h = readFileSync(new URL('../../src/main/src/client/subscriptions/handlers.ts', import.meta.url), 'utf8');
+    ok('each startup step is wrapped so a throw cannot escape',
+      /safely\('publishing models'/.test(h) &&
+      /safely\('turning off the managed-config sync'/.test(h) &&
+      /safely\('watching the managed config'/.test(h));
+    ok('and the setImmediate that kicks it cannot throw either',
+      /setImmediate\(\(\) => \{[\s\S]{0,200}?try \{[\s\S]{0,80}?startGrokModelsRefresh\(\)/.test(h));
+  }
+
   // ---- main-process behaviour that only source can attest to ----
   // These three cannot be exercised here (handlers.ts pulls in electron), so
   // they are asserted at the seam. Each one is a defect that shipped tonight.
