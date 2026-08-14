@@ -58,7 +58,15 @@ export function claimNewestOffer(
 /** Why the gate answered as it did — surfaced in logs, never to the caller. */
 export type OfferDecision =
   | { offer: true }
-  | { offer: false; reason: 'in_flight' | 'cooling_down' };
+  /**
+   * Refused, with how long until it would be allowed.
+   *
+   * The caller needs `retryInMs` because a suppressed offer used to be
+   * completely silent: the terminal said "no session", the window did not
+   * appear, and nothing anywhere said why or for how long. Silence that looks
+   * identical to a broken feature is worse than the nag it was avoiding.
+   */
+  | { offer: false; reason: 'in_flight' | 'cooling_down'; retryInMs: number };
 
 export type OfferGateOptions = {
   /** Injected so tests do not sleep. */
@@ -83,7 +91,7 @@ export type OfferGateOptions = {
  * a locked app queues it until unlock — so the queue and the gate cannot
  * disagree about whether an offer is still worth showing.
  */
-export const OFFER_TTL_MS = 10 * 60_000;
+export const OFFER_TTL_MS = 2 * 60_000;
 
 type Entry = { inFlightAt?: number; quietUntil?: number };
 
@@ -95,7 +103,15 @@ export class SessionOfferGate {
 
   constructor(options: OfferGateOptions = {}) {
     this.now = options.now ?? Date.now;
-    this.cooldownMs = options.cooldownMs ?? 5 * 60_000;
+    // 45 seconds, not five minutes.
+    //
+    // Five was chosen against an imagined retry storm. Measured, grok sends ONE
+    // request per user send for a clean 400 and does not retry it — so the only
+    // thing a long cooldown suppresses is a PERSON pressing enter again, which
+    // is intent, not noise. The reported symptom was exactly that: "the app
+    // only opens the first time". Long enough to absorb a double-send, short
+    // enough that trying again is trying again.
+    this.cooldownMs = options.cooldownMs ?? 45_000;
     this.inFlightTtlMs = options.inFlightTtlMs ?? OFFER_TTL_MS;
   }
 
@@ -112,13 +128,21 @@ export class SessionOfferGate {
     const entry = this.byModel.get(modelId) ?? {};
 
     if (entry.quietUntil !== undefined && t < entry.quietUntil) {
-      return { offer: false, reason: 'cooling_down' };
+      return {
+        offer: false,
+        reason: 'cooling_down',
+        retryInMs: entry.quietUntil - t,
+      };
     }
     if (
       entry.inFlightAt !== undefined &&
       t - entry.inFlightAt < this.inFlightTtlMs
     ) {
-      return { offer: false, reason: 'in_flight' };
+      return {
+        offer: false,
+        reason: 'in_flight',
+        retryInMs: entry.inFlightAt + this.inFlightTtlMs - t,
+      };
     }
 
     this.byModel.set(modelId, { inFlightAt: t });

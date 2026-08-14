@@ -1095,7 +1095,12 @@ console.log('grok: models published into the managed config');
     ok('a different model is still offered', gate.request('other').offer === true);
 
     gate.settle('m', 'declined');
-    ok('declining puts that model quiet', gate.request('m').reason === 'cooling_down');
+    const quiet = gate.request('m');
+    ok('declining puts that model quiet', quiet.reason === 'cooling_down');
+    // The refusal must carry HOW LONG. A silently suppressed offer is
+    // indistinguishable from a broken feature — which is how a 5-minute
+    // cooldown got reported as "it only works the first time".
+    ok('and says how long the quiet lasts', quiet.retryInMs > 0);
     // Measured: grok reissued a failing request 8 times in 2 minutes. With no
     // cooldown, cancelling only means the window returns until you give in and
     // click the expensive button — a purchase made by fatigue.
@@ -1131,8 +1136,9 @@ console.log('grok: models published into the managed config');
       cooldownMs: 1000,
       inFlightTtlMs: 500,
     });
-    ok('an offer in flight holds the model',
-      stale.request('z').offer === true && stale.request('z').offer === false);
+    const held = (stale.request('z'), stale.request('z'));
+    ok('an offer in flight holds the model', held.offer === false);
+    ok('and that refusal says how long too', held.retryInMs > 0);
     // A renderer that is closed or never looked at would otherwise wedge this
     // model as "asking" forever, with no way back.
     clock += 501;
@@ -1270,6 +1276,28 @@ console.log('grok: models published into the managed config');
     ok('and sends the user somewhere they can check for themselves',
       /Sessions tab/i.test(strange.whatToDo));
     ok('a null message does not throw', !!explainSessionOpenFailure(null).headline);
+  }
+
+  // ---- the windows are short enough that trying again works ----
+  // Reported: "the app only opens the first time per session". It was the
+  // cooldown — five minutes of silence after any dismissal, which is not a
+  // retry storm being absorbed, it is a person being ignored.
+  {
+    const src = readFileSync(new URL('../../src/main/src/openai-compat/session-offers.ts', import.meta.url), 'utf8');
+    ok('a dismissal buys seconds of quiet, not minutes',
+      /this\.cooldownMs = options\.cooldownMs \?\? 45_000/.test(src));
+    ok('and an unanswered offer expires in minutes, not ten of them',
+      /OFFER_TTL_MS = 2 \* 60_000/.test(src));
+
+    // The endpoint must pass the reason on rather than swallowing it.
+    const server = readFileSync(new URL('../../src/main/src/openai-compat/server.ts', import.meta.url), 'utf8');
+    ok('the refusal tells the terminal why no window appeared',
+      /not asking again for \$\{secs\}s/.test(server));
+
+    // And a torn-down window must release the slot it was holding.
+    const router = readFileSync(new URL('../../src/renderer/src/components/Router.tsx', import.meta.url), 'utf8');
+    ok('an unmounted picker reports itself rather than holding the model',
+      /the window closed before it was answered/.test(router));
   }
 
   // ---- a frozen setup must SAY something ----

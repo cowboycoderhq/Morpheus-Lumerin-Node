@@ -1112,6 +1112,7 @@ export class OpenAiCompatServer {
       } else {
         const advertised = advertisedId(model, models);
         let offerNote = 'not offered (turned off)';
+        let extra = '';
         // Config first: asking the gate would claim the model's single in-flight
         // slot, so a refusal while offers are off would silence the first real
         // offer after the user turns them on.
@@ -1124,6 +1125,16 @@ export class OpenAiCompatServer {
               name: model.name,
               advertised,
             });
+          } else {
+            // SAY that the window is being withheld, and for how long. A
+            // suppressed offer used to be indistinguishable from the feature
+            // being broken — which is how "it only works the first time" got
+            // reported as a bug rather than as a cooldown doing its job.
+            const secs = Math.max(1, Math.ceil(decision.retryInMs / 1000));
+            extra =
+              decision.reason === 'cooling_down'
+                ? ` You closed the last offer for this model, so the app is not asking again for ${secs}s — open it from the Morpheus window, or send this again after that.`
+                : ` The app is already asking about this model; check the Morpheus window. If nothing is showing, send this again in ${secs}s.`;
           }
         }
         this.deps.log?.(
@@ -1132,7 +1143,7 @@ export class OpenAiCompatServer {
         sendJson(
           res,
           SESSION_REQUIRED_STATUS,
-          errorBody(sessionRequiredMessage(advertised), 'session_required'),
+          errorBody(sessionRequiredMessage(advertised) + extra, 'session_required'),
         );
         return;
       }
