@@ -1,11 +1,11 @@
 import React, { useContext } from 'react';
-import styled from 'styled-components';
+import styled, { useTheme } from 'styled-components';
 import QRCode from 'qrcode.react';
 
 import { ToastsContext } from '../../toasts';
 import BackIcon from '../../icons/BackIcon';
 import CopyIcon from '../../icons/CopyIcon';
-import { BaseBtn } from '../../common';
+import { BaseBtn, Btn } from '../../common';
 import {
   HeaderWrapper,
   Header,
@@ -17,7 +17,6 @@ import {
   FooterSublabel,
 } from './common.styles';
 import { abbreviateAddress } from '../../../utils';
-import { BtnAccent } from '../BalanceBlock.styles';
 import { useState } from 'react';
 const QRContainer = styled.div`
   display: flex;
@@ -30,17 +29,22 @@ const QRContainer = styled.div`
 `;
 
 export const Divider = styled.div`
-  margin-top: 5px
-  width:100%;
+  margin-top: 5px;
+  width: 100%;
   height: 0px;
-  border: 0.5px solid rgba(0, 0, 0, 0.25);`;
+  border: 0.5px solid ${p => p.theme.colors.moneySurfaceBorder};
+`;
 
 const CopyBtn = styled(BaseBtn)`
   background-color: transparent;
-  border-radius: 5px;
-  border: 1px;
+  border-radius: ${p => p.theme.radii.sm};
   padding: 0 !important;
   margin: 0 !important;
+  min-width: 40px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   :hover {
     padding: 0 !important;
     margin: 0 !important;
@@ -57,6 +61,7 @@ export function ReceiveForm({
   mor,
 }) {
   const context = useContext(ToastsContext);
+  const theme = useTheme();
 
   const handleCopyToClipboard = () => {
     copyToClipboard(address);
@@ -72,13 +77,13 @@ export function ReceiveForm({
   return (
     <>
       <HeaderWrapper>
-        <BackBtn data-modal="send" onClick={onRequestClose}>
-          <BackIcon size="2.4rem" fill="white" />
+        <BackBtn data-modal="send" onClick={onRequestClose} aria-label="Go back">
+          <BackIcon size="2.4rem" fill={theme.colors.textPrimary} />
         </BackBtn>
         <Header>You are receiving</Header>
       </HeaderWrapper>
       <QRContainer>
-        <QRCode value={address} bgColor="transparent" fgColor="#20dc8e" />
+        <QRCode value={address} bgColor="transparent" fgColor={theme.colors.brand} />
       </QRContainer>
       <Footer>
         <FooterRow>
@@ -86,8 +91,8 @@ export function ReceiveForm({
             <FooterLabel>{mor.symbol} Address</FooterLabel>
             <FooterSublabel>{abbreviateAddress(address, 6)}</FooterSublabel>
           </FooterBlock>
-          <CopyBtn onClick={handleCopyToClipboard}>
-            <CopyIcon fill="#20dc8e" size="3.8rem" />
+          <CopyBtn onClick={handleCopyToClipboard} aria-label="Copy address to clipboard">
+            <CopyIcon fill={theme.colors.brand} size="3.8rem" />
           </CopyBtn>
         </FooterRow>
         <FooterLabel>{mor.symbol} Balance</FooterLabel>
@@ -99,14 +104,15 @@ export function ReceiveForm({
           {eth.value.toFixed(6)} {eth.symbol} ≈ {eth.usd || 0}
         </FooterSublabel>
         <Divider style={{ margin: '2rem 0' }} />
-        <BtnAccent
+        <Btn
+          block
           style={{ marginBottom: '5px' }}
           onClick={() => {
             window.openLink(explorerUrl);
           }}
         >
           View account at {explorerUrl ? new URL(explorerUrl).hostname : ''}
-        </BtnAccent>
+        </Btn>
       </Footer>
     </>
   );

@@ -58,7 +58,7 @@ const MenuButton = styled(DropdownMenu.Trigger)`
 `;
 
 const MenuList = styled(DropdownMenu.Content)`
-  box-shadow: 0 0 32px 0 rgba(0, 0, 0, 0.4);
+  box-shadow: ${({ theme }) => theme.shadows.elevated};
   opactity: 0;
   display: block;
   white-space: nowrap;
@@ -69,6 +69,7 @@ const MenuList = styled(DropdownMenu.Content)`
 `;
 
 const MenuItem = styled(DropdownMenu.Item)`
+  border-radius: ${(p) => p.theme.radii.md};
   background-color: ${({ theme }) => theme.colors.lightShade};
   display: block;
   cursor: pointer;

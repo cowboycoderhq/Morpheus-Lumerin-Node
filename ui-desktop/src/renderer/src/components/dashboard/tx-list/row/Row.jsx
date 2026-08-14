@@ -16,7 +16,7 @@ const Container = styled.div`
   display: flex;
   gap: 1rem;
   align-items: center;
-  box-shadow: 0 -1px 0 0 ${(p) => p.theme.colors.lightShade} inset;
+  box-shadow: 0 -1px 0 0 ${(p) => p.theme.colors.glassBorder} inset;
   cursor: pointer;
   height: 66px;
 `;
@@ -30,12 +30,12 @@ const IconContainer = styled.div`
 
 const Action = styled.div`
   font-size: 1.6rem;
-  color: #fff;
+  color: ${(p) => p.theme.colors.textPrimary};
   width: 20%;
   flex-shrink: 0;
   text-wrap: nowrap;
   overflow: hidden;
-}`;
+`;
 
 const MetaComponentWrap = styled.div`
   display: flex;

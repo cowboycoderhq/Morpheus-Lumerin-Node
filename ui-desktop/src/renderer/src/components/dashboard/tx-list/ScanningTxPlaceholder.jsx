@@ -14,7 +14,7 @@ const BigText = styled.div`
   font-size: 1.6rem;
   font-weight: 600;
   text-align: center;
-  color: rgba(255, 255, 255, 0.6);
+  color: ${p => p.theme.colors.textSecondary};
 `
 
 const SmallText = styled.div`
@@ -23,7 +23,7 @@ const SmallText = styled.div`
   font-size: 1.3rem;
   font-weight: 500;
   text-align: center;
-  color: rgba(255, 255, 255, 0.38);
+  color: ${p => p.theme.colors.textMuted};
 `
 
 export default class ScanningTxPlaceholder extends React.Component {

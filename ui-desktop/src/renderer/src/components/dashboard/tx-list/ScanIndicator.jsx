@@ -9,15 +9,21 @@ import Spinner from '../../common/Spinner';
 const Container = styled.div`
   display: flex;
   align-items: center;
-  border-radius: 12px;
-  background-color: ${p => p.theme.colors.lightShade};
+  border-radius: ${p => p.theme.radii.md};
+  background-color: ${p => p.theme.colors.glassSurface};
   padding: 0.4rem 1rem 0.4rem 0.4rem;
   margin-top: 3px;
   cursor: ${({ isDisabled }) => (isDisabled ? 'auto' : 'pointer')};
+  transition: background-color ${p => p.theme.motion.duration.fast} ${p =>
+    p.theme.motion.easing.standard};
 
   &:hover {
     background-color: ${({ theme, isDisabled }) =>
-      theme.colors[isDisabled ? 'lightShade' : 'darkShade']};
+      isDisabled ? theme.colors.glassSurface : theme.colors.glassSurfaceHover};
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 `;
 
@@ -27,6 +33,7 @@ const Label = styled.div`
   font-weight: 600;
   letter-spacing: 0.5px;
   margin-left: 7px;
+  color: ${p => p.theme.colors.textPrimary};
 `;
 
 const IndicatorLed = styled.div`
@@ -36,10 +43,10 @@ const IndicatorLed = styled.div`
     isOnline
       ? syncStatus === 'failed'
         ? theme.colors.danger
-        : '#45d48d'
-      : 'rgba(119, 132, 125, 0.68)'};
-  border: 1px solid white;
-  border-radius: 10px;
+        : theme.colors.brand
+      : theme.colors.darkSuccess};
+  border: 1px solid ${p => p.theme.colors.textPrimary};
+  border-radius: ${p => p.theme.radii.pill};
   margin: 3px;
 `;
 
