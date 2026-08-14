@@ -21,10 +21,10 @@ export const Container = styled.div`
   /* react-bootstrap Tabs root */
   #history-tabs {
     flex-shrink: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid ${(p) => p.theme.colors.brandTint(0.22)};
 
     .nav-link {
-      color: rgba(255, 255, 255, 0.5);
+      color: ${(p) => p.theme.colors.textSecondary};
       border: none;
       padding: 0.8rem 1.2rem;
       font-size: 1.3rem;
@@ -32,7 +32,7 @@ export const Container = styled.div`
       letter-spacing: 0.4px;
 
       &:hover {
-        color: rgba(255, 255, 255, 0.85);
+        color: ${(p) => p.theme.colors.textPrimary};
         border: none;
       }
     }
@@ -66,13 +66,13 @@ export const Container = styled.div`
 
     /* Slim scrollbar that doesn't fight the dark theme. */
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+    scrollbar-color: ${(p) => p.theme.colors.glassBorder} transparent;
     &::-webkit-scrollbar {
       width: 6px;
     }
     &::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.12);
-      border-radius: 3px;
+      background: ${(p) => p.theme.colors.glassBorder};
+      border-radius: ${(p) => p.theme.radii.sm};
     }
   }
 `;
@@ -82,7 +82,7 @@ export const Container = styled.div`
    room. The first section also gets less top margin so it doesn't feel
    detached from the search bar above. */
 export const SectionHeader = styled.div`
-  color: rgba(255, 255, 255, 0.38);
+  color: ${(p) => p.theme.colors.textSecondary};
   font-size: 1.05rem;
   font-weight: 500;
   letter-spacing: 0.4px;
@@ -94,7 +94,7 @@ export const SectionHeader = styled.div`
 `;
 
 export const EmptyState = styled.div`
-  color: rgba(255, 255, 255, 0.45);
+  color: ${(p) => p.theme.colors.textSecondary};
   text-align: center;
   padding: 4rem 2rem;
   font-size: 1.3rem;
@@ -106,7 +106,7 @@ export const SearchWrapper = styled.div`
   flex-shrink: 0;
 
   .input-group {
-    background: rgba(255, 255, 255, 0.05);
+    background: ${(p) => p.theme.colors.brandTint(0.05)};
     border-radius: 8px;
     overflow: hidden;
     border: 1px solid transparent;
@@ -120,26 +120,26 @@ export const SearchWrapper = styled.div`
   .input-group-text {
     background: transparent;
     border: none;
-    color: rgba(255, 255, 255, 0.5);
+    color: ${(p) => p.theme.colors.textSecondary};
     padding-right: 0;
   }
 
   input.form-control {
     background: transparent;
     border: none;
-    color: rgba(255, 255, 255, 0.9);
+    color: ${(p) => p.theme.colors.textPrimary};
     box-shadow: none;
     font-size: 1.3rem;
     padding: 0.6rem 0.8rem;
 
     &::placeholder {
-      color: rgba(255, 255, 255, 0.7);
+      color: ${(p) => p.theme.colors.textSecondary};
       opacity: 1; /* Firefox dims placeholders by default; reset. */
     }
 
     &:focus {
       background: transparent;
-      color: rgba(255, 255, 255, 0.95);
+      color: ${(p) => p.theme.colors.textPrimary};
       box-shadow: none;
     }
   }
@@ -163,18 +163,18 @@ export const HistoryItem = styled.div`
 `;
 
 export const HistoryEntryContainer = styled.div`
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: ${(p) => p.theme.colors.brandTint(0.04)};
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.22)};
   border-radius: 8px;
-  color: white;
+  color: ${(p) => p.theme.colors.textPrimary};
   margin: 0 0.4rem 1rem;
   cursor: pointer;
   padding: 1rem 1.2rem;
   transition: background 0.12s ease, border-color 0.12s ease;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.12);
+    background: ${(p) => p.theme.colors.brandTint(0.08)};
+    border-color: ${(p) => p.theme.colors.glassBorder};
   }
 `;
 
@@ -199,7 +199,7 @@ export const HistoryEntryTitle = styled.div`
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  color: rgba(255, 255, 255, 0.78);
+  color: ${(p) => p.theme.colors.textSecondary};
   margin: 0;
   padding: 0.7rem 1rem;
   border-radius: 8px;
@@ -228,15 +228,15 @@ export const HistoryEntryTitle = styled.div`
   }
 
   &:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.95);
+    background: ${(p) => p.theme.colors.brandTint(0.06)};
+    color: ${(p) => p.theme.colors.textPrimary};
     .icons {
       opacity: 1;
     }
   }
 
   &[data-active='true'] {
-    background: rgba(33, 220, 143, 0.1);
+    background: ${(p) => p.theme.colors.brandTint(0.1)};
     color: ${(p) => p.theme.colors.morMain};
     .icons {
       opacity: 1;
@@ -258,7 +258,7 @@ export const CloseBtn = styled(Btn)`
 `;
 
 export const Duration = styled.div`
-  color: white;
+  color: ${(p) => p.theme.colors.textPrimary};
 `;
 
 export const IconsContainer = styled.div`
@@ -287,16 +287,16 @@ export const IconButton = styled.button`
   justify-content: center;
   color: inherit;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: ${(p) => p.theme.radii.sm};
   transition: background 0.12s ease, color 0.12s ease;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 1);
+    background: ${(p) => p.theme.colors.brandTint(0.08)};
+    color: ${(p) => p.theme.colors.textPrimary};
   }
 
   &.danger:hover {
-    color: #ff7c7c;
+    color: ${(p) => p.theme.colors.danger};
   }
 
   &:focus {
@@ -322,10 +322,13 @@ export const ChangeTitleContainer = styled.div`
   input.form-control,
   input {
     background-color: transparent !important;
-    color: rgba(255, 255, 255, 0.95);
+    color: ${(p) => p.theme.colors.textPrimary};
     border: none;
-    border-bottom: 1px solid ${(p) => p.theme.colors.morMain}40;
-    border-radius: 0;
+    /* Was \${morMain}40 — a hex-alpha suffix that becomes invalid CSS the moment
+       the token isn't a hex (classic's morMain is an rgba() string), silently
+       dropping the border. 40 = 0.25. */
+    border-bottom: 1px solid ${(p) => p.theme.colors.brandTint(0.25)};
+    border-radius: ${(p) => p.theme.radii.sm};
     box-shadow: none;
     padding: 0.4rem 0.2rem;
     font-size: 1.3rem;
@@ -338,13 +341,13 @@ export const ChangeTitleContainer = styled.div`
     background-color: transparent !important;
     outline: none;
     box-shadow: none;
-    color: rgba(255, 255, 255, 1);
+    color: ${(p) => p.theme.colors.textPrimary};
     border-bottom: 1px solid ${(p) => p.theme.colors.morMain};
   }
 
   .input-group .form-control::placeholder,
   input.form-control::placeholder,
   input::placeholder {
-    color: rgba(255, 255, 255, 0.35);
+    color: ${(p) => p.theme.colors.textMuted};
   }
 `;

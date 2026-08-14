@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import styled from 'styled-components';
+import { formatModelName } from '../utils';
 import {
   IconMessage,
   IconMicrophone,
@@ -12,7 +13,7 @@ import {
   IconHome,
   IconShieldLock,
 } from '@tabler/icons-react';
-import { formatSmallNumber, SECURE_TAG, SECURE_BADGE_TOOLTIP, formatModelName } from '../utils';
+import { formatSmallNumber, SECURE_TAG, SECURE_BADGE_TOOLTIP } from '../utils';
 
 type IconCmp = React.ComponentType<any>;
 
@@ -38,10 +39,10 @@ const RowContainer = styled.button<{ $online: boolean }>`
   align-items: center;
   padding: 1.2rem 1.4rem;
   margin: 0;
-  background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: ${(p) => p.theme.colors.glassSurface};
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.22)};
   border-radius: 10px;
-  color: rgba(255, 255, 255, 0.92);
+  color: ${(p) => p.theme.colors.textPrimary};
   cursor: ${(p) => (p.$online ? 'pointer' : 'not-allowed')};
   text-align: left;
   font: inherit;
@@ -49,8 +50,10 @@ const RowContainer = styled.button<{ $online: boolean }>`
   opacity: ${(p) => (p.$online ? 1 : 0.55)};
 
   &:hover {
-    background: ${(p) => (p.$online ? 'rgba(32, 220, 142, 0.08)' : 'rgba(255, 255, 255, 0.04)')};
-    border-color: ${(p) => (p.$online ? 'rgba(32, 220, 142, 0.4)' : 'rgba(255, 255, 255, 0.08)')};
+    /* Hover is a surface, not a status. Green is reserved for liveness (the
+       StatusDot); tinting the row itself green made the whole panel read green. */
+    background: ${(p) => p.theme.colors.brandTint(0.06)};
+    border-color: ${(p) => p.theme.colors.brandTint(0.28)};
   }
 
   &:active:not(:disabled) {
@@ -58,7 +61,7 @@ const RowContainer = styled.button<{ $online: boolean }>`
   }
 
   &:focus-visible {
-    outline: 2px solid rgba(32, 220, 142, 0.6);
+    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.6)};
     outline-offset: 2px;
   }
 
@@ -71,7 +74,7 @@ const IconWrap = styled.div`
   width: 36px;
   height: 36px;
   border-radius: 8px;
-  background: rgba(32, 220, 142, 0.12);
+  background: ${(p) => p.theme.colors.brandTint(0.12)};
   color: ${(p) => p.theme.colors.morMain};
   display: flex;
   align-items: center;
@@ -104,9 +107,15 @@ const StatusDot = styled.span<{ $online: boolean }>`
   height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: ${(p) => (p.$online ? '#20dc8e' : 'rgba(255, 255, 255, 0.25)')};
+  background: ${(p) => (p.$online ? p.theme.colors.success : p.theme.colors.textMuted)};
+  /* No successTint token exists (only brandTint/warningTint/dangerTint), and
+     success is a fixed opaque string in both variants (hex in aurora, an
+     rgba(...,1) string in classic) so it can't take an alpha suffix safely —
+     leaving this literal glow as-is rather than risk invalid CSS under
+     classic. Flagged for the theme owner: a successTint(a) fn would let this
+     swap cleanly. */
   box-shadow: ${(p) =>
-    p.$online ? '0 0 0 3px rgba(32, 220, 142, 0.18)' : 'none'};
+    p.$online ? `0 0 0 3px ${p.theme.colors.successTint(0.18)}` : 'none'};
 `;
 
 const MetaLine = styled.div`
@@ -115,7 +124,7 @@ const MetaLine = styled.div`
   gap: 0.5rem;
   margin-top: 3px;
   font-size: 1.1rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: ${(p) => p.theme.colors.textSecondary};
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -125,15 +134,15 @@ const Pill = styled.span<{ $accent?: boolean }>`
   display: inline-flex;
   align-items: center;
   padding: 1px 7px;
-  border-radius: 4px;
+  border-radius: ${(p) => p.theme.radii.sm};
   font-size: 1rem;
   font-weight: 600;
   letter-spacing: 0.3px;
   text-transform: uppercase;
   background: ${(p) =>
-    p.$accent ? 'rgba(32, 220, 142, 0.16)' : 'rgba(255, 255, 255, 0.07)'};
+    p.$accent ? p.theme.colors.brandTint(0.16) : p.theme.colors.brandTint(0.07)};
   color: ${(p) =>
-    p.$accent ? p.theme.colors.morMain : 'rgba(255, 255, 255, 0.65)'};
+    p.$accent ? p.theme.colors.morMain : p.theme.colors.textSecondary};
 `;
 
 /* Distinct accent for the TEE chip so the security attribute reads at a
@@ -144,16 +153,16 @@ const TeePill = styled.span`
   align-items: center;
   gap: 3px;
   padding: 1px 7px 1px 5px;
-  border-radius: 4px;
+  border-radius: ${(p) => p.theme.radii.sm};
   font-size: 1rem;
   font-weight: 600;
   letter-spacing: 0.3px;
-  background: rgba(125, 188, 255, 0.14);
-  color: rgba(173, 211, 255, 0.95);
+  background: ${(p) => p.theme.colors.brandTint(0.14)};
+  color: ${(p) => p.theme.colors.secondaryLight};
 `;
 
 const Dot = styled.span`
-  color: rgba(255, 255, 255, 0.25);
+  color: ${(p) => p.theme.colors.textMuted};
   padding: 0 2px;
 `;
 
@@ -166,12 +175,12 @@ const PriceValue = styled.div`
   font-variant-numeric: tabular-nums;
   font-size: 1.25rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.92);
+  color: ${(p) => p.theme.colors.textPrimary};
 `;
 
 const PriceUnit = styled.div`
   font-size: 0.95rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: ${(p) => p.theme.colors.textSecondary};
   margin-top: 1px;
 `;
 
@@ -180,8 +189,8 @@ const LocalBadge = styled.div`
   align-items: center;
   gap: 4px;
   padding: 3px 8px 3px 6px;
-  border-radius: 6px;
-  background: rgba(32, 220, 142, 0.16);
+  border-radius: ${(p) => p.theme.radii.sm};
+  background: ${(p) => p.theme.colors.brandTint(0.16)};
   color: ${(p) => p.theme.colors.morMain};
   font-size: 1.1rem;
   font-weight: 600;
@@ -193,16 +202,16 @@ const OfflineBadge = styled.div`
   align-items: center;
   gap: 4px;
   padding: 3px 8px 3px 6px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.55);
+  border-radius: ${(p) => p.theme.radii.sm};
+  background: ${(p) => p.theme.colors.brandTint(0.06)};
+  color: ${(p) => p.theme.colors.textMuted};
   font-size: 1.1rem;
   font-weight: 600;
   letter-spacing: 0.3px;
 `;
 
 const Caret = styled.div`
-  color: rgba(255, 255, 255, 0.25);
+  color: ${(p) => p.theme.colors.textMuted};
   display: flex;
   align-items: center;
   justify-content: center;

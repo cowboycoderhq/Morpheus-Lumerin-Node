@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 // import component 👇
-import Drawer from 'react-modern-drawer';
 import {
   IconHistory,
   IconArrowUp,
@@ -11,22 +10,18 @@ import {
   IconUpload,
   IconMicrophone,
   IconPlayerStopFilled,
+  IconBulb,
+  IconCode,
+  IconListSearch,
 } from '@tabler/icons-react';
 import {
   View,
-  ContainerTitle,
-  ChatTitleContainer,
-  ChatAvatar,
-  Avatar,
-  TitleRow,
-  AvatarHeader,
   MessageBody,
   Container,
   CustomTextArrea,
   Control,
   LoadingCover,
   ImageContainer,
-  SubPriceLabel,
   VideoContainer,
   ChatIntroContainer,
   ChatHistoryContainer,
@@ -41,14 +36,35 @@ import {
   AudioHint,
   TtsControlsRow,
   AudioPlayer,
+  ChatHeader,
+  HistoryDrawer,
+  ChatIdentity,
+  ModelGlyph,
+  MessageOrb,
+  ModelMeta,
+  ModelName,
+  ModelSubline,
+  LiveDot,
+  HeaderActions,
+  HeaderBtn,
+  SecureBadge,
+  EmptyState,
+  EmptyTitle,
+  EmptySubtitle,
+  PromptGrid,
+  PromptCard,
+  Composer,
+  ComposerHint,
+  MessageRow,
+  TurnColumn,
+  Bubble,
+  SendRoundBtn,
 } from './Chat.styles';
-import { BtnAccent } from '../dashboard/BalanceBlock.styles';
 import withChatState from '../../store/hocs/withChatState';
 import { abbreviateAddress } from '../../utils';
 import { ThinkingMessageBody } from './ThinkingMessageBody';
 
 import 'react-modern-drawer/dist/index.css';
-import './Chat.css';
 import { ChatHistory } from './ChatHistory';
 import Spinner from 'react-bootstrap/Spinner';
 import ModelSelectionModal from './modals/ModelSelectionModal';
@@ -61,6 +77,7 @@ import {
   isSecureModel,
   SECURE_BADGE_TOOLTIP,
   getModelModality,
+  formatModelName,
 } from './utils';
 import { Cooldown } from './Cooldown';
 import ImageViewer from 'react-simple-image-viewer';
@@ -1347,12 +1364,7 @@ const Chat = (props: ChatProps) => {
           />
         </LoadingCover>
       )}
-      <Drawer
-        open={isOpen}
-        onClose={toggleDrawer}
-        direction="right"
-        className="history-drawer"
-      >
+      <HistoryDrawer open={isOpen} onClose={toggleDrawer} direction="right">
         <ChatHistory
           activeChat={chat}
           open={isOpen}
@@ -1369,82 +1381,53 @@ const Chat = (props: ChatProps) => {
           onChangeTitle={wrapChangeTitle}
           onCloseSession={closeSession}
         />
-      </Drawer>
+      </HistoryDrawer>
       <View>
-        <ContainerTitle>
-          <TitleRow>
-            {/* <Title>Chat</Title> */}
-            <div className="d-flex" style={{ alignItems: 'center' }}>
-              <div className="d-flex model-selector">
-                <div className="model-selector__info">
-                  <h3>{isLocal ? '(local)' : providerAddress}</h3>
-                  {isLocal ? (
-                    <>
-                      <span>0 MOR</span>
-                    </>
-                  ) : (
-                    <>
-                      <SubPriceLabel>{stakedFunds} MOR</SubPriceLabel>
-                    </>
-                  )}
-                </div>
-                {!isLocal && activeSession?.EndsAt && (
-                  <div className="model-selector__icons">
-                    <Cooldown endDate={activeSession?.EndsAt} />
-                  </div>
+        {/* One header, not two stacked toolbars: the model is identified
+            calmly (name as a label), its cost is stated in words, and the
+            utility actions sit quietly on the right. */}
+        <ChatHeader>
+          <ChatIdentity>
+            <ModelGlyph aria-hidden $thinking={isSpinning}>◈</ModelGlyph>
+            <ModelMeta>
+              <ModelName>
+                <LiveDot />
+                {formatModelName(modelName)}
+                {isSecure && (
+                  <SecureBadge title={SECURE_BADGE_TOOLTIP}>
+                    <IconShieldLock size={12} stroke={2.2} /> Secure
+                  </SecureBadge>
                 )}
-              </div>
-              <BtnAccent
-                className="change-modal"
-                onClick={() => setOpenChangeModal(true)}
-              >
-                <IconMessagePlus></IconMessagePlus> New chat
-              </BtnAccent>
-            </div>
-          </TitleRow>
-        </ContainerTitle>
-        <ChatTitleContainer>
-          <ChatAvatar>
-            <Avatar
-              style={{ color: 'white' }}
-              color={getColor(modelName.toUpperCase()[0])}
-            >
-              {modelName.toUpperCase()[0]}
-            </Avatar>
-            <div style={{ marginLeft: '10px' }}>{modelName}</div>
-            {isSecure && (
-              <span
-                title={SECURE_BADGE_TOOLTIP}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  marginLeft: '10px',
-                  padding: '2px 8px 2px 6px',
-                  fontSize: '1.1rem',
-                  fontWeight: 600,
-                  letterSpacing: '0.3px',
-                  color: 'rgba(173, 211, 255, 0.95)',
-                  background: 'rgba(125, 188, 255, 0.14)',
-                  borderRadius: '6px',
-                  cursor: 'default',
-                }}
-              >
-                <IconShieldLock size={13} stroke={2.2} /> Secure
-              </span>
-            )}
-          </ChatAvatar>
-          {/* {
-                        (selectedBid || isLocal) && <div>
-                            <span style={{ color: 'white' }}>Provider:</span> {isLocal ? "(local)" : providerAddress}
-                        </div>
-                    } */}
-          <div>
-            <div onClick={toggleDrawer}>
-              <IconHistory size={'2.4rem'}></IconHistory>
-            </div>
-          </div>
-        </ChatTitleContainer>
+              </ModelName>
+              <ModelSubline>
+                {isLocal ? (
+                  'Runs on your machine · free'
+                ) : (
+                  <>
+                    <span title={providerAddress}>{providerAddress}</span>
+                    {' · '}
+                    {stakedFunds} MOR staked
+                    {activeSession?.EndsAt && (
+                      <>
+                        {' · '}
+                        <Cooldown endDate={activeSession?.EndsAt} />
+                      </>
+                    )}
+                  </>
+                )}
+              </ModelSubline>
+            </ModelMeta>
+          </ChatIdentity>
+
+          <HeaderActions>
+            <HeaderBtn onClick={toggleDrawer} title="Chat history">
+              <IconHistory size={18} stroke={1.75} />
+            </HeaderBtn>
+            <HeaderBtn onClick={() => setOpenChangeModal(true)}>
+              <IconMessagePlus size={18} stroke={1.75} /> New chat
+            </HeaderBtn>
+          </HeaderActions>
+        </ChatHeader>
 
         {imagePreview && (
           <ImageViewer
@@ -1460,7 +1443,54 @@ const Chat = (props: ChatProps) => {
         )}
 
         <Container>
-          {renderChatBlock()}
+          {/* An empty chat with a session/local model already ready is the
+              best chance to teach the app — greet, state the cost in words,
+              and offer starter prompts, instead of an undesigned blank void.
+              This branch mirrors (never edits) renderChatBlock's own
+              isNewChat / isCreateSessionMode gating using the same, already
+              -computed values, so the payment-flow screens it still owns
+              (Stake/Direct-Pay selection, the "need MOR" screen, and the
+              message list) are untouched. */}
+          {!messages?.length && !isLoading && (isLocal || activeSession) ? (
+            <EmptyState>
+              <EmptyTitle>Ask {formatModelName(modelName)} anything</EmptyTitle>
+              <EmptySubtitle>
+                {isLocal
+                  ? 'This model runs entirely on your machine. Nothing leaves your computer, it costs nothing, and it works offline.'
+                  : 'You have an open session with this provider. Ask away — you pay only for the time the session is open.'}
+              </EmptySubtitle>
+              <PromptGrid>
+                {[
+                  {
+                    icon: IconBulb,
+                    label: 'Explain a hard idea in plain language',
+                    prompt: 'Explain how large language models work, in plain language.',
+                  },
+                  {
+                    icon: IconCode,
+                    label: 'Help me write or debug code',
+                    prompt: 'Help me debug this code:\n\n',
+                  },
+                  {
+                    icon: IconListSearch,
+                    label: 'Summarize something long',
+                    prompt: 'Summarize the following text:\n\n',
+                  },
+                ].map(({ icon: Icon, label, prompt }) => (
+                  <PromptCard
+                    key={label}
+                    type="button"
+                    onClick={() => setPromptInput(prompt)}
+                  >
+                    <Icon size={18} stroke={1.75} />
+                    <span>{label}</span>
+                  </PromptCard>
+                ))}
+              </PromptGrid>
+            </EmptyState>
+          ) : (
+            renderChatBlock()
+          )}
           <Control>
             {modality === 'stt' && !isReadonly ? (
               <AudioInputZone data-disabled={isDisabled}>
@@ -1536,54 +1566,71 @@ const Chat = (props: ChatProps) => {
                     </label>
                   </TtsControlsRow>
                 )}
-                <CustomTextArrea
-                  disabled={isDisabled}
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleSubmit();
+                {/* The composer is the point of this page, so it is the
+                    dominant surface — an elevated card, rather than a
+                    hairline box while "New chat" carried the loudest fill. */}
+                <Composer>
+                  <CustomTextArrea
+                    disabled={isDisabled}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSubmit();
+                      }
+                    }}
+                    value={promptInput}
+                    onChange={(ev) => setPromptInput(ev.target.value)}
+                    placeholder={
+                      isReadonly
+                        ? 'Session is closed. Chat in ReadOnly Mode'
+                        : modality === 'tts'
+                          ? 'Enter text to synthesize...'
+                          : `Ask ${formatModelName(modelName)} anything...`
                     }
-                  }}
-                  value={promptInput}
-                  onChange={(ev) => setPromptInput(ev.target.value)}
-                  placeholder={
-                    isReadonly
-                      ? 'Session is closed. Chat in ReadOnly Mode'
-                      : modality === 'tts'
-                        ? 'Enter text to synthesize...'
-                        : 'Ask me anything...'
-                  }
-                  minRows={1}
-                  maxRows={6}
-                />
-                <SendBtnWrapper>
-                  {isReadonly ? (
-                    <>
-                      <Btn onClick={() => handleReopen(false)}>
+                    minRows={1}
+                    maxRows={6}
+                  />
+                  <SendBtnWrapper>
+                    {isReadonly ? (
+                      <>
+                        <Btn onClick={() => handleReopen(false)}>
+                          {isSpinning ? (
+                            <Spinner animation="border" />
+                          ) : (
+                            <span>Staking</span>
+                          )}
+                        </Btn>
+                        <Btn onClick={() => handleReopen(true)}>
+                          {isSpinning ? (
+                            <Spinner animation="border" />
+                          ) : (
+                            <span>Direct Pay</span>
+                          )}
+                        </Btn>
+                      </>
+                    ) : (
+                      <SendRoundBtn
+                        disabled={isDisabled}
+                        onClick={handleSubmit}
+                        aria-label="Send"
+                      >
                         {isSpinning ? (
-                          <Spinner animation="border" />
+                          <Spinner
+                            animation="border"
+                            style={{ width: '20px', height: '20px' }}
+                          />
                         ) : (
-                          <span>Staking</span>
+                          <IconArrowUp size={'22px'}></IconArrowUp>
                         )}
-                      </Btn>
-                      <Btn onClick={() => handleReopen(true)}>
-                        {isSpinning ? (
-                          <Spinner animation="border" />
-                        ) : (
-                          <span>Direct Pay</span>
-                        )}
-                      </Btn>
-                    </>
-                  ) : (
-                    <Btn disabled={isDisabled} onClick={handleSubmit}>
-                      {isSpinning ? (
-                        <Spinner animation="border" />
-                      ) : (
-                        <IconArrowUp size={'26px'}></IconArrowUp>
-                      )}
-                    </Btn>
-                  )}
-                </SendBtnWrapper>
+                      </SendRoundBtn>
+                    )}
+                  </SendBtnWrapper>
+                </Composer>
+                <ComposerHint>
+                  {isLocal
+                    ? 'Runs locally — nothing you type leaves your machine.'
+                    : 'Press Enter to send.'}
+                </ComposerHint>
               </>
             )}
           </Control>
@@ -1644,14 +1691,26 @@ const renderMessage = (message, onOpenImage) => {
 };
 
 const Message = ({ message, onOpenImage }) => {
+  // No name headers: the user's turns sit on the right in a brand-tinted
+  // bubble, the model's on the left in glass with the orb. Side + material
+  // identify the speaker.
+  //
+  // The design also carries a per-message Copy action (MsgActions/MsgActionBtn
+  // in Chat.styles). It is deliberately NOT wired up here: this PR re-skins,
+  // and a copy-to-clipboard affordance is new behaviour, not a new look — the
+  // same reason Edit=Fork is excluded. The styled components stay available for
+  // whichever PR adds the action.
+  const isAssistant = message.role !== 'user';
+
   return (
-    <div style={{ display: 'flex', margin: '12px 0 28px 0' }}>
-      <Avatar color={message.color}>{message.icon}</Avatar>
-      <div>
-        <AvatarHeader>{message.user}</AvatarHeader>
-        {renderMessage(message, onOpenImage)}
-      </div>
-    </div>
+    <MessageRow $user={!isAssistant}>
+      {isAssistant && <MessageOrb aria-hidden>◈</MessageOrb>}
+      <TurnColumn $user={!isAssistant}>
+        <Bubble $user={!isAssistant}>
+          {renderMessage(message, onOpenImage)}
+        </Bubble>
+      </TurnColumn>
+    </MessageRow>
   );
 };
 

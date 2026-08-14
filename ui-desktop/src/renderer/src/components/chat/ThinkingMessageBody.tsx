@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import styled from 'styled-components';
+import styled, { useTheme } from 'styled-components';
 import Markdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { coldarkDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -108,18 +108,19 @@ function parseSegments(text: string): Segment[] {
 }
 
 const ThinkingContainer = styled.div`
-  border-left: 2px solid rgba(33, 220, 143, 0.35);
+  border-left: 2px solid ${(p) => p.theme.colors.brandTint(0.35)};
   margin: 6px 0 10px;
   padding: 2px 0 2px 12px;
 `;
 
 const ThinkingHeader = styled.button`
+  border-radius: ${(p) => p.theme.radii.sm};
   background: transparent;
   border: none;
   padding: 0;
   margin: 0;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.55);
+  color: ${(p) => p.theme.colors.textMuted};
   font-size: 0.92em;
   font-weight: 500;
   letter-spacing: 0.3px;
@@ -129,7 +130,7 @@ const ThinkingHeader = styled.button`
   user-select: none;
 
   &:hover {
-    color: rgba(255, 255, 255, 0.85);
+    color: ${(p) => p.theme.colors.textPrimary};
   }
 
   &:focus {
@@ -144,9 +145,9 @@ const EmptyTag = styled.span`
   font-weight: 500;
   letter-spacing: 0.5px;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.5);
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 3px;
+  color: ${(p) => p.theme.colors.textSecondary};
+  background: ${(p) => p.theme.colors.brandTint(0.08)};
+  border-radius: ${(p) => p.theme.radii.sm};
 `;
 
 const ThinkingDots = styled.span`
@@ -171,7 +172,7 @@ const ThinkingDots = styled.span`
 const ThinkingBody = styled.div<{ $hidden: boolean }>`
   display: ${(p) => (p.$hidden ? 'none' : 'block')};
   margin-top: 6px;
-  color: rgba(255, 255, 255, 0.55);
+  color: ${(p) => p.theme.colors.textMuted};
   font-size: 0.95em;
   font-style: italic;
   white-space: pre-wrap;
@@ -184,25 +185,39 @@ const ThinkingBody = styled.div<{ $hidden: boolean }>`
   }
 `;
 
+// A named, capitalized function (not an object-method shorthand) so this is
+// recognizably a component to the rules-of-hooks lint — it reads the live
+// theme via useTheme() since SyntaxHighlighter takes a plain inline style
+// object, not a styled-component template literal.
+function CodeBlock(props: any) {
+  const { children, className, node, ...rest } = props;
+  const match = /language-(\w+)/.exec(className || '');
+  const theme = useTheme();
+  return match ? (
+    <SyntaxHighlighter
+      {...rest}
+      PreTag="div"
+      language={match[1]}
+      style={coldarkDark}
+      // The highlighter theme paints its own square block; round it and seat
+      // it on the HUD panel so a code fence is the same material as the rest.
+      customStyle={{
+        borderRadius: '12px',
+        border: `1px solid ${theme.colors.brandTint(0.22)}`,
+        background: theme.colors.voidElevated,
+      }}
+    >
+      {String(children).replace(/\n$/, '')}
+    </SyntaxHighlighter>
+  ) : (
+    <code {...rest} className={className}>
+      {children}
+    </code>
+  );
+}
+
 const markdownComponents = {
-  code(props: any) {
-    const { children, className, node, ...rest } = props;
-    const match = /language-(\w+)/.exec(className || '');
-    return match ? (
-      <SyntaxHighlighter
-        {...rest}
-        PreTag="div"
-        language={match[1]}
-        style={coldarkDark}
-      >
-        {String(children).replace(/\n$/, '')}
-      </SyntaxHighlighter>
-    ) : (
-      <code {...rest} className={className}>
-        {children}
-      </code>
-    );
-  },
+  code: CodeBlock,
 };
 
 function ReasoningBlock({

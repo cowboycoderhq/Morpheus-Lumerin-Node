@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import styled, { keyframes } from 'styled-components';
+import styled, { keyframes, useTheme } from 'styled-components';
 
 const spin = keyframes`
   to { transform: rotate(360deg); }
@@ -52,7 +52,7 @@ const Layout = styled.div`
    (32px button at top: 12px / right: 12px → clears ~52px from the right). */
 const Header = styled.div`
   padding: 1.8rem 5.5rem 1.4rem 2.4rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid ${(p) => p.theme.colors.glassBorder};
 `;
 
 const TitleRow = styled.div`
@@ -73,35 +73,35 @@ const Title = styled.h2`
 
 const ResultCount = styled.div`
   font-size: 1.15rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: ${(p) => p.theme.colors.textSecondary};
   font-variant-numeric: tabular-nums;
 `;
 
 const SearchWrapper = styled.div`
   .input-group {
-    background: rgba(255, 255, 255, 0.04);
+    background: ${(p) => p.theme.colors.glassSurface};
     border-radius: 8px;
     overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid ${(p) => p.theme.colors.glassBorder};
     transition: border-color 0.15s ease, background 0.15s ease;
   }
 
   .input-group:focus-within {
     border-color: ${(p) => p.theme.colors.morMain};
-    background: rgba(255, 255, 255, 0.06);
+    background: ${(p) => p.theme.colors.glassSurfaceHover};
   }
 
   .input-group-text {
     background: transparent;
     border: none;
-    color: rgba(255, 255, 255, 0.8);
+    color: ${(p) => p.theme.colors.textPrimary};
     padding-right: 0;
   }
 
   /* Bright placeholder so the prompt reads clearly against the dark surface. */
   .form-control::placeholder,
   input::placeholder {
-    color: rgba(255, 255, 255, 0.7) !important;
+    color: ${(p) => p.theme.colors.textSecondary} !important;
     opacity: 1; /* Firefox dims placeholders by default; reset. */
   }
 `;
@@ -122,12 +122,12 @@ const FilterPill = styled.button<{ $active: boolean }>`
   border: 1px solid
     ${(p) =>
       p.$active
-        ? 'rgba(32, 220, 142, 0.5)'
-        : 'rgba(255, 255, 255, 0.08)'};
+        ? p.theme.colors.brandTint(0.5)
+        : p.theme.colors.glassBorder};
   background: ${(p) =>
-    p.$active ? 'rgba(32, 220, 142, 0.14)' : 'rgba(255, 255, 255, 0.03)'};
+    p.$active ? p.theme.colors.brandTint(0.14) : p.theme.colors.glassSurface};
   color: ${(p) =>
-    p.$active ? p.theme.colors.morMain : 'rgba(255, 255, 255, 0.7)'};
+    p.$active ? p.theme.colors.morMain : p.theme.colors.textSecondary};
   font-size: 1.15rem;
   font-weight: 500;
   letter-spacing: 0.2px;
@@ -136,13 +136,13 @@ const FilterPill = styled.button<{ $active: boolean }>`
 
   &:hover {
     background: ${(p) =>
-      p.$active ? 'rgba(32, 220, 142, 0.2)' : 'rgba(255, 255, 255, 0.06)'};
+      p.$active ? p.theme.colors.brandTint(0.2) : p.theme.colors.glassSurfaceHover};
     color: ${(p) =>
-      p.$active ? p.theme.colors.morMain : 'rgba(255, 255, 255, 0.9)'};
+      p.$active ? p.theme.colors.morMain : p.theme.colors.textPrimary};
   }
 
   &:focus-visible {
-    outline: 2px solid rgba(32, 220, 142, 0.5);
+    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.5)};
     outline-offset: 2px;
   }
 `;
@@ -152,9 +152,9 @@ const FilterCount = styled.span<{ $active: boolean }>`
   padding: 1px 6px;
   border-radius: 8px;
   background: ${(p) =>
-    p.$active ? 'rgba(32, 220, 142, 0.18)' : 'rgba(255, 255, 255, 0.06)'};
+    p.$active ? p.theme.colors.brandTint(0.18) : p.theme.colors.glassSurface};
   color: ${(p) =>
-    p.$active ? p.theme.colors.morMain : 'rgba(255, 255, 255, 0.55)'};
+    p.$active ? p.theme.colors.morMain : p.theme.colors.textSecondary};
 `;
 
 const Body = styled.div`
@@ -164,10 +164,10 @@ const Body = styled.div`
   padding: 1.4rem 2.4rem 2rem;
 
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  scrollbar-color: ${(p) => p.theme.colors.glassBorder} transparent;
   &::-webkit-scrollbar { width: 6px; }
   &::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.12);
+    background: ${(p) => p.theme.colors.glassBorder};
     border-radius: 3px;
   }
 `;
@@ -183,7 +183,7 @@ const SectionLabel = styled.div`
   font-size: 1.05rem;
   font-weight: 500;
   letter-spacing: 0.4px;
-  color: rgba(255, 255, 255, 0.4);
+  color: ${(p) => p.theme.colors.textSecondary};
   margin-bottom: 0.8rem;
   padding-left: 0.2rem;
 `;
@@ -195,7 +195,7 @@ const SectionList = styled.div`
 `;
 
 const SectionHint = styled.span`
-  color: rgba(255, 255, 255, 0.3);
+  color: ${(p) => p.theme.colors.textMuted};
   font-weight: 400;
   font-size: 0.95rem;
   letter-spacing: 0.2px;
@@ -211,7 +211,7 @@ const InfoToggle = styled.button`
   background: transparent;
   border: none;
   border-radius: 6px;
-  color: rgba(173, 211, 255, 0.95);
+  color: ${(p) => p.theme.colors.brandTint(0.95)};
   font-size: 1rem;
   font-weight: 500;
   letter-spacing: 0.2px;
@@ -219,11 +219,11 @@ const InfoToggle = styled.button`
   cursor: pointer;
 
   &:hover {
-    background: rgba(125, 188, 255, 0.12);
+    background: ${(p) => p.theme.colors.brandTint(0.12)};
   }
 
   &:focus-visible {
-    outline: 2px solid rgba(125, 188, 255, 0.5);
+    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.5)};
     outline-offset: 2px;
   }
 `;
@@ -231,10 +231,10 @@ const InfoToggle = styled.button`
 const InfoPanel = styled.div`
   margin-bottom: 0.9rem;
   padding: 1rem 1.2rem;
-  border: 1px solid rgba(125, 188, 255, 0.25);
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.25)};
   border-radius: 8px;
-  background: rgba(125, 188, 255, 0.08);
-  color: rgba(214, 232, 255, 0.92);
+  background: ${(p) => p.theme.colors.brandTint(0.08)};
+  color: ${(p) => p.theme.colors.textPrimary};
   font-size: 1.2rem;
   line-height: 1.5;
 `;
@@ -242,7 +242,7 @@ const InfoPanel = styled.div`
 const EmptyState = styled.div`
   padding: 5rem 2rem;
   text-align: center;
-  color: rgba(255, 255, 255, 0.45);
+  color: ${(p) => p.theme.colors.textSecondary};
   font-size: 1.35rem;
   line-height: 1.5;
 
@@ -255,13 +255,13 @@ const BidsLoadingHint = styled.div`
   gap: 8px;
   margin-top: 1rem;
   font-size: 1.1rem;
-  color: rgba(255, 255, 255, 0.5);
+  color: ${(p) => p.theme.colors.textSecondary};
 
   &::before {
     content: '';
     width: 12px;
     height: 12px;
-    border: 2px solid rgba(255, 255, 255, 0.25);
+    border: 2px solid ${(p) => p.theme.colors.glassBorder};
     border-top-color: ${(p) => p.theme.colors.morMain};
     border-radius: 50%;
     animation: ${spin} 0.7s linear infinite;
@@ -316,6 +316,7 @@ const ModelSelectionModal = ({
   providersAvailability,
   bidsLoading,
 }: any) => {
+  const theme = useTheme();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterId>('all');
   const [showTeeInfo, setShowTeeInfo] = useState(false);
@@ -464,7 +465,7 @@ const ModelSelectionModal = ({
                 autoFocus
                 style={{
                   background: 'transparent',
-                  color: 'rgba(255, 255, 255, 0.95)',
+                  color: theme.colors.textPrimary,
                   border: 'none',
                   boxShadow: 'none',
                   outline: 'none',
