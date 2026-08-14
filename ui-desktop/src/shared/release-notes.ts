@@ -30,6 +30,45 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    // Carries 1.1.0's items as well as its own fixes: for most testers this is
+    // the FIRST notice they will see (1.1.0's never appeared), and a note that
+    // assumes they read the previous one would tell them about repairs to
+    // features they have never heard of.
+    version: '1.1.1',
+    headline: 'Your Morpheus models now work inside your terminal.',
+    items: [
+      {
+        title: 'Pin models, and they appear in grok and opencode',
+        body:
+          'Pick the models you want on hand in Settings → OpenAI-compatible API. They show up in your terminal’s model picker whether or not a session is open — so the list stops changing under you, and you stop restarting your agent to see it.',
+      },
+      {
+        title: 'Use one without a session and the app offers to open it',
+        body:
+          'No error to decode: your terminal says a session is needed, this window comes forward with the price, the provider and the length, and you approve it here. No model ever decides to spend.',
+      },
+      {
+        title: 'Mark providers up or down',
+        body:
+          'A provider that ignored you sinks to the bottom of the list next time. One that worked leads it. Your marks are remembered per provider.',
+      },
+      {
+        title: 'Failures explain themselves',
+        body:
+          'When a session cannot open you get a sentence, not a stack trace — what happened, whether anything was staked, and the one button that fixes it.',
+      },
+      {
+        title: 'Fixed since 1.1.0',
+        body:
+          'Opening a session from this window no longer asks you to grant an outside tool permission to spend — that was backwards. References to /start are gone, since it never worked. And this notice now appears at all, which in 1.1.0 it did not.',
+      },
+    ],
+    actions: [
+      { kind: 'pin-models', label: 'Pin my models' },
+      { kind: 'install-grok', label: 'Install grok' },
+    ],
+  },
+  {
     version: '1.1.0',
     headline: 'Your Morpheus models now work inside your terminal.',
     items: [
