@@ -1288,6 +1288,15 @@ console.log('grok: models published into the managed config');
     const router = readFileSync(new URL('../../src/renderer/src/components/Router.tsx', import.meta.url), 'utf8');
     ok('an unmounted picker reports itself rather than holding the model',
       /the window closed before it was answered/.test(router));
+
+    // Each offer gets a FRESH dialog. Without the key React reuses the
+    // instance, so a success panel left open from the last session was what the
+    // next offer showed — the new request looking exactly like the old success.
+    ok('the picker is keyed by request, so state cannot survive into the next one',
+      /key=\{request\.requestId\}/.test(router));
+    // And the offer it replaced must not keep holding its model.
+    ok('a superseded offer is reported rather than orphaned',
+      /replaced by a newer request/.test(router));
   }
 
   // ---- a frozen setup must SAY something ----

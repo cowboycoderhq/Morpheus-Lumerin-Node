@@ -191,6 +191,18 @@ const GrokStartHost = withClient(({ client }: any) => {
     // through main now, which reads the live values itself — so this window
     // never holds the credential and can never hold a stale one.
     const onRequest = async (_e: any, payload: any) => {
+      // A new offer replaces whatever was on screen. If that one was never
+      // answered, say so — otherwise its model stays "already being asked
+      // about" for the next couple of minutes with no dialog anywhere, and the
+      // next request for it is refused into silence.
+      const previous = requestRef.current;
+      if (previous && previous.requestId !== payload?.requestId) {
+        void client.grokPickerDone({
+          requestId: previous.requestId,
+          opened: false,
+          note: 'replaced by a newer request',
+        });
+      }
       setRequest(payload);
     };
     (window as any).ipcRenderer?.on?.('grok-picker-request', onRequest);
@@ -239,6 +251,15 @@ const GrokStartHost = withClient(({ client }: any) => {
   if (!request) return null;
   return (
     <StartPickerModal
+      // KEYED BY REQUEST, so each offer gets a fresh dialog.
+      //
+      // Without this React reuses the instance when only the props change, and
+      // the modal's state comes with it. Leave the success panel open after
+      // opening a session, trigger another offer, and the app comes forward
+      // showing the PREVIOUS session's "Open in grok" — the new request looking
+      // exactly like the old success, which is the most confusing possible
+      // answer to "why did my terminal say no session?".
+      key={request.requestId}
       open
       args={request.args ?? ''}
       // Reported the moment the session opens, so the offer is released and the
