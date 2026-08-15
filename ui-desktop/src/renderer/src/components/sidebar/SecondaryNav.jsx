@@ -183,10 +183,14 @@ function SecondaryNav({
         <Label parent={parent}>Devices</Label>
       </Button>
        */}
+      {/* aria-label for the same reason as PrimaryNav: the collapsed rail hides
+          the visible <Label> with `visibility: hidden`, which takes it out of
+          the accessibility tree, leaving the control unnamed. */}
       <Button
         onClick={() => setActiveIndex(5)}
         // className={(navData) => (navData.isActive ? "active-style" : 'none')}
         data-testid="tools-nav-btn"
+        aria-label="Settings"
         parent={parent}
         to="/settings"
       >
@@ -195,7 +199,11 @@ function SecondaryNav({
         </IconWrapper>
         <Label parent={parent}>Settings</Label>
       </Button>
-      <HelpLink data-testid="help-nav-btn" onClick={onHelpLinkClick}>
+      <HelpLink
+        data-testid="help-nav-btn"
+        aria-label="Help"
+        onClick={onHelpLinkClick}
+      >
         <IconWrapper parent={parent}>
           <IconHelp width={iconSize} />
         </IconWrapper>

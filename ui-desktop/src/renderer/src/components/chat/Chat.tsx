@@ -1451,7 +1451,17 @@ const Chat = (props: ChatProps) => {
               -computed values, so the payment-flow screens it still owns
               (Stake/Direct-Pay selection, the "need MOR" screen, and the
               message list) are untouched. */}
-          {!messages?.length && !isLoading && (isLocal || activeSession) ? (
+          {/* `activeSession` is NOT proof of an open session: closeSession()
+              clears `messages` but never clears `activeSession` (refreshSessions()
+              fetches a list and discards it), so after closing a session with no
+              local model registered this state still holds the just-closed one.
+              Truthiness alone therefore told the user "you have an open session…
+              you pay only for the time the session is open" about a CLOSED
+              session — a false billing claim. Ask whether it is actually open.
+              Falling through renders what dev rendered here: the chat block. */}
+          {!messages?.length &&
+          !isLoading &&
+          (isLocal || (activeSession && !isClosed(activeSession))) ? (
             <EmptyState>
               <EmptyTitle>Ask {formatModelName(modelName)} anything</EmptyTitle>
               <EmptySubtitle>

@@ -27,6 +27,7 @@ import {
   SectionDescription,
   SectionHeader,
   SettingsCallout,
+  ThemeChoiceBtn,
   ToggleInput,
   ToggleLabel,
   ToggleRow,
@@ -82,16 +83,16 @@ const Common = (props: CommonProps) => {
         <Flex.Row gap="0.8rem">
           {THEME_VARIANTS.map((v) => {
             const active = v === variant;
-            const ThemeBtn = active ? Btn : GhostBtn;
             return (
-              <ThemeBtn
+              <ThemeChoiceBtn
                 key={v}
+                $ghost={!active}
                 data-testid={`theme-${v}`}
                 aria-pressed={active}
                 onClick={() => setVariant(v)}
               >
                 {active ? `✓ ${THEME_LABELS[v]}` : THEME_LABELS[v]}
-              </ThemeBtn>
+              </ThemeChoiceBtn>
             );
           })}
         </Flex.Row>
@@ -102,10 +103,14 @@ const Common = (props: CommonProps) => {
           <IconTrash size={20} stroke={1.75} color="currentColor" />
           <SectionHeader>Reset Wallet</SectionHeader>
         </Flex.Row>
+        {/* Leads with the consequence, not with reassurance. This previously
+            opened "does not touch any funds on-chain", which is true of the
+            chain and false of the user: with no Recovery Phrase saved, funds
+            you cannot reach are funds you have lost. dev's wording said so
+            outright; a re-skin does not get to soften it. */}
         <SectionDescription>
-          Remove this wallet from this device and set one up from scratch. This
-          does not touch any funds on-chain — but without your recovery phrase,
-          you won&apos;t be able to get back into this wallet.
+          Remove this wallet from this device and set one up from scratch. If
+          you have not saved its recovery phrase, its funds are lost forever.
         </SectionDescription>
         <SettingsCallout tone="warning">
           This can&apos;t be undone. Make sure you&apos;ve saved your recovery
@@ -178,8 +183,7 @@ const Common = (props: CommonProps) => {
         <ConfirmBody data-testid="confirm-reset-wallet-modal">
           <ConfirmMessage>
             This removes your wallet from this device. If you haven&apos;t saved
-            your recovery phrase, any funds in this wallet will become
-            unreachable.
+            your recovery phrase, its funds are lost forever.
           </ConfirmMessage>
           <ConfirmActions>
             <GhostBtn
