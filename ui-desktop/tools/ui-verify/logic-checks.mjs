@@ -1289,11 +1289,20 @@ console.log('grok: models published into the managed config');
     ok('an unmounted picker reports itself rather than holding the model',
       /the window closed before it was answered/.test(router));
 
-    // Each offer gets a FRESH dialog. Without the key React reuses the
-    // instance, so a success panel left open from the last session was what the
-    // next offer showed — the new request looking exactly like the old success.
+    // Each offer gets a FRESH dialog. Two independent things had to be true and
+    // neither was: React reuses the instance when only props change, AND the
+    // component's own reset was keyed to `open` — a literal `true` the host
+    // never changes — so it ran once per mount and was an initialiser wearing a
+    // reset's name.
     ok('the picker is keyed by request, so state cannot survive into the next one',
       /key=\{request\.requestId\}/.test(router));
+    const picker = readFileSync(new URL('../../src/renderer/src/components/grok/StartPickerModal.tsx', import.meta.url), 'utf8');
+    ok('and its own reset responds to a new request, not just to mounting',
+      /\}, \[open, args\]\);/.test(picker));
+    // The success panel was added and not added to the reset. That omission IS
+    // the reported bug; the key alone would have hidden it.
+    ok('the reset clears the success panel it forgot',
+      /setOpened\(null\);[\s\S]{0,80}setLaunching\(null\)/.test(picker));
     // And the offer it replaced must not keep holding its model.
     ok('a superseded offer is reported rather than orphaned',
       /replaced by a newer request/.test(router));

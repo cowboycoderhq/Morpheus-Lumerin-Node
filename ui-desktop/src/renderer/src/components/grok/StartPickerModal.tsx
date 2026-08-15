@@ -306,6 +306,8 @@ function StartPickerModal({ open, args, onDone, onOpened }: Props) {
   const [launchNote, setLaunchNote] = useState<string | null>(null);
 
   const loadCatalog = async () => {
+    // Retrying the catalog must NOT clear a success panel — the session that
+    // panel describes is open regardless of whether a list loads.
     setCatalogLoading(true);
     setCatalogError(null);
     const res = await apiRequest<Catalog>(
@@ -319,8 +321,12 @@ function StartPickerModal({ open, args, onDone, onOpened }: Props) {
     setCatalog(res.data);
   };
 
-  // Reset the whole flow every time the modal is (re)opened, and kick off the
-  // catalog load — the only fetch that happens without a user click.
+  // Reset the whole flow for every REQUEST, and kick off the catalog load.
+  //
+  // This used to depend on `open` alone — a prop the host passes as a literal
+  // `true`, so it never changes and this ran exactly once per mount. It looked
+  // like a reset and was an initialiser. `args` changes with each new offer,
+  // which is what "a new request" actually means here.
   useEffect(() => {
     if (!open) return;
     doneRef.current = false;
@@ -338,6 +344,14 @@ function StartPickerModal({ open, args, onDone, onOpened }: Props) {
     setCatalog(null);
     setCatalogError(null);
     setCatalogLoading(true);
+    // The success panel and its launch buttons. Added with the panel and NOT
+    // added here, so a dialog left open after a session survived into the next
+    // offer: the app came forward showing the previous session's "Open in
+    // grok". A reset that does not list every piece of state is a reset that
+    // will be wrong again the next time somebody adds one.
+    setOpened(null);
+    setLaunching(null);
+    setLaunchNote(null);
     // Fire-and-forget: the effect itself cannot be async.
     void (async () => {
       const res = await apiRequest<Catalog>(
@@ -351,7 +365,7 @@ function StartPickerModal({ open, args, onDone, onOpened }: Props) {
       setCatalog(res.data);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, args]);
 
   // Escape always cancels (unless the flow has already finished).
   useEffect(() => {
