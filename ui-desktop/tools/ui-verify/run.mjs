@@ -88,6 +88,17 @@ const browser = await chromium.launch();
 // --- models: Secure pill on TEE model, raw 'tee' tag filtered, names formatted ---
 {
   const page = await browser.newPage({ viewport: { width: 900, height: 800 } });
+  // The escalation card, mounted for the first time by any gate. It is the one
+  // screen that appears ONLY when something is already wrong, and the renderer
+  // has no error boundary — so a throw here does not degrade the card, it
+  // destroys the whole tree and freezes the last painted frame on screen.
+  await drive(page, 'remediation-stall', `http://localhost:${PORT}/?case=remediation-stall`, async (p) => {
+    await p.waitForSelector('[data-testid="setup-error-details"], [data-testid="threw"]', { timeout: 8000 });
+    const threw = await p.evaluate(() => window.__threw);
+    if (threw) throw new Error(`RemediationCard threw on the stall payload: ${threw}`);
+    await p.screenshot({ path: `${SHOTS}/remediation-stall.png` });
+  });
+
   await drive(page, 'models-secure-badge', `http://localhost:${PORT}/?case=models`, async (p) => {
     await p.waitForSelector('text=Deepseek V4 Pro', { timeout: 20000 });
     const body = await p.locator('body').innerText();

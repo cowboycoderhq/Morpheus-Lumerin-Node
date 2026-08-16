@@ -93,7 +93,27 @@ function createWindow(): void {
     // ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: false,
+      // DO NOT REMOVE. Chromium's default is `true`, and it stops compositing
+      // a window it considers occluded while throttling its timers to roughly
+      // once a minute.
+      //
+      // Setup takes ~3.5 minutes on a cold install. What a person does during
+      // a three-and-a-half minute wait is switch to another window — which
+      // occludes this one, freezes the spinner mid-rotation, and stalls the
+      // heartbeat that drives the whole self-heal loop. They come back to a
+      // dead-looking app that is in perfect health.
+      //
+      // It reproduces as "the entire screen including the spinner is frozen",
+      // and it is invisible to every diagnostic: renderer AND gpu at 0% CPU,
+      // no JS on the stack, no crash report, nothing in the log, because
+      // nothing is wrong. Two separate investigations read those same numbers
+      // as "the app is idle and healthy" and as "the app is wedged"; both were
+      // looking at a throttled window.
+      //
+      // This app renders live progress for minutes at a time in the
+      // background, which is precisely the case the throttle is not for.
+      backgroundThrottling: false
     }
   })
 

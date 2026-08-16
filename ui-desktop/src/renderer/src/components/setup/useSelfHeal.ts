@@ -91,7 +91,25 @@ const HEARTBEAT_MS = 5000;
 // This watchdog does not care WHY. If the whole picture — every status, every
 // download's progress — is byte-identical for this long, setup is not
 // progressing and the user is owed the truth and a button.
-const STALL_MS = 3 * 60 * 1000;
+// 8 minutes, not 3.
+//
+// 3 minutes was chosen without measuring the thing it watches. proxy-router's
+// real cold start on a clean install is ~3m35s (measured twice: 3m34s, 3m35s),
+// so the watchdog fired ~35 seconds before success on EVERY healthy launch and
+// told the user setup had stopped while it was still working.
+//
+// A stall threshold set below the p100 of its own subject is not a watchdog,
+// it is a false-alarm generator — and a false alarm on the setup screen is
+// expensive, because the person seeing it has no way to tell it from a real
+// failure and reasonably force-quits a working install.
+//
+// This is a BACKSTOP, deliberately loose. The right primary signal is progress
+// (see progressFingerprint): startup entries currently contribute only
+// [id, status, error], so a service that is genuinely coming up is
+// byte-identical tick to tick. Plumbing a probe-attempt counter through
+// StartupItem is the real fix and is tracked separately; until then this
+// number only needs to sit above any legitimate startup, not to be precise.
+const STALL_MS = 8 * 60 * 1000;
 
 /**
  * A fingerprint of everything that would change if anything were happening.

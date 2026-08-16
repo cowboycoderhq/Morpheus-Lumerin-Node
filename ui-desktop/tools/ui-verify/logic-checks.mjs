@@ -1324,6 +1324,30 @@ console.log('grok: models published into the managed config');
       /d\.name, d\.status, d\.progress/.test(heal));
 
     // The card must carry the log, not a path to go and find it.
+    // THE FREEZE. Chromium stops compositing an occluded window and throttles
+    // its timers to ~1/min. Setup takes ~3.5 minutes, so the user switches away,
+    // the spinner stops mid-rotation, and they come back to a dead-looking app
+    // that is in perfect health — invisible to every diagnostic, because
+    // nothing is wrong.
+    const mainIndex = readFileSync(new URL('../../src/main/index.ts', import.meta.url), 'utf8');
+    ok('the window does not throttle when it loses focus',
+      /backgroundThrottling:\s*false/.test(mainIndex));
+
+    // Without a boundary a render throw unmounts the ENTIRE tree: last frame
+    // retained, timers gone, 0% CPU, nothing logged. That reads as a freeze.
+    const entry = readFileSync(new URL('../../src/renderer/src/main.tsx', import.meta.url), 'utf8');
+    ok('the app root is wrapped in an error boundary',
+      /<RootErrorBoundary>/.test(entry));
+    const boundary = readFileSync(new URL('../../src/renderer/src/components/RootErrorBoundary.tsx', import.meta.url), 'utf8');
+    ok('and the boundary reports the throw to the main log',
+      /handle-client-error/.test(boundary));
+
+    // A stall threshold below its own subject's startup time is a false-alarm
+    // generator: measured cold start is ~3m35s.
+    const healSrc = readFileSync(new URL('../../src/renderer/src/components/setup/useSelfHeal.ts', import.meta.url), 'utf8');
+    ok('the stall backstop sits above a real cold start',
+      /const STALL_MS = 8 \* 60 \* 1000;/.test(healSrc));
+
     const card = readFileSync(new URL('../../src/renderer/src/components/setup/RemediationCard.tsx', import.meta.url), 'utf8');
     ok('the failure card fetches the app log itself',
       /get-main-log-tail/.test(card));
