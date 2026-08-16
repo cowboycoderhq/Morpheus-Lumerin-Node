@@ -505,6 +505,76 @@ const browser = await chromium.launch();
   await page.close();
 }
 
+// --- chat-affordability: stake with only SOME providers affordable ----------
+// The money claim, on the real Chat: a balance covering only some of a model's
+// providers must (a) still be allowed to stake, (b) report the count HONESTLY,
+// and (c) size the session off the priciest provider it can actually afford.
+//
+// Fixture (see the case): supply/budget = 1, so minStake(price) = price*360.
+// Prices 1e15 / 2e15 / 1e16 wei/s => 6-min floors of 0.36 / 0.72 / 3.6 MOR.
+{
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+
+  // Select the marketplace model through the REAL picker — onCreateNewChat is
+  // what commits selectedModel, so a case that skipped the modal would pin a
+  // state the app cannot actually reach.
+  const pickModel = async (p) => {
+    await p.waitForSelector('text=Select payment method', { timeout: 20000 });
+    await p.getByText('New chat', { exact: false }).first().click();
+    await p.getByText('Test Model', { exact: false }).first().click();
+    await p.waitForTimeout(500);
+  };
+  const intro = (p) => p.locator('body').innerText();
+
+  await drive(page, 'chat-affordability', `http://localhost:${PORT}/?case=chat-affordability&bal=1000000000000000000`, async (p) => {
+    await pickModel(p);
+    const text = await intro(p);
+
+    // (a) Partially-affordable must still be stakeable — this is the whole point
+    // of the feature; the old code required the DEAREST provider and blocked it.
+    assert(!/You’ll need some MOR/.test(text), 'a wallet that can afford 2 of 3 providers was blocked from staking');
+
+    // (b) The count must be exact. 1 MOR clears the 0.36 and 0.72 floors but not
+    // the 3.6 one -> 2 of 3. A wrong count here is the user being lied to about
+    // money, which is worse than no warning at all.
+    assert(/covers 2 of 3 providers/.test(text), `expected "covers 2 of 3 providers", got: ${text.slice(0, 400)}`);
+
+    // (c) The session is sized off the priciest AFFORDABLE provider (2e15), not
+    // the dearest (1e16): 2e15 * 1440min * 60 = 172.8 MOR. If a refactor ever
+    // sizes off the dearest again this reads 864.00 and fails — which is the
+    // exact regression the design exists to prevent.
+    assert(/max:\s*172\.80 MOR/.test(text), `stake ceiling not sized off the priciest AFFORDABLE provider: ${text.slice(0, 400)}`);
+    assert(/min:\s*0\.36 MOR/.test(text), `stake floor not the cheapest provider's 6-min floor: ${text.slice(0, 400)}`);
+
+    // Rendering the warning must not open anything on-chain.
+    const opened = await p.evaluate(() => window.__opened.length);
+    assert(opened === 0, `onOpenSession fired ${opened}x just by rendering (must be 0)`);
+    await p.screenshot({ path: `${SHOTS}/chat-affordability.png` });
+  });
+
+  // A warning that always fires is noise. With 10 MOR every provider clears its
+  // floor, so there must be NO count warning — and the ceiling moves to the
+  // dearest (1e16 * 1440 * 60 = 864 MOR) because it is now affordable.
+  await drive(page, 'chat-affordability-no-cry-wolf', `http://localhost:${PORT}/?case=chat-affordability&bal=10000000000000000000`, async (p) => {
+    await pickModel(p);
+    const text = await intro(p);
+    assert(!/covers \d+ of \d+ providers/.test(text), `warned about partial affordability when ALL providers are affordable: ${text.slice(0, 400)}`);
+    assert(/max:\s*864\.00 MOR/.test(text), `ceiling did not rise to the dearest provider once affordable: ${text.slice(0, 400)}`);
+  });
+
+  // Below the cheapest provider's floor there is nothing to warn about — the
+  // user needs the way forward, not a count.
+  await drive(page, 'chat-affordability-none', `http://localhost:${PORT}/?case=chat-affordability&bal=100000000000000`, async (p) => {
+    await pickModel(p);
+    const text = await intro(p);
+    assert(/You’ll need some MOR/.test(text), `a balance under every provider's floor did not get the add-MOR screen: ${text.slice(0, 400)}`);
+    assert(!/covers \d+ of \d+ providers/.test(text), 'showed a partial-affordability count when NOTHING is affordable');
+    const opened = await p.evaluate(() => window.__opened.length);
+    assert(opened === 0, `onOpenSession fired ${opened}x (must be 0)`);
+  });
+  await page.close();
+}
+
 await browser.close();
 await server.close();
 
