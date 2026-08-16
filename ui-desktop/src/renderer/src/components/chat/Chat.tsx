@@ -479,19 +479,26 @@ const Chat = (props: ChatProps) => {
       });
     }
 
-    const prices = model.bids.map((x) => Number(x.PricePerSecond));
-    const maxPrice = Math.max(...prices);
+    // Size the session off the priciest provider we can AFFORD, not the priciest
+    // provider period — so a wallet that covers only some providers can still
+    // stake, matched to one of those. The router skips any it can't cover.
+    const aff = getStakeAffordability(model.bids, Number(balances.mor));
     const duration = isDirectPay
       ? calculateAcceptableDurationForDirectPay(meta)
-      : calculateAcceptableDuration(maxPrice, Number(balances.mor), meta);
+      : calculateAcceptableDuration(
+          aff.priceForDuration,
+          Number(balances.mor),
+          meta,
+        );
 
     // Don't attempt an on-chain open the wallet can't cover — it reverts with
     // "transfer amount exceeds balance" and strands the user in a dead session.
-    // Skips itself when the stake can't be priced yet (meta not loaded) so it
-    // can never false-block a session it can't evaluate.
+    // The floor is the CHEAPEST provider (can we afford at least one?); the
+    // router matches an affordable provider from there. Skips itself when the
+    // stake can't be priced yet (meta not loaded) so it never false-blocks.
     const stakeNeeded = isDirectPay
-      ? maxPrice * MIN_REQUEST_SECONDS
-      : Number(calculateStake(maxPrice, duration / 60));
+      ? aff.minPrice * MIN_REQUEST_SECONDS
+      : aff.minStake;
     if (
       Number.isFinite(stakeNeeded) &&
       stakeNeeded > 0 &&
@@ -1183,21 +1190,71 @@ const Chat = (props: ChatProps) => {
     return stake;
   };
 
+  // Per-provider affordability. A model is served by several providers (bids) at
+  // DIFFERENT prices, and opening a session matches you to ONE of them. Staking
+  // used to require enough MOR for the MOST EXPENSIVE provider, so a wallet that
+  // could comfortably afford the cheaper providers was blocked outright. Instead,
+  // gate on the CHEAPEST provider (you may stake as long as at least one provider
+  // is affordable) and surface how many of the model's providers you can afford.
+  //
+  // A provider is "affordable" when its minimum stake — its price for the
+  // 6-minute session floor — is within balance. The session duration is sized off
+  // the priciest AFFORDABLE provider (`priceForDuration`), so whichever affordable
+  // provider the router matches, the stake still fits within balance. The router
+  // independently skips any provider the wallet can't cover
+  // (OpenSessionByModelId in proxy-router), so the client's "affordable set" and
+  // the provider the router actually picks stay consistent.
+  const getStakeAffordability = (bids: any[], balance: number) => {
+    const prices = (bids ?? [])
+      .map((b: any) => Number(b.PricePerSecond))
+      .filter((p) => Number.isFinite(p) && p > 0);
+    const empty = {
+      known: false,
+      totalProviders: prices.length,
+      affordableCount: 0,
+      minPrice: 0,
+      minStake: 0,
+      priceForDuration: 0,
+    };
+    if (!prices.length || !Number(meta.supply) || !Number(meta.budget)) {
+      return empty;
+    }
+    const minStakeFor = (price: number) =>
+      calculateStake(price, MIN_REQUEST_SECONDS / 60);
+    const affordablePrices = prices.filter((p) => balance >= minStakeFor(p));
+    const minPrice = Math.min(...prices);
+    // Priciest provider we can still afford; falls back to the cheapest so the
+    // duration math stays defined even when nothing is affordable (the caller
+    // gates on affordableCount before it ever opens a session).
+    const priceForDuration = affordablePrices.length
+      ? Math.max(...affordablePrices)
+      : minPrice;
+    return {
+      known: true,
+      totalProviders: prices.length,
+      affordableCount: affordablePrices.length,
+      minPrice,
+      minStake: minStakeFor(minPrice),
+      priceForDuration,
+    };
+  };
+
   // The stake depends on two async inputs — the model's bids AND the marketplace
   // meta (supply/budget). Recompute whenever either lands, so a reopened session
   // (opened without going through onCreateNewChat) gets the real requirement
   // instead of the {min:0, max:0} default that makes the duration fall back to
   // 24h. Idempotent with onCreateNewChat (same formula), so no conflict.
   useEffect(() => {
-    const bids = selectedModel?.bids;
-    if (!bids?.length || !Number(meta.supply) || !Number(meta.budget)) return;
-    const maxPrice = Math.max(...bids.map((x: any) => Number(x.PricePerSecond)));
-    if (!Number.isFinite(maxPrice) || maxPrice <= 0) return;
+    const aff = getStakeAffordability(selectedModel?.bids, Number(balances.mor));
+    if (!aff.known) return;
+    // min = cheapest provider's 6-minute floor (what it takes to stake at all);
+    // max = priciest AFFORDABLE provider at 24h (the ceiling of a session the
+    // wallet can actually open — also what calculateAcceptableDuration reads).
     setRequiredStake({
-      min: calculateStake(maxPrice, MIN_REQUEST_SECONDS / 60),
-      max: calculateStake(maxPrice, 24 * 60),
+      min: aff.minStake,
+      max: calculateStake(aff.priceForDuration, 24 * 60),
     });
-  }, [selectedModel, meta.supply, meta.budget]);
+  }, [selectedModel, meta.supply, meta.budget, balances.mor]);
 
   const onCreateNewChat = ({ modelId, isLocal }) => {
     abort = true;
@@ -1243,12 +1300,10 @@ const Chat = (props: ChatProps) => {
       return;
     }
 
-    const prices = selectedModel.bids.map((x) => Number(x.PricePerSecond));
-    const maxPrice = Math.max(...prices);
-
+    const aff = getStakeAffordability(selectedModel.bids, Number(balances.mor));
     setRequiredStake({
-      min: calculateStake(maxPrice, MIN_REQUEST_SECONDS / 60),
-      max: calculateStake(maxPrice, 24 * 60),
+      min: aff.minStake,
+      max: calculateStake(aff.priceForDuration, 24 * 60),
     });
   };
 
@@ -1261,20 +1316,27 @@ const Chat = (props: ChatProps) => {
     const isCreateSessionMode =
       isNewChat && !isLocal && !activeSession && !isLoading;
 
-    // Stake mode: only "enough" once we actually KNOW the requirement (min>0).
-    // An unknown (0) requirement used to read as affordable and enabled a doomed
-    // Stake button. Use >= so an exact balance qualifies.
-    const stakeKnown = Number(requiredStake.min) > 0;
-    const isEnoughFunds =
-      stakeKnown && Number(balances.mor) >= Number(requiredStake.min);
-
-    // Direct pay: price the requirement off the dearest live bid x the session
-    // floor. The old (5*3600*supply)/budget was priceless and trivially true.
-    const dearestBid = Math.max(
-      0,
-      ...(selectedModel?.bids ?? []).map((x: any) => Number(x.PricePerSecond)),
+    // Stake mode: gate on the CHEAPEST provider — enough to stake if at least one
+    // of the model's providers is affordable. `known` is false until bids AND
+    // marketplace meta have loaded, so an unpriced model reads as not-yet-payable
+    // rather than falsely affordable.
+    const affordability = getStakeAffordability(
+      selectedModel?.bids,
+      Number(balances.mor),
     );
-    const requiredStakeForDirectPay = dearestBid * MIN_REQUEST_SECONDS;
+    const stakeKnown = affordability.known;
+    const isEnoughFunds = stakeKnown && affordability.affordableCount >= 1;
+    // You can afford SOME but not ALL providers — the session will match one of
+    // the affordable ones; tell the user how many that is.
+    const partiallyAffordable =
+      stakeKnown &&
+      affordability.affordableCount >= 1 &&
+      affordability.affordableCount < affordability.totalProviders;
+
+    // Direct pay: price off the CHEAPEST live bid x the session floor (same
+    // "can you afford at least one provider" gate as staking).
+    const requiredStakeForDirectPay =
+      affordability.minPrice * MIN_REQUEST_SECONDS;
     const isEnoughFundsForDirectPay =
       requiredStakeForDirectPay > 0 &&
       Number(balances.mor) >= requiredStakeForDirectPay;
@@ -1318,6 +1380,17 @@ const Chat = (props: ChatProps) => {
                     {formatMor(requiredStake.max, 18) ?? '…'} MOR). You can claim
                     your stake in 24h.
                   </ChatIntroInnerText>
+                  {partiallyAffordable && (
+                    <ChatIntroInnerText
+                      style={{ color: '#F5A623', fontWeight: 500 }}
+                    >
+                      Heads up: your MOR balance covers{' '}
+                      {affordability.affordableCount} of{' '}
+                      {affordability.totalProviders} providers for this model.
+                      Your session will use one of the providers you can afford —
+                      add more MOR to unlock the rest.
+                    </ChatIntroInnerText>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'center' }}>
                     <ChatIntroButton
                       onClick={() => onOpenSession(false, false)}
