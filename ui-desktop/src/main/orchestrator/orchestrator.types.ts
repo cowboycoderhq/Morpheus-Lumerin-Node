@@ -17,6 +17,15 @@ export interface StartupItem {
   stderrOutput?: string
   ports?: number[]
   isExternal?: boolean // undefined if the process management is not determined yet
+  /**
+   * Health-probe attempts so far.
+   *
+   * The ONLY field here that moves while a service is starting. `status` sits
+   * at 'starting' from the first attempt to the last, so without this a
+   * service that is coming up looks identical to one that is wedged — which is
+   * exactly the distinction the setup stall watchdog has to make.
+   */
+  probeAttempts?: number
 }
 
 export type LoadingState = {

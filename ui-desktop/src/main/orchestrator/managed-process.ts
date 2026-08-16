@@ -13,7 +13,7 @@ export type ManagedProcessParams = {
   args: string[]
   log: LogFunctions
   redirectProcessOutput?: boolean
-  onStateChange?: (stateInfo: StateInfo) => void
+  onStateChange?: (stateInfo?: StateInfo) => void
   pinger?: Pinger
   ports?: number[]
 }
@@ -34,7 +34,7 @@ export class ManagedProcess implements Process {
   private exitReason?: string
   private log: LogFunctions
   private redirectProcessOutput: boolean
-  private onStateChange?: (stateInfo: StateInfo) => void
+  private onStateChange?: (stateInfo?: StateInfo) => void
   private ports?: number[]
   private pinger?: Pinger
 
@@ -285,6 +285,11 @@ export class ManagedProcess implements Process {
   async reset() {
     await this.stop()
     this.setState('pending', null)
+  }
+
+  /** Probe attempts so far — a service that is genuinely coming up moves this. */
+  getProbeAttempts(): number {
+    return this.pinger?.getAttempts?.() ?? 0
   }
 
   async ping(timeoutArg?: number, gen?: number, signal?: AbortSignal) {

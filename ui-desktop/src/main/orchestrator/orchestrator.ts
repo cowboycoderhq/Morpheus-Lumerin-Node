@@ -574,7 +574,8 @@ export class Orchestrator {
           error: this.ipfsProcess?.getError(),
           stderrOutput: this.ipfsProcess?.getOutput(),
           ports: this.cfg.ipfs.ports,
-          isExternal: this.ipfsProcess?.isExternal()
+          isExternal: this.ipfsProcess?.isExternal(),
+          probeAttempts: this.ipfsProcess?.getProbeAttempts()
         },
         {
           id: 'aiRuntime',
@@ -583,7 +584,8 @@ export class Orchestrator {
           error: this.aiRuntimeProcess?.getError(),
           stderrOutput: this.aiRuntimeProcess?.getOutput(),
           ports: this.cfg.aiRuntime.ports,
-          isExternal: this.aiRuntimeProcess?.isExternal()
+          isExternal: this.aiRuntimeProcess?.isExternal(),
+          probeAttempts: this.aiRuntimeProcess?.getProbeAttempts()
         },
         {
           id: 'containerRuntime',
@@ -591,7 +593,8 @@ export class Orchestrator {
           status: this.containerRuntimeProcess?.getState() ?? 'pending',
           error: this.containerRuntimeProcess?.getError(),
           stderrOutput: this.containerRuntimeProcess?.getOutput(),
-          isExternal: this.containerRuntimeProcess?.isExternal()
+          isExternal: this.containerRuntimeProcess?.isExternal(),
+          probeAttempts: this.containerRuntimeProcess?.getProbeAttempts()
         },
         {
           id: 'proxyRouter',
@@ -600,7 +603,8 @@ export class Orchestrator {
           error: this.proxyRouterProcess?.getError(),
           stderrOutput: this.proxyRouterProcess?.getOutput(),
           ports: this.cfg.proxyRouter.ports,
-          isExternal: this.proxyRouterProcess?.isExternal()
+          isExternal: this.proxyRouterProcess?.isExternal(),
+          probeAttempts: this.proxyRouterProcess?.getProbeAttempts()
         }
       ],
       orchestratorStatus

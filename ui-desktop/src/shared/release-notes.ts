@@ -30,6 +30,18 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.1.4',
+    headline: 'Setup knows the difference between slow and stuck.',
+    items: [
+      {
+        title: 'A slow start is no longer called a failure',
+        body:
+          'Setup now watches whether services are still trying, not just whether they have finished. However long a service takes, it will not be reported as stalled while it is visibly working — and a genuinely frozen one is still caught.',
+      },
+    ],
+    actions: [{ kind: 'pin-models', label: 'Pin my models' }],
+  },
+  {
     version: '1.1.3',
     headline: 'The setup freeze was never a freeze.',
     items: [

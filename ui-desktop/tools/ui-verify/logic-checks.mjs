@@ -1342,11 +1342,43 @@ console.log('grok: models published into the managed config');
     ok('and the boundary reports the throw to the main log',
       /handle-client-error/.test(boundary));
 
+    // F1: the stall detector can SEE startup progress now. Driven, not asserted
+    // over source — two states that differ only in probe attempts must produce
+    // different fingerprints, or a service that is working is indistinguishable
+    // from one that is wedged.
+    {
+      const { progressFingerprint } = await import(
+        '../../src/renderer/src/components/setup/useSelfHeal.ts'
+      );
+      const state = (attempts) => ({
+        download: [],
+        startup: [
+          { id: 'proxyRouter', name: 'Proxy', status: 'starting', probeAttempts: attempts },
+        ],
+        orchestratorStatus: 'starting',
+      });
+      ok('a service that is still polling moves the fingerprint',
+        progressFingerprint(state(7)) !== progressFingerprint(state(8)));
+      ok('and a wedged one does not',
+        progressFingerprint(state(7)) === progressFingerprint(state(7)));
+      // The download arm's rule, which startup now matches.
+      const dl = (progress) => ({
+        download: [{ name: 'router', status: 'downloading', progress }],
+        startup: [],
+        orchestratorStatus: 'starting',
+      });
+      ok('downloads still move it by bytes',
+        progressFingerprint(dl(10)) !== progressFingerprint(dl(11)));
+    }
+
     // A stall threshold below its own subject's startup time is a false-alarm
     // generator: measured cold start is ~3m35s.
     const healSrc = readFileSync(new URL('../../src/renderer/src/components/setup/useSelfHeal.ts', import.meta.url), 'utf8');
-    ok('the stall backstop sits above a real cold start',
-      /const STALL_MS = 8 \* 60 \* 1000;/.test(healSrc));
+    ok('the stall timer is a frozen-pipeline limit, not a race against startup',
+      /const STALL_MS = 4 \* 60 \* 1000;/.test(healSrc));
+    ok('and every startup service publishes its probe count',
+      (readFileSync(new URL('../../src/main/orchestrator/orchestrator.ts', import.meta.url), 'utf8')
+        .match(/probeAttempts: this\./g) ?? []).length === 4);
 
     const card = readFileSync(new URL('../../src/renderer/src/components/setup/RemediationCard.tsx', import.meta.url), 'utf8');
     ok('the failure card fetches the app log itself',
