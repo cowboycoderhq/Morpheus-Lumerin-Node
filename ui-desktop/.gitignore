@@ -8,3 +8,6 @@
 /.env
 /services/
 
+
+# tsc --build leaves these; they are machine-local build state, not source.
+*.tsbuildinfo
