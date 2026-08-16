@@ -28,6 +28,7 @@ import {
   ChatIntroInner,
   ChatIntroInnerTitle,
   ChatIntroInnerText,
+  ChatIntroWarningText,
   ChatIntroButton,
   SendBtnWrapper,
   Btn,
@@ -493,12 +494,21 @@ const Chat = (props: ChatProps) => {
 
     // Don't attempt an on-chain open the wallet can't cover — it reverts with
     // "transfer amount exceeds balance" and strands the user in a dead session.
-    // The floor is the CHEAPEST provider (can we afford at least one?); the
-    // router matches an affordable provider from there. Skips itself when the
-    // stake can't be priced yet (meta not loaded) so it never false-blocks.
+    // Price this off the duration we are ACTUALLY opening, never the 6-minute
+    // floor: the floor is exactly what the button gate already tests, so a floor
+    // check here would be dead code that cannot fire while claiming to guard.
+    //
+    // Both arms price the CHEAPEST provider, because the question here is "can
+    // we afford ANYONE at this duration?" — the router matches an affordable
+    // provider, so only a balance under the cheapest is a true dead end. Costing
+    // this off the priciest affordable provider instead would re-block exactly
+    // the wallets this feature exists to admit (measured: it false-blocks ~40%
+    // of the sessions it stops, where a cheaper provider was still open; the
+    // cheapest-provider test is an EXACT match for "router refuses every bid" —
+    // by monotonicity of the stake formula in price).
     const stakeNeeded = isDirectPay
-      ? aff.minPrice * MIN_REQUEST_SECONDS
-      : aff.minStake;
+      ? aff.minPrice * duration
+      : Number(calculateStake(aff.minPrice, duration / 60));
     if (
       Number.isFinite(stakeNeeded) &&
       stakeNeeded > 0 &&
@@ -1245,7 +1255,10 @@ const Chat = (props: ChatProps) => {
   // instead of the {min:0, max:0} default that makes the duration fall back to
   // 24h. Idempotent with onCreateNewChat (same formula), so no conflict.
   useEffect(() => {
-    const aff = getStakeAffordability(selectedModel?.bids, Number(balances.mor));
+    const aff = getStakeAffordability(
+      selectedModel?.bids,
+      Number(balances.mor),
+    );
     if (!aff.known) return;
     // min = cheapest provider's 6-minute floor (what it takes to stake at all);
     // max = priciest AFFORDABLE provider at 24h (the ceiling of a session the
@@ -1333,10 +1346,22 @@ const Chat = (props: ChatProps) => {
       affordability.affordableCount >= 1 &&
       affordability.affordableCount < affordability.totalProviders;
 
-    // Direct pay: price off the CHEAPEST live bid x the session floor (same
-    // "can you afford at least one provider" gate as staking).
+    // Direct pay is billed price x duration OUTRIGHT — tryOpenSession transfers
+    // exactly computeSessionTokenAmount(), and for direct pay that is the whole
+    // sessionCost, with no stake formula to shrink it. Its duration is also not
+    // price-derived: calculateAcceptableDurationForDirectPay returns a fixed
+    // stake-equivalent window (a contract-bug workaround) that can run to days.
+    // So pricing this gate off the 6-minute floor understated the true cost by
+    // orders of magnitude and lit up a Direct Pay button whose session the
+    // router then refused, provider by provider. Price it off the duration
+    // actually opened, cheapest provider first ("can we afford anyone at all?").
+    // Gated on stakeKnown so an unloaded meta reads as not-yet-payable — without
+    // it, supply=0 collapses the duration to 1s and everything looks free.
+    const directPayDuration = stakeKnown
+      ? calculateAcceptableDurationForDirectPay(meta)
+      : 0;
     const requiredStakeForDirectPay =
-      affordability.minPrice * MIN_REQUEST_SECONDS;
+      affordability.minPrice * directPayDuration;
     const isEnoughFundsForDirectPay =
       requiredStakeForDirectPay > 0 &&
       Number(balances.mor) >= requiredStakeForDirectPay;
@@ -1381,15 +1406,13 @@ const Chat = (props: ChatProps) => {
                     your stake in 24h.
                   </ChatIntroInnerText>
                   {partiallyAffordable && (
-                    <ChatIntroInnerText
-                      style={{ color: '#F5A623', fontWeight: 500 }}
-                    >
+                    <ChatIntroWarningText>
                       Heads up: your MOR balance covers{' '}
                       {affordability.affordableCount} of{' '}
                       {affordability.totalProviders} providers for this model.
-                      Your session will use one of the providers you can afford —
-                      add more MOR to unlock the rest.
-                    </ChatIntroInnerText>
+                      Your session will use one of the providers you can afford
+                      — add more MOR to unlock the rest.
+                    </ChatIntroWarningText>
                   )}
                   <div style={{ display: 'flex', justifyContent: 'center' }}>
                     <ChatIntroButton

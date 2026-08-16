@@ -1322,7 +1322,14 @@ func (s *BlockchainService) OpenSessionByModelId(ctx context.Context, modelID co
 
 		if morBalance != nil {
 			amount, amtErr := computeSessionTokenAmount(&bid.Bid, duration, supply, budget, directPayment)
-			if amtErr == nil && amount.Cmp(morBalance) > 0 {
+			// This is the SAME function tryOpenSession transfers on, so the
+			// filter and the actual transfer can never disagree.
+			switch {
+			case amtErr != nil:
+				// Unpriceable bid: say so rather than skipping silently, then
+				// attempt it anyway — the same best-effort stance as balErr.
+				log.Warnf("could not price bid #%d %s for affordability filter, attempting it: %s", i, providerAddr.String(), amtErr)
+			case amount.Cmp(morBalance) > 0:
 				log.Infof("skipping provider #%d %s: required %s exceeds MOR balance %s", i, providerAddr.String(), amount.String(), morBalance.String())
 				failures = append(failures, providerFailure{Provider: providerAddr.String(), Reason: "insufficient MOR balance for this provider's price"})
 				continue
