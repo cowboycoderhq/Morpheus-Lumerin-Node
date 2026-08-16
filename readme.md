@@ -69,9 +69,16 @@ is tested, and the mismatch shows up later as behaviour nobody can reproduce.
 npm install -g yarn         # if you do not have it
 git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git
 cd Morpheus-Lumerin-Node/ui-desktop
+cp .env.example .env        # REQUIRED — the build validates env and exits without it
 yarn install
 yarn build:mac-arm64        # or build:mac-x64 / build:win / build:linux
 ```
+
+**The `cp` is not optional.** `.env` is gitignored, and the build validates its
+environment before doing anything: with no `.env` it stops at
+`Invalid environment variables: ENV must have required property
+'BLOCKSCOUT_API_URL'`, which reads like a broken checkout rather than a missing
+file. The committed `.env.example` has working defaults for a mainnet build.
 
 The installer lands in `ui-desktop/dist/` as
 `mac-arm64-morpheus-app-<version>.dmg`.
