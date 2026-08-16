@@ -6,3 +6,9 @@
 ***/.$*drawio.dtmp
 *.internal.*
 .site/
+
+# This project builds with YARN — CI runs `yarn install --frozen-lockfile` and
+# yarn.lock is the tested dependency tree. A package-lock.json produced by a
+# stray `npm install` resolves a DIFFERENT tree, and the mismatch surfaces later
+# as behaviour nobody can reproduce. Keep it out.
+ui-desktop/package-lock.json

@@ -58,6 +58,58 @@ You will need both **MOR** (for stake / fees / session payment) and **ETH on BAS
 | Prosumer / agent | [Prosumer overview](https://nodedocs.mor.org/prosumers/overview) |
 | Developer (API) | [API overview](https://nodedocs.mor.org/reference/api-overview) |
 
+## Build the desktop app from source
+
+Requires **Node >= 20**. Install with **yarn**: `yarn.lock` is the committed,
+tested dependency tree and CI runs `yarn install --frozen-lockfile` against it.
+Do not run `npm install` here — it resolves a different tree from the one that
+is tested, and the mismatch shows up later as behaviour nobody can reproduce.
+
+```bash
+npm install -g yarn         # if you do not have it
+git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git
+cd Morpheus-Lumerin-Node/ui-desktop
+yarn install
+yarn build:mac-arm64        # or build:mac-x64 / build:win / build:linux
+```
+
+The installer lands in `ui-desktop/dist/` as
+`mac-arm64-morpheus-app-<version>.dmg`.
+
+**On macOS, a build you make yourself is not notarized.** It will run on the Mac
+that built it; on any other Mac, Gatekeeper refuses it with "Apple cannot check
+it for malicious software". That is expected, not a broken build — right-click
+the app and choose **Open** to run it anyway. Producing a DMG that opens
+anywhere requires an Apple Developer ID and notarization credentials
+(`ui-desktop/scripts/release.sh` does that, and only works for the signer).
+
+### Run it without building
+
+```bash
+cd ui-desktop && yarn dev
+```
+
+### The checks
+
+The desktop app carries a verification suite that runs in seconds and needs no
+network, no wallet, and no built app:
+
+```bash
+cd ui-desktop
+yarn typecheck                      # both tsconfigs
+
+# The harness is a separate package and uses npm — it has no yarn.lock.
+cd tools/ui-verify && npm install
+npm run logic                       # pure-logic + source invariants
+npm run isolate                     # mounts real components in a browser, screenshots
+npm run openai                      # drives the OpenAI-compatible endpoint end to end
+npm run frozen                      # catches colours that cannot theme-swap
+```
+
+Run these before opening a PR. `logic` and `openai` are the fastest way to tell
+whether a change broke something you did not touch. None of them need a network,
+a wallet, or a built app.
+
 ## For AI agents reading this repo
 
 **Start with [`AGENTS.md`](AGENTS.md)** — hard rules, quick lookup tables, and ingestion instructions.
