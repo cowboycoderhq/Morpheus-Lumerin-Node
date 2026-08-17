@@ -76,6 +76,35 @@ const withDashboardState = (WrappedComponent) => {
       return { balances, rate };
     };
 
+    // Stake time-locked by closing a session EARLY. This is the money that used
+    // to simply vanish: the Diamond has always tracked it, but nothing in the
+    // app ever asked, so the user saw their balance drop and had no way to learn
+    // where it went or when it returns.
+    //
+    // Fetched straight from the local proxy-router (same pattern as
+    // withChatState.getProviders) rather than through the main process — the
+    // route is a plain authenticated GET and needs no IPC channel of its own.
+    //
+    // Returns null on failure rather than zeroes: "we could not ask" and "you
+    // have nothing on hold" are different answers, and showing 0 MOR for the
+    // first would repeat the original bug in a new place.
+    getStakesOnHold = async () => {
+      try {
+        const authHeaders = await this.props.client.getAuthHeaders();
+        const path = `${this.props.config.chain.localProxyRouterUrl}/blockchain/stakes/on-hold`;
+        const response = await fetch(path, { headers: authHeaders });
+        const data = await response.json();
+        if (data.error) {
+          console.error(data.error);
+          return null;
+        }
+        return { available: data.available, hold: data.hold };
+      } catch (e) {
+        console.error('Could not read stakes on hold', e);
+        return null;
+      }
+    };
+
     render() {
       const { sendLmrFeatureStatus } = this.props;
 
@@ -92,6 +121,7 @@ const withDashboardState = (WrappedComponent) => {
           copyToClipboard={this.props.client.copyToClipboard}
           onWalletRefresh={this.onWalletRefresh}
           getBalances={this.getBalances}
+          getStakesOnHold={this.getStakesOnHold}
           sendDisabled={sendLmrFeatureStatus !== 'ok'}
           loadTransactions={this.loadTransactions}
           getSessionsByUser={this.getSessionsByUser}

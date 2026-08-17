@@ -26,13 +26,24 @@ const store = {
   dispatch: () => {},
 };
 
-// Counters, not spies: the case asserts the Help link still calls the single
-// onHelpLinkClick contract (kept here; a menu variant renamed it).
-window.__help = 0;
+// Counters, not spies.
+//
+// This case used to assert Help called a single onHelpLinkClick (straight to
+// the docs), deliberately pinning the choice NOT to adopt a menu here. That
+// decision was later reversed: a user who
+// clicks Help wants either a reference or a person, and only they know which, so
+// Help now offers Discord and Documentation instead of choosing for them. The
+// contract asserted below is the NEW one — Help opens a menu and opens nothing
+// by itself.
+window.__docs = 0;
+window.__discord = 0;
 window.__copy = 0;
 const client = {
-  onHelpLinkClick: () => {
-    window.__help++;
+  onDocsLinkClick: () => {
+    window.__docs++;
+  },
+  onDiscordLinkClick: () => {
+    window.__discord++;
   },
   copyToClipboard: () => {
     window.__copy++;

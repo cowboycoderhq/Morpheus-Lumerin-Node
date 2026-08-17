@@ -25,6 +25,15 @@ type BalanceRes struct {
 	Balance *lib.BigInt `json:"balance" swaggertype:"string"`
 }
 
+// StakesOnHoldRes reports stake time-locked by closing sessions early.
+// `available` has passed its release time (the auto-claimer sweeps it home);
+// `hold` is still locked and cannot be released early by anyone — the contract
+// skips unmatured entries rather than reverting.
+type StakesOnHoldRes struct {
+	Available *lib.BigInt `json:"available" swaggertype:"string"`
+	Hold      *lib.BigInt `json:"hold" swaggertype:"string"`
+}
+
 type ProviderRes struct {
 	Provider *Provider `json:"provider"`
 }

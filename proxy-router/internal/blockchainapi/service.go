@@ -106,7 +106,11 @@ var (
 	ErrTokenSupply = errors.New("failed to parse token supply")
 	ErrBudget      = errors.New("failed to parse token budget")
 	ErrMyAddress   = errors.New("failed to get my address")
-	ErrInitSession = errors.New("failed to initiate session")
+	// Not a failure: the wallet has no MATURED on-hold stake. Distinct from an
+	// RPC error so the auto-claimer can stay quiet on the normal case instead of
+	// logging an error every tick.
+	ErrNothingToWithdraw = errors.New("no matured stake to withdraw")
+	ErrInitSession       = errors.New("failed to initiate session")
 	ErrApprove     = errors.New("failed to approve funds")
 	ErrMarshal     = errors.New("failed to marshal open session payload")
 	ErrOpenOwnBid  = errors.New("cannot open session with own bid")
@@ -1054,6 +1058,60 @@ func (s *BlockchainService) ClaimProviderBalance(ctx context.Context, sessionID 
 	}
 
 	return txHash, nil
+}
+
+// stakeOnHoldIterations walks every OnHold entry. The contract's loop is bounded
+// by this and by the entry count, and entries are POPPED as they are withdrawn,
+// so the list stays short in practice. 255 is the max a uint8 can express — i.e.
+// "all of them" — which is what a user wants: a partial sweep would silently
+// leave their money behind.
+const stakeOnHoldIterations uint8 = 255
+
+// GetUserStakesOnHold reports this wallet's stake locked by early session
+// closes: `available` is withdrawable now, `hold` is still time-locked.
+func (s *BlockchainService) GetUserStakesOnHold(ctx context.Context) (available *big.Int, hold *big.Int, err error) {
+	userAddr, err := s.GetMyAddress(ctx)
+	if err != nil {
+		return nil, nil, lib.WrapError(ErrMyAddress, err)
+	}
+	return s.sessionRouter.GetUserStakesOnHold(ctx, userAddr, stakeOnHoldIterations)
+}
+
+// WithdrawUserStakes sweeps matured on-hold stake back to this wallet.
+//
+// The contract only ever transfers to `user_` itself, so this cannot move funds
+// anywhere but home; the only cost of calling it is gas. It still refuses to
+// send when nothing has matured — an on-chain no-op would burn a fee and, worse,
+// report success while returning nothing.
+func (s *BlockchainService) WithdrawUserStakes(ctx context.Context) (common.Hash, *big.Int, error) {
+	userAddr, err := s.GetMyAddress(ctx)
+	if err != nil {
+		return common.Hash{}, nil, lib.WrapError(ErrMyAddress, err)
+	}
+
+	available, _, err := s.sessionRouter.GetUserStakesOnHold(ctx, userAddr, stakeOnHoldIterations)
+	if err != nil {
+		return common.Hash{}, nil, err
+	}
+	if available == nil || available.Sign() == 0 {
+		return common.Hash{}, big.NewInt(0), ErrNothingToWithdraw
+	}
+
+	prKey, err := s.privateKey.GetPrivateKey()
+	if err != nil {
+		return common.Hash{}, nil, lib.WrapError(ErrPrKey, err)
+	}
+	transactOpt, err := s.getTransactOpts(ctx, prKey)
+	if err != nil {
+		return common.Hash{}, nil, lib.WrapError(ErrTxOpts, err)
+	}
+
+	txHash, err := s.sessionRouter.WithdrawUserStakes(transactOpt, userAddr, stakeOnHoldIterations)
+	if err != nil {
+		return common.Hash{}, nil, err
+	}
+
+	return txHash, available, nil
 }
 
 func (s *BlockchainService) GetTokenSupply(ctx context.Context) (*big.Int, error) {

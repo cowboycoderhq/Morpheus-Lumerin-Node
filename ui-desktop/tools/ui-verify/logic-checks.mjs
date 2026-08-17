@@ -1,6 +1,10 @@
 // Node-runnable assertions over the PR's exported substrate utils.
 // Run: npm run logic   (uses vite-node to transform the .ts/.tsx/.js sources)
-import { morToWei, weiToMor } from '../../src/renderer/src/utils/marketplace.ts';
+import {
+  morToWei,
+  weiToMor,
+  earlyCloseLock,
+} from '../../src/renderer/src/utils/marketplace.ts';
 import { formatMor } from '../../src/renderer/src/utils/coinValue.tsx';
 import {
   isSecureModel,
@@ -99,6 +103,67 @@ ok('local model skipped', !merged.some((m) => m.Id === 'local'));
 ok('m1 present with a bid', merged.find((m) => m.Id === 'm1')?.bids?.length === 1);
 ok('bid gets ProviderData attached', !!merged.find((m) => m.Id === 'm1')?.bids[0]?.ProviderData);
 ok('model with only an unmatched-provider bid dropped (m2)', !merged.some((m) => m.Id === 'm2'));
+
+// ---- earlyCloseLock: what the Close button costs you -----------------------
+// Modelled on a typical on-chain early close (Base mainnet), where
+// a user closed a session well before it ended and part of the stake silently vanished
+// for a day. The values are chain-derived and match no session, but their
+// magnitudes and the used-share arithmetic are the chain's, so this pins
+// the contract's behaviour without carrying any wallet's history: stake 229.508381 MOR,
+// openedAt 1787872655, endsAt 1787873854 (1199s), closedAt 1787872961 (306s in).
+console.log('');
+console.log('queries: earlyCloseLock (the Close button warning)');
+{
+  const FIXTURE = {
+    Stake: '229508381291933645347',
+    OpenedAt: 1787872655,
+    EndsAt: 1787873854,
+  };
+  const atClose = earlyCloseLock(FIXTURE, 1787872961);
+  ok('fixture session: priced', atClose.known && atClose.isEarly);
+  // This model withholds no fee: the stake splits in two, a locked share
+  // and an immediate refund, and the two must sum back to it. The predicted
+  // lock must land ON the used share, not near it.
+  ok(
+    `fixture session: locks ~58.5734 MOR (got ${weiToMor(atClose.lockedWei, 4)})`,
+    weiToMor(atClose.lockedWei, 4) === '58.5734',
+  );
+  ok(
+    `fixture session: returns ~170.9349 MOR (got ${weiToMor(atClose.returnedWei, 4)})`,
+    weiToMor(atClose.returnedWei, 4) === '170.9349',
+  );
+  // The lock is the ONLY thing the user can avoid, and waiting is how.
+  ok('fixture session: nothing is lost — locked + returned == stake',
+    atClose.lockedWei + atClose.returnedWei === BigInt(FIXTURE.Stake));
+  // startOfDay(1787872961) = 1787788800 -> unlock 1787875200
+  ok('fixture session: unlock is startOfDay(close) + 1 day', atClose.unlockAt === 1787875200);
+
+  // The good path: waiting until endsAt locks NOTHING. This is the asymmetry
+  // the warning exists to tell the user about, so it must be pinned.
+  const atEnd = earlyCloseLock(FIXTURE, 1787873854);
+  ok('closing AT endsAt locks nothing', atEnd.known && !atEnd.isEarly && atEnd.lockedWei === 0n);
+  ok('closing at endsAt returns the whole stake', atEnd.returnedWei === BigInt(FIXTURE.Stake));
+  const after = earlyCloseLock(FIXTURE, 1787873854 + 999);
+  ok('closing AFTER endsAt locks nothing', !after.isEarly && after.lockedWei === 0n);
+
+  // Monotonic: the longer you wait (within the session) the more is locked.
+  const early = earlyCloseLock(FIXTURE, 1787872655 + 30);
+  ok('locks less 30s in than 306s in', early.lockedWei < atClose.lockedWei);
+  ok('locking is proportional at the halfway point',
+    earlyCloseLock({ Stake: '1000', OpenedAt: 1787788800, EndsAt: 1787788800 + 100 }, 1787788800 + 50)
+      .lockedWei === 500n);
+
+  // An unpriceable session must produce NO number rather than a wrong one — a
+  // fabricated MOR figure on a money warning is worse than no warning.
+  ok('missing Stake -> not known', !earlyCloseLock({ OpenedAt: 1, EndsAt: 2 }, 1).known);
+  ok('missing EndsAt -> not known', !earlyCloseLock({ Stake: '1', OpenedAt: 1 }, 1).known);
+  ok('null session -> not known', !earlyCloseLock(null, 1).known);
+  ok('zero stake -> not known', !earlyCloseLock({ Stake: '0', OpenedAt: 1, EndsAt: 2 }, 1).known);
+  ok('endsAt <= openedAt -> not known',
+    !earlyCloseLock({ Stake: '10', OpenedAt: 500, EndsAt: 500 }, 400).known);
+  ok('lock never exceeds the stake',
+    earlyCloseLock({ Stake: '100', OpenedAt: 1787788800, EndsAt: 1787788801 }, 1787788800).lockedWei <= 100n);
+}
 
 console.log('');
 console.log(`LOGIC CHECKS: ${pass} passed, ${fail} failed`);

@@ -63,6 +63,10 @@ func (c *BlockchainController) RegisterRoutes(r interfaces.Router) {
 	// sessions
 	r.GET("/proxy/sessions/:id/providerClaimableBalance", c.authConf.CheckAuth("get_sessions"), c.getProviderClaimableBalance)
 	r.POST("/proxy/sessions/:id/providerClaim", c.authConf.CheckAuth("session_provider_claim"), c.claimProviderBalance)
+	// Stake time-locked by closing sessions EARLY. The Diamond has always had
+	// getUserStakesOnHold/withdrawUserStakes; nothing ever published them, so the
+	// money was invisible to the UI and unreachable by the user.
+	r.GET("/blockchain/stakes/on-hold", c.authConf.CheckAuth("get_balance"), c.getStakesOnHold)
 	r.GET("/blockchain/sessions/user", c.authConf.CheckAuth("get_sessions"), c.getSessionsForUser)
 	r.GET("/blockchain/sessions/user/ids", c.authConf.CheckAuth("get_sessions"), c.getSessionsIdsForUser)
 	r.GET("/blockchain/sessions/provider", c.authConf.CheckAuth("get_sessions"), c.getSessionsForProvider)
@@ -85,6 +89,27 @@ func (c *BlockchainController) RegisterRoutes(r interfaces.Router) {
 //	@Success		200	{object}	structs.BalanceRes
 //	@Security		BasicAuth
 //	@Router			/proxy/sessions/{id}/providerClaimableBalance [get]
+// GetStakesOnHold godoc
+//
+//	@Summary		Get stake on hold from early session closes
+//	@Description	MOR time-locked by closing sessions before they ended. `available` has matured and is swept home automatically by the stake auto-claimer; `hold` is still locked (released a day after the UTC day the session was closed).
+//	@Tags			wallet
+//	@Produce		json
+//	@Success		200	{object}	structs.StakesOnHoldRes
+//	@Router			/blockchain/stakes/on-hold [get]
+func (c *BlockchainController) getStakesOnHold(ctx *gin.Context) {
+	available, hold, err := c.service.GetUserStakesOnHold(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, structs.ErrRes{Error: err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, structs.StakesOnHoldRes{
+		Available: &lib.BigInt{Int: *available},
+		Hold:      &lib.BigInt{Int: *hold},
+	})
+}
+
 func (c *BlockchainController) getProviderClaimableBalance(ctx *gin.Context) {
 	var params structs.PathHex32ID
 	err := ctx.ShouldBindUri(&params)
