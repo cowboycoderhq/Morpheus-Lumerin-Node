@@ -25,6 +25,7 @@
     "start": "electron-vite preview",
     "dev": "electron-vite --inspect --sourcemap dev",
     "build": "npm run typecheck && electron-vite build",
+    "app": "yarn install && node scripts/build-app.mjs",
     "postinstall": "node scripts/ensure-env.mjs && patch-package && electron-builder install-app-deps || true",
     "build:unpack": "npm run build && electron-builder --config electron.builder.config.ts --dir",
     "build:win": "electron-vite build && electron-builder --config electron.builder.config.ts --win portable",

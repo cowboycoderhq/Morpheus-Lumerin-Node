@@ -60,35 +60,42 @@ You will need both **MOR** (for stake / fees / session payment) and **ETH on BAS
 
 ## Build the desktop app from source
 
-Requires **Node >= 20**. Install with **yarn**: `yarn.lock` is the committed,
-tested dependency tree and CI runs `yarn install --frozen-lockfile` against it.
-Do not run `npm install` here — it resolves a different tree from the one that
-is tested, and the mismatch shows up later as behaviour nobody can reproduce.
+Requires **Node >= 20** and **yarn**. One command builds an installer for the
+machine you are on and puts it in your Downloads folder:
 
 ```bash
 npm install -g yarn         # if you do not have it
 git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git
 cd Morpheus-Lumerin-Node/ui-desktop
-yarn install                # also creates .env from .env.example if missing
-yarn build:mac-arm64        # or build:mac-x64 / build:win / build:linux
+yarn app
 ```
 
-`yarn install` writes `ui-desktop/.env` from the committed `.env.example` when
-you do not already have one — mainnet defaults, edit it for testnet or your own
-endpoints. An existing `.env` is never touched. Without that file the build
-stops at `Invalid environment variables: ENV must have required property
-'BLOCKSCOUT_API_URL'`, which reads like a broken checkout rather than a missing
-file, so it is created for you rather than left as a step to remember.
+`yarn app` installs dependencies, creates `.env` from `.env.example` if you do
+not have one, picks the right build target for your OS and CPU, and copies the
+finished installer to `~/Downloads`. Nothing to choose and nothing to remember.
 
-The installer lands in `ui-desktop/dist/` as
-`mac-arm64-morpheus-app-<version>.dmg`.
+The build is **unsigned**, because signing needs an Apple Developer ID that only
+the publisher has. On macOS the first open is refused with "Apple cannot check
+it for malicious software" — right-click the app and choose **Open** to run it
+anyway. On first launch the app downloads its own services (proxy-router, IPFS,
+a local model), about 2GB, so give it a few minutes before the window is usable.
 
-**On macOS, a build you make yourself is not notarized.** It will run on the Mac
-that built it; on any other Mac, Gatekeeper refuses it with "Apple cannot check
-it for malicious software". That is expected, not a broken build — right-click
-the app and choose **Open** to run it anyway. Producing a DMG that opens
-anywhere requires an Apple Developer ID and notarization credentials
-(`ui-desktop/scripts/release.sh` does that, and only works for the signer).
+Install with **yarn**, not npm: `yarn.lock` is the committed, tested dependency
+tree and CI runs `yarn install --frozen-lockfile` against it. `npm install`
+resolves a different tree from the one that is tested.
+
+<details>
+<summary>Building a specific target by hand</summary>
+
+```bash
+yarn install
+yarn build:mac-arm64        # or build:mac-x64 / build:win-x64 / build:linux-x64
+```
+
+The installer lands in `ui-desktop/dist/`. `scripts/release.sh` is the signed
+and notarized path and works only for the publisher.
+
+</details>
 
 ### Run it without building
 
