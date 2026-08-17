@@ -14,7 +14,7 @@ import {
 } from '@tabler/icons-react';
 
 import withDashboardState from '../../store/hocs/withDashboardState';
-import { weiToMor, nextStakeReleaseAt } from '../../utils/marketplace';
+import { weiToMor, stakeReleaseSchedule } from '../../utils/marketplace';
 
 import TransactionModal from './tx-modal';
 import TxList from './tx-list/TxList';
@@ -510,27 +510,47 @@ const Dashboard = ({
     }
   }, [stakesOnHoldQuery.data]);
 
-  // "Returns automatically" was true but useless — it never said WHEN. The
-  // release time is not in the on-hold endpoint (it only sums amounts), so derive
-  // it from the sessions the dashboard already has: each early close frees at
-  // startOfDay(closedAt)+1day. A future release names the time; nothing pending
-  // means whatever is on hold has matured and the router is sweeping it now.
-  const onHoldReturns = useMemo(() => {
-    if (!onHoldMor) return null;
-    const next = nextStakeReleaseAt(
+  // "Returns automatically" was true but useless — it never said WHEN, and worse,
+  // stake locked by DIFFERENT early closes frees on different days, so a single
+  // time would be a lie for every chunk but the first. The release schedule is
+  // not in the on-hold endpoint (it only sums amounts), so it is derived from the
+  // sessions the dashboard already has: each early close frees at
+  // startOfDay(closedAt)+1day, grouped by day.
+  //
+  // The lines fully account for the on-hold total: whatever has already matured
+  // (endpoint `available`, authoritative — the auto-claimer is sweeping it, and
+  // it reflects entries the contract already popped) is "returning now", and each
+  // future tranche is its own dated line. `available` comes from the endpoint, not
+  // sessions, precisely because a swept entry still looks locked in the session
+  // list; future tranches are never popped, so their session-derived amounts hold.
+  const onHoldLines = useMemo(() => {
+    if (!onHoldMor) return [];
+    const lines = [];
+    let available = 0n;
+    try {
+      available = BigInt(stakesOnHoldQuery.data?.available ?? 0);
+    } catch {
+      available = 0n;
+    }
+    if (available > 0n) {
+      lines.push({ amount: weiToMor(available, 4), when: null });
+    }
+    const schedule = stakeReleaseSchedule(
       sessionsQuery.data,
       Math.floor(Date.now() / 1000),
     );
-    if (next === null) return 'Returning to your wallet now';
-    const when = new Date(next * 1000).toLocaleString(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-    return `Returns ${when}, automatically`;
-  }, [onHoldMor, sessionsQuery.data]);
+    for (const t of schedule) {
+      const when = new Date(t.releaseAt * 1000).toLocaleString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      lines.push({ amount: weiToMor(t.lockedWei, 4), when });
+    }
+    return lines;
+  }, [onHoldMor, stakesOnHoldQuery.data, sessionsQuery.data]);
 
   const staked = useMemo(
     () => computeStakedFunds(sessionsQuery.data),
@@ -645,10 +665,29 @@ const Dashboard = ({
                 <StatValue>
                   {onHoldMor} {morSymbol}
                 </StatValue>
-                {onHoldReturns && (
+                {/* One release -> a plain sentence. Several -> a line per chunk,
+                    each with its own amount and time, because they do not all
+                    come back at once. `when === null` means already matured. */}
+                {onHoldLines.length <= 1 ? (
                   <StatSub data-testid="stakes-on-hold-returns">
-                    {onHoldReturns}
+                    {onHoldLines.length === 0
+                      ? 'Returns automatically'
+                      : onHoldLines[0].when === null
+                        ? 'Returning to your wallet now'
+                        : `Returns ${onHoldLines[0].when}, automatically`}
                   </StatSub>
+                ) : (
+                  <div data-testid="stakes-on-hold-returns">
+                    <StatSub as="div" style={{ marginBottom: '0.2rem' }}>
+                      Returns in parts, automatically:
+                    </StatSub>
+                    {onHoldLines.map((line, i) => (
+                      <StatSub as="div" key={i}>
+                        {line.amount} {morSymbol} —{' '}
+                        {line.when === null ? 'now' : line.when}
+                      </StatSub>
+                    ))}
+                  </div>
                 )}
               </StatText>
             </StatCard>
