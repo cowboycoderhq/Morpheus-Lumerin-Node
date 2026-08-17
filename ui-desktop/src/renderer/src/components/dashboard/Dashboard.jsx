@@ -14,7 +14,7 @@ import {
 } from '@tabler/icons-react';
 
 import withDashboardState from '../../store/hocs/withDashboardState';
-import { weiToMor } from '../../utils/marketplace';
+import { weiToMor, nextStakeReleaseAt } from '../../utils/marketplace';
 
 import TransactionModal from './tx-modal';
 import TxList from './tx-list/TxList';
@@ -314,6 +314,14 @@ const StatValue = styled.span`
   font-variant-numeric: tabular-nums;
 `;
 
+// When the on-hold stake frees. A money surface, so no colour-only signalling —
+// the words carry it.
+const StatSub = styled.span`
+  font-size: 1.2rem;
+  color: ${(p) => p.theme.colors.textSecondary};
+  margin-top: 0.2rem;
+`;
+
 // Navigation actions (Receive / Staking Dashboard) — not a money surface, so
 // the app's usual glass chrome applies.
 const ActionTile = styled.button`
@@ -502,6 +510,28 @@ const Dashboard = ({
     }
   }, [stakesOnHoldQuery.data]);
 
+  // "Returns automatically" was true but useless — it never said WHEN. The
+  // release time is not in the on-hold endpoint (it only sums amounts), so derive
+  // it from the sessions the dashboard already has: each early close frees at
+  // startOfDay(closedAt)+1day. A future release names the time; nothing pending
+  // means whatever is on hold has matured and the router is sweeping it now.
+  const onHoldReturns = useMemo(() => {
+    if (!onHoldMor) return null;
+    const next = nextStakeReleaseAt(
+      sessionsQuery.data,
+      Math.floor(Date.now() / 1000),
+    );
+    if (next === null) return 'Returning to your wallet now';
+    const when = new Date(next * 1000).toLocaleString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    return `Returns ${when}, automatically`;
+  }, [onHoldMor, sessionsQuery.data]);
+
   const staked = useMemo(
     () => computeStakedFunds(sessionsQuery.data),
     [sessionsQuery.data],
@@ -611,10 +641,15 @@ const Dashboard = ({
                 <IconClock size={22} />
               </StatIcon>
               <StatText>
-                <StatLabel>On Hold (returns automatically)</StatLabel>
+                <StatLabel>On Hold</StatLabel>
                 <StatValue>
                   {onHoldMor} {morSymbol}
                 </StatValue>
+                {onHoldReturns && (
+                  <StatSub data-testid="stakes-on-hold-returns">
+                    {onHoldReturns}
+                  </StatSub>
+                )}
               </StatText>
             </StatCard>
           )}
