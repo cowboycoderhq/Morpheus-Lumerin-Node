@@ -465,6 +465,18 @@ const ModelSelectionModal = ({
     handleClose();
   };
 
+  // One place for the row props so the sectioned and flat views cannot drift.
+  const renderRow = (m: any) => (
+    <ModelRow
+      key={m.Id}
+      model={m}
+      symbol={symbol}
+      priceMode={metaReady ? priceMode : 'perSec'}
+      meta={meta}
+      onChangeModel={handlePick}
+    />
+  );
+
   // Section buckets: Local → TEE → Marketplace.
   // TEE models surface in their own section (not duplicated under Marketplace)
   // so privacy-sensitive options are visually unambiguous.
@@ -625,77 +637,68 @@ const ModelSelectionModal = ({
             </EmptyState>
           )}
 
-          {localModels.length > 0 && (
-            <Section>
-              <SectionLabel>
-                <IconHome size={13} stroke={2} />
-                Local
-              </SectionLabel>
-              <SectionList>
-                {localModels.map((m: any) => (
-                  <ModelRow
-                    key={m.Id}
-                    model={m}
-                    symbol={symbol}
-                    priceMode={metaReady ? priceMode : 'perSec'}
-                    meta={meta}
-                    onChangeModel={handlePick}
-                  />
-                ))}
-              </SectionList>
-            </Section>
-          )}
+          {/* Standard = the browse view: Local / Secure / Marketplace sections.
+              Any explicit sort (cheapest / most providers) is a GLOBAL ranking,
+              so the sections are flattened into one ordered list — otherwise the
+              sort only reorders within each section and the cheapest model can
+              sit below every local/secure one. Each row keeps its own local/
+              secure badge, so nothing is lost by dropping the headers. */}
+          {sortMode === 'standard' ? (
+            <>
+              {localModels.length > 0 && (
+                <Section>
+                  <SectionLabel>
+                    <IconHome size={13} stroke={2} />
+                    Local
+                  </SectionLabel>
+                  <SectionList>{localModels.map(renderRow)}</SectionList>
+                </Section>
+              )}
 
-          {teeModels.length > 0 && (
-            <Section>
-              <SectionLabel>
-                <IconShieldLock size={13} stroke={2} />
-                Secure&nbsp;
-                <SectionHint>(Trusted Execution Environment)</SectionHint>
-                <InfoToggle
-                  type="button"
-                  aria-expanded={showTeeInfo}
-                  onClick={() => setShowTeeInfo((v) => !v)}
-                >
-                  <IconInfoCircle size={13} stroke={2} />
-                  What is this?
-                </InfoToggle>
-              </SectionLabel>
-              {showTeeInfo && <InfoPanel>{SECURE_MODE_INFO}</InfoPanel>}
-              <SectionList>
-                {teeModels.map((m: any) => (
-                  <ModelRow
-                    key={m.Id}
-                    model={m}
-                    symbol={symbol}
-                    priceMode={metaReady ? priceMode : 'perSec'}
-                    meta={meta}
-                    onChangeModel={handlePick}
-                  />
-                ))}
-              </SectionList>
-            </Section>
-          )}
+              {teeModels.length > 0 && (
+                <Section>
+                  <SectionLabel>
+                    <IconShieldLock size={13} stroke={2} />
+                    Secure&nbsp;
+                    <SectionHint>(Trusted Execution Environment)</SectionHint>
+                    <InfoToggle
+                      type="button"
+                      aria-expanded={showTeeInfo}
+                      onClick={() => setShowTeeInfo((v) => !v)}
+                    >
+                      <IconInfoCircle size={13} stroke={2} />
+                      What is this?
+                    </InfoToggle>
+                  </SectionLabel>
+                  {showTeeInfo && <InfoPanel>{SECURE_MODE_INFO}</InfoPanel>}
+                  <SectionList>{teeModels.map(renderRow)}</SectionList>
+                </Section>
+              )}
 
-          {remoteModels.length > 0 && (
-            <Section>
-              <SectionLabel>
-                <IconWorld size={13} stroke={2} />
-                Marketplace
-              </SectionLabel>
-              <SectionList>
-                {remoteModels.map((m: any) => (
-                  <ModelRow
-                    key={m.Id}
-                    model={m}
-                    symbol={symbol}
-                    priceMode={metaReady ? priceMode : 'perSec'}
-                    meta={meta}
-                    onChangeModel={handlePick}
-                  />
-                ))}
-              </SectionList>
-            </Section>
+              {remoteModels.length > 0 && (
+                <Section>
+                  <SectionLabel>
+                    <IconWorld size={13} stroke={2} />
+                    Marketplace
+                  </SectionLabel>
+                  <SectionList>{remoteModels.map(renderRow)}</SectionList>
+                </Section>
+              )}
+            </>
+          ) : (
+            visible.length > 0 && (
+              <Section>
+                <SectionLabel>
+                  <IconWorld size={13} stroke={2} />
+                  {sortMode === 'cheapest'
+                    ? 'All models · cheapest first'
+                    : 'All models · most providers first'}
+                </SectionLabel>
+                <SectionList data-testid="flat-model-list">
+                  {visible.map(renderRow)}
+                </SectionList>
+              </Section>
+            )
           )}
         </Body>
       </Layout>
