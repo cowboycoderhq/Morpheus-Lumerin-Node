@@ -124,19 +124,20 @@ one path on this fork that is actually current.
 
 ## Build the desktop app from source
 
-Requires **Node >= 20** and **yarn**. One command builds an installer for the
+Requires **Node >= 20** — nothing else. One line builds an installer for the
 machine you are on and puts it in your Downloads folder:
 
 ```bash
-npm install -g yarn         # if you do not have it
-git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git
-cd Morpheus-Lumerin-Node/ui-desktop
-yarn app
+git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git && cd Morpheus-Lumerin-Node/ui-desktop && npx --yes yarn@1.22.22 app
 ```
 
-`yarn app` installs dependencies, creates `.env` from `.env.example` if you do
-not have one, picks the right build target for your OS and CPU, and copies the
-finished installer to `~/Downloads`. Nothing to choose and nothing to remember.
+`npx` runs the exact Yarn release pinned in `ui-desktop/package.json`
+(`packageManager`) without installing anything globally, so there is no
+separate `npm install -g yarn` step and no drift toward whatever Yarn
+happens to already be on your machine. That single `yarn app` then installs
+dependencies, creates `.env` from `.env.example` if you do not have one, picks
+the right build target for your OS and CPU, and copies the finished installer
+to `~/Downloads`. Nothing to choose and nothing to remember.
 
 The build is **unsigned**, because signing needs an Apple Developer ID that only
 the publisher has. On macOS the first open is refused with "Apple cannot check
