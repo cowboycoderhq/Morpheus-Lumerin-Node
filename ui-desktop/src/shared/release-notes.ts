@@ -10,6 +10,15 @@
 // notice or do; a changelog of refactors belongs in the git log. Actions are
 // declarative so the modal stays dumb and this file stays the only thing anyone
 // edits at release time.
+//
+// TRUE FIRST RUN IS A DIFFERENT AUDIENCE. Every entry above is a delta —
+// "no longer", "used to", "fixed since" — written for someone who already has
+// a baseline to compare against. Someone installing for the first time has no
+// such baseline: RELEASE_NOTES[0] alone would hand them a bug-fix headline
+// ("setup knows the difference between slow and stuck") and nothing about
+// what the app actually does. FIRST_RUN_NOTE, below, is that summary, in
+// present tense, for that reader — update it when a distributable capability
+// lands, not on every patch release.
 // ============================================================================
 
 export type ReleaseAction =
@@ -174,12 +183,55 @@ export const RELEASE_NOTES: ReleaseNote[] = [
 ];
 
 /**
+ * Shown instead of RELEASE_NOTES[0] on a true first run — see the file header
+ * for why. `version` is filled in by `notesToShow` at read time so this stays
+ * correct without an edit on every release; write it here with a placeholder
+ * and it will be overwritten.
+ */
+export const FIRST_RUN_NOTE: ReleaseNote = {
+  version: '',
+  headline: 'What this app actually does.',
+  items: [
+    {
+      title: "Set a session's length and cost yourself",
+      body:
+        'Type how long you want it — "1 day", "2 years" — and it stakes as one block, up to the network\'s 7-day cap. Ask for longer than that and it chains automatically, seamlessly or with a brief gap between blocks, your choice.',
+    },
+    {
+      title: 'Pick your own provider',
+      body:
+        'See who you would be paying, and choose them directly, instead of letting the network auto-assign one for you.',
+    },
+    {
+      title: 'Your terminal, not just this window',
+      body:
+        'Pin models in Settings and they show up in grok\'s and opencode\'s model picker. Use one without a session open and this window comes forward with the price, the provider and the length for you to approve — no model ever decides to spend on its own.',
+    },
+    {
+      title: 'Know what your balance actually covers',
+      body:
+        'If your MOR balance cannot afford every provider you are about to use, the app tells you which ones it covers before you commit, not after.',
+    },
+    {
+      title: 'Closing early tells you the real cost',
+      body:
+        'A session closed before it ends locks the unused stake for about a day. The app says so plainly, in MOR, before you click — not as a surprise afterward.',
+    },
+  ],
+  actions: [
+    { kind: 'pin-models', label: 'Pin my models' },
+    { kind: 'install-grok', label: 'Install grok' },
+  ],
+};
+
+/**
  * Which notes to show, given what they last saw.
  *
  * Everything newer than `lastSeen`, so a tester who skips a build still learns
- * what arrived in it. Never anything on a FIRST run: with nothing stored we
- * show only the current version's note, because a brand-new user reading three
- * releases of history learns nothing about the app they just installed.
+ * what arrived in it. On a FIRST run, with nothing stored, we show
+ * FIRST_RUN_NOTE instead of RELEASE_NOTES[0] — a brand-new user has no
+ * baseline for a delta-style entry ("no longer", "fixed since"), so they get
+ * the standing summary of what the app does, not the latest patch's changelog.
  */
 export function notesToShow(
   currentVersion: string,
@@ -188,11 +240,12 @@ export function notesToShow(
 ): ReleaseNote[] {
   if (lastSeen === currentVersion) return [];
   const current = notes.find((n) => n.version === currentVersion);
-  if (!lastSeen) return current ? [current] : [];
+  if (!lastSeen) return [{ ...FIRST_RUN_NOTE, version: currentVersion }];
 
   const seenAt = notes.findIndex((n) => n.version === lastSeen);
-  // An unrecognised stored version (downgrade, or a build with no note) is
-  // treated like a first run rather than replaying the entire history.
+  // An unrecognised stored version (downgrade, or a build with no note) still
+  // means they've used the app before — unlike true first run, they get the
+  // current version's own note rather than replaying the entire history.
   if (seenAt === -1) return current ? [current] : [];
   return notes.slice(0, seenAt);
 }
