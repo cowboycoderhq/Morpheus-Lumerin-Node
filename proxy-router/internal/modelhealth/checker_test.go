@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/aiengine"
+	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/attestation"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/blockchainapi/structs"
 	gcs "github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/chatstorage/genericchatstorage"
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/config"
@@ -71,6 +72,31 @@ type mockDeps struct {
 	modelIDs   []common.Hash
 	adapter    aiengine.AIEngineStream
 	adapterErr error
+	teeStatus  TeeStatusProvider
+}
+
+// mockTeeStatus returns canned backend attestation snapshots per model and
+// records ReattestBackend calls. When onReattest is set, it is applied to the
+// snapshot map before the checker reads the status back.
+type mockTeeStatus struct {
+	snapshots  map[string]*attestation.BackendAttestationSnapshot
+	reattested map[string]int
+	onReattest func(modelID string)
+}
+
+func (m *mockTeeStatus) GetStatus(modelID string) *attestation.BackendAttestationSnapshot {
+	return m.snapshots[modelID]
+}
+
+func (m *mockTeeStatus) ReattestBackend(ctx context.Context, modelID string, endpoint string) error {
+	if m.reattested == nil {
+		m.reattested = make(map[string]int)
+	}
+	m.reattested[modelID]++
+	if m.onReattest != nil {
+		m.onReattest(modelID)
+	}
+	return nil
 }
 
 func (m *mockDeps) GetActiveBidsByProvider(ctx context.Context, provider common.Address, offset *big.Int, limit uint8, order registries.Order) ([]*structs.Bid, error) {
@@ -155,7 +181,8 @@ func newTestChecker(deps *mockDeps) *Checker {
 		Bids:         deps,
 		Models:       deps,
 		ModelConfigs: deps,
-	}, time.Hour, time.Second, 0, lib.NewTestLogger())
+		TeeStatus:    deps.teeStatus,
+	}, time.Hour, time.Second, 0, 0, lib.NewTestLogger())
 }
 
 func reportByID(t *testing.T, reports []system.ModelHealthReport, modelID common.Hash) system.ModelHealthReport {
@@ -326,7 +353,7 @@ func TestCheckAllRateLimited(t *testing.T) {
 	checker.checkAll(context.Background(), common.Address{})
 
 	llm := reportByID(t, checker.GetReports(), modelLLM)
-	require.Equal(t, system.ModelHealthStatusUnhealthy, llm.Status)
+	require.Equal(t, system.ModelHealthStatusDegraded, llm.Status)
 	require.Equal(t, system.ModelHealthErrorRateLimited, llm.ErrorKind)
 	require.Equal(t, 429, llm.HttpStatus)
 }
@@ -421,6 +448,263 @@ func TestRunConsumesTrigger(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+func TestCheckAllTeeModelAttestationGate(t *testing.T) {
+	teeDeps := func(status TeeStatusProvider) *mockDeps {
+		return &mockDeps{
+			bids:      []*structs.Bid{bidFor(modelLLM)},
+			tags:      map[common.Hash][]string{modelLLM: {"llm", "tee"}},
+			modelIDs:  []common.Hash{modelLLM},
+			adapter:   &mathSolvingAdapter{},
+			teeStatus: status,
+		}
+	}
+
+	t.Run("failed attestation reports tee_unverified and skips the probe", func(t *testing.T) {
+		deps := teeDeps(&mockTeeStatus{snapshots: map[string]*attestation.BackendAttestationSnapshot{
+			modelLLM.Hex(): {ModelID: modelLLM.Hex(), Status: attestation.StatusFailed},
+		}})
+		checker := newTestChecker(deps)
+		checker.checkAll(context.Background(), common.Address{})
+
+		llm := reportByID(t, checker.GetReports(), modelLLM)
+		require.Equal(t, system.ModelHealthStatusTeeUnverified, llm.Status)
+		require.Equal(t, system.ModelHealthErrorTeeAttestation, llm.ErrorKind)
+		require.Nil(t, llm.PromptCorrect, "backend must not be probed when TEE attestation failed")
+	})
+
+	t.Run("missing snapshot reports tee_unverified", func(t *testing.T) {
+		deps := teeDeps(&mockTeeStatus{snapshots: map[string]*attestation.BackendAttestationSnapshot{}})
+		checker := newTestChecker(deps)
+		checker.checkAll(context.Background(), common.Address{})
+
+		llm := reportByID(t, checker.GetReports(), modelLLM)
+		require.Equal(t, system.ModelHealthStatusTeeUnverified, llm.Status)
+	})
+
+	t.Run("passed attestation probes normally", func(t *testing.T) {
+		deps := teeDeps(&mockTeeStatus{snapshots: map[string]*attestation.BackendAttestationSnapshot{
+			modelLLM.Hex(): {ModelID: modelLLM.Hex(), Status: attestation.StatusPassed},
+		}})
+		checker := newTestChecker(deps)
+		checker.checkAll(context.Background(), common.Address{})
+
+		llm := reportByID(t, checker.GetReports(), modelLLM)
+		require.Equal(t, system.ModelHealthStatusHealthy, llm.Status)
+		require.NotNil(t, llm.PromptCorrect)
+	})
+
+	t.Run("first sweep skips re-attestation, later sweeps re-attest regardless of status", func(t *testing.T) {
+		tee := &mockTeeStatus{snapshots: map[string]*attestation.BackendAttestationSnapshot{
+			modelLLM.Hex(): {ModelID: modelLLM.Hex(), Status: attestation.StatusPassed},
+		}}
+		checker := newTestChecker(teeDeps(tee))
+
+		checker.checkAll(context.Background(), common.Address{})
+		require.Zero(t, tee.reattested[modelLLM.Hex()], "first sweep must rely on the startup attestation")
+
+		checker.checkAll(context.Background(), common.Address{})
+		checker.checkAll(context.Background(), common.Address{})
+		require.Equal(t, 2, tee.reattested[modelLLM.Hex()], "re-attestation must run on every later sweep, even when passed")
+	})
+
+	t.Run("failed attestation self-heals when re-attestation passes", func(t *testing.T) {
+		tee := &mockTeeStatus{snapshots: map[string]*attestation.BackendAttestationSnapshot{
+			modelLLM.Hex(): {ModelID: modelLLM.Hex(), Status: attestation.StatusFailed},
+		}}
+		tee.onReattest = func(modelID string) {
+			tee.snapshots[modelID] = &attestation.BackendAttestationSnapshot{ModelID: modelID, Status: attestation.StatusPassed}
+		}
+		checker := newTestChecker(teeDeps(tee))
+		checker.firstTeeSweepDone = true
+
+		checker.checkAll(context.Background(), common.Address{})
+
+		llm := reportByID(t, checker.GetReports(), modelLLM)
+		require.Equal(t, system.ModelHealthStatusHealthy, llm.Status, "a stale startup failure must heal once re-attestation passes")
+		require.Equal(t, 1, tee.reattested[modelLLM.Hex()])
+	})
+
+	t.Run("no TEE status provider probes normally", func(t *testing.T) {
+		deps := teeDeps(nil)
+		checker := newTestChecker(deps)
+		checker.checkAll(context.Background(), common.Address{})
+
+		llm := reportByID(t, checker.GetReports(), modelLLM)
+		require.Equal(t, system.ModelHealthStatusHealthy, llm.Status)
+	})
+}
+
+func TestReportPromptFailureFlipsAfterThreshold(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelLLM)},
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}},
+		modelIDs: []common.Hash{modelLLM},
+		adapter:  &mathSolvingAdapter{},
+	}
+	checker := newTestChecker(deps) // threshold defaults to 3
+	checker.checkAll(context.Background(), common.Address{})
+	require.Equal(t, system.ModelHealthStatusHealthy, reportByID(t, checker.GetReports(), modelLLM).Status)
+
+	checker.ReportPromptFailure(modelLLM, 0)
+	checker.ReportPromptFailure(modelLLM, 0)
+	require.Equal(t, system.ModelHealthStatusHealthy, reportByID(t, checker.GetReports(), modelLLM).Status,
+		"below the threshold the status must not change")
+
+	checker.ReportPromptFailure(modelLLM, 0)
+	llm := reportByID(t, checker.GetReports(), modelLLM)
+	require.Equal(t, system.ModelHealthStatusUnhealthy, llm.Status)
+	require.Equal(t, system.ModelHealthErrorSessionErrors, llm.ErrorKind)
+}
+
+func TestReportPromptSuccessResetsStreakAndHeals(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelLLM)},
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}},
+		modelIDs: []common.Hash{modelLLM},
+		adapter:  &mathSolvingAdapter{},
+	}
+	checker := newTestChecker(deps)
+	checker.checkAll(context.Background(), common.Address{})
+
+	// success in the middle of a streak resets the counter
+	checker.ReportPromptFailure(modelLLM, 0)
+	checker.ReportPromptFailure(modelLLM, 0)
+	checker.ReportPromptSuccess(modelLLM)
+	checker.ReportPromptFailure(modelLLM, 0)
+	checker.ReportPromptFailure(modelLLM, 0)
+	require.Equal(t, system.ModelHealthStatusHealthy, reportByID(t, checker.GetReports(), modelLLM).Status)
+
+	// third consecutive failure flips it...
+	checker.ReportPromptFailure(modelLLM, 0)
+	require.Equal(t, system.ModelHealthStatusUnhealthy, reportByID(t, checker.GetReports(), modelLLM).Status)
+
+	// ...and a successful real prompt heals it right away
+	checker.ReportPromptSuccess(modelLLM)
+	llm := reportByID(t, checker.GetReports(), modelLLM)
+	require.Equal(t, system.ModelHealthStatusHealthy, llm.Status)
+	require.Empty(t, llm.ErrorKind)
+	require.NotZero(t, llm.LastHealthy)
+}
+
+func TestHealthyProbeResetsFailureStreak(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelLLM)},
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}},
+		modelIDs: []common.Hash{modelLLM},
+		adapter:  &mathSolvingAdapter{},
+	}
+	checker := newTestChecker(deps)
+
+	checker.ReportPromptFailure(modelLLM, 0)
+	checker.ReportPromptFailure(modelLLM, 0)
+
+	// a healthy scheduled sweep clears the streak: two more failures stay
+	// below the threshold again
+	checker.checkAll(context.Background(), common.Address{})
+	checker.ReportPromptFailure(modelLLM, 0)
+	checker.ReportPromptFailure(modelLLM, 0)
+	require.Equal(t, system.ModelHealthStatusHealthy, reportByID(t, checker.GetReports(), modelLLM).Status)
+}
+
+func TestReportPromptFailureRateLimitedStreakFlipsDegraded(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelLLM)},
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}},
+		modelIDs: []common.Hash{modelLLM},
+		adapter:  &mathSolvingAdapter{},
+	}
+	checker := newTestChecker(deps) // threshold defaults to 3
+	checker.checkAll(context.Background(), common.Address{})
+
+	// a streak that is pure upstream throttling flips to degraded, not unhealthy
+	checker.ReportPromptFailure(modelLLM, 429)
+	checker.ReportPromptFailure(modelLLM, 429)
+	checker.ReportPromptFailure(modelLLM, 429)
+
+	llm := reportByID(t, checker.GetReports(), modelLLM)
+	require.Equal(t, system.ModelHealthStatusDegraded, llm.Status)
+	require.Equal(t, system.ModelHealthErrorSessionErrors, llm.ErrorKind)
+	require.Equal(t, 429, llm.HttpStatus)
+
+	// a successful real prompt heals session-flipped degraded right away
+	checker.ReportPromptSuccess(modelLLM)
+	llm = reportByID(t, checker.GetReports(), modelLLM)
+	require.Equal(t, system.ModelHealthStatusHealthy, llm.Status)
+	require.Empty(t, llm.ErrorKind)
+	require.Zero(t, llm.HttpStatus)
+}
+
+func TestReportPromptFailureMixedStreakFlipsUnhealthy(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelLLM)},
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}},
+		modelIDs: []common.Hash{modelLLM},
+		adapter:  &mathSolvingAdapter{},
+	}
+	checker := newTestChecker(deps)
+	checker.checkAll(context.Background(), common.Address{})
+
+	// any non-429 failure in the streak means real errors, not just throttling
+	checker.ReportPromptFailure(modelLLM, 429)
+	checker.ReportPromptFailure(modelLLM, 500)
+	checker.ReportPromptFailure(modelLLM, 429)
+
+	llm := reportByID(t, checker.GetReports(), modelLLM)
+	require.Equal(t, system.ModelHealthStatusUnhealthy, llm.Status)
+	require.Equal(t, system.ModelHealthErrorSessionErrors, llm.ErrorKind)
+}
+
+func TestReportPromptFailureDegradedEscalatesToUnhealthy(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelLLM)},
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}},
+		modelIDs: []common.Hash{modelLLM},
+		adapter:  &mathSolvingAdapter{},
+	}
+	checker := newTestChecker(deps)
+	checker.checkAll(context.Background(), common.Address{})
+
+	checker.ReportPromptFailure(modelLLM, 429)
+	checker.ReportPromptFailure(modelLLM, 429)
+	checker.ReportPromptFailure(modelLLM, 429)
+	require.Equal(t, system.ModelHealthStatusDegraded, reportByID(t, checker.GetReports(), modelLLM).Status)
+
+	// a non-429 failure joining the still-open streak escalates to unhealthy
+	checker.ReportPromptFailure(modelLLM, 500)
+	require.Equal(t, system.ModelHealthStatusUnhealthy, reportByID(t, checker.GetReports(), modelLLM).Status)
+}
+
+func TestReportPromptFailureWithoutPriorReport(t *testing.T) {
+	checker := newTestChecker(&mockDeps{})
+
+	for i := 0; i < DefaultMaxConsecutiveErrors; i++ {
+		checker.ReportPromptFailure(modelLLM, 0)
+	}
+
+	llm := reportByID(t, checker.GetReports(), modelLLM)
+	require.Equal(t, system.ModelHealthStatusUnhealthy, llm.Status)
+	require.Equal(t, system.ModelHealthErrorSessionErrors, llm.ErrorKind)
+	require.True(t, llm.HasActiveBid)
+}
+
+func TestReportTeeFailureImmediate(t *testing.T) {
+	deps := &mockDeps{
+		bids:     []*structs.Bid{bidFor(modelLLM)},
+		tags:     map[common.Hash][]string{modelLLM: {"llm"}},
+		modelIDs: []common.Hash{modelLLM},
+		adapter:  &mathSolvingAdapter{},
+	}
+	checker := newTestChecker(deps)
+	checker.checkAll(context.Background(), common.Address{})
+	require.Equal(t, system.ModelHealthStatusHealthy, reportByID(t, checker.GetReports(), modelLLM).Status)
+
+	checker.ReportTeeFailure(modelLLM)
+
+	llm := reportByID(t, checker.GetReports(), modelLLM)
+	require.Equal(t, system.ModelHealthStatusTeeUnverified, llm.Status)
+	require.Equal(t, system.ModelHealthErrorTeeAttestation, llm.ErrorKind)
 }
 
 func TestCheckAllBidsError(t *testing.T) {
