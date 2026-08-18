@@ -211,7 +211,14 @@ export class OpenAiCompatServer {
 
   async start(): Promise<void> {
     const cfg = this.deps.config();
-    const server = createServer((req, res) => {
+    this.server = await this.listenWithRetry(cfg.port);
+    this.deps.log?.(
+      `openai-compat: listening on http://127.0.0.1:${cfg.port}/v1`,
+    );
+  }
+
+  private newServer(): Server {
+    return createServer((req, res) => {
       this.handle(req, res).catch((e) => {
         this.deps.log?.(`openai-compat: unhandled ${String(e)}`);
         if (!res.headersSent) {
@@ -221,22 +228,47 @@ export class OpenAiCompatServer {
         }
       });
     });
+  }
 
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      // 127.0.0.1 explicitly — never 0.0.0.0. Combined with the Host check in
-      // admitRequest, this keeps the port off the network and out of reach of
-      // DNS rebinding.
-      server.listen(cfg.port, '127.0.0.1', () => {
-        server.removeListener('error', reject);
-        resolve();
+  // sync() does stop() then immediately start() on a config change or restart.
+  // stop()'s server.close(cb) callback fires once the OS handle is detached —
+  // but on a rapid rebind the same port has been observed to still answer
+  // EADDRINUSE for roughly a second afterward. Before this, that single
+  // transient race surfaced straight to the caller (setOpenAiApiConfig's
+  // catch), which a Settings toggle or a first-run auto-enable can retry from
+  // the outside — six external retries over 16 seconds were what a real setup
+  // freeze turned into, each one logged with no diagnostic content (see
+  // handleClientSideError). A few short internal retries absorb the same race
+  // in under two seconds without ever surfacing a failure the caller has to
+  // react to. A NEW http.Server per attempt — Node's 'error' event leaves the
+  // instance it fired on in an unspecified state, so it is not reused.
+  private async listenWithRetry(port: number, attempt = 0): Promise<Server> {
+    const MAX_ATTEMPTS = 4;
+    const BACKOFF_MS = [100, 300, 600, 1200];
+    const server = this.newServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        // 127.0.0.1 explicitly — never 0.0.0.0. Combined with the Host check
+        // in admitRequest, this keeps the port off the network and out of
+        // reach of DNS rebinding.
+        server.listen(port, '127.0.0.1', () => {
+          server.removeListener('error', reject);
+          resolve();
+        });
       });
-    });
-
-    this.server = server;
-    this.deps.log?.(
-      `openai-compat: listening on http://127.0.0.1:${cfg.port}/v1`,
-    );
+      return server;
+    } catch (e: any) {
+      server.close();
+      if (e?.code === 'EADDRINUSE' && attempt < MAX_ATTEMPTS - 1) {
+        this.deps.log?.(
+          `openai-compat: port ${port} still in use, retrying (${attempt + 1}/${MAX_ATTEMPTS})`,
+        );
+        await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt]));
+        return this.listenWithRetry(port, attempt + 1);
+      }
+      throw e;
+    }
   }
 
   async stop(): Promise<void> {
