@@ -128,7 +128,7 @@ Requires **Node >= 20** — nothing else. One line builds an installer for the
 machine you are on and puts it in your Downloads folder:
 
 ```bash
-git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git && cd Morpheus-Lumerin-Node/ui-desktop && npx --yes yarn@1.22.22 app
+git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git && cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
 ```
 
 `npx` runs the exact Yarn release pinned in `ui-desktop/package.json`
@@ -138,6 +138,15 @@ happens to already be on your machine. That single `yarn app` then installs
 dependencies, creates `.env` from `.env.example` if you do not have one, picks
 the right build target for your OS and CPU, and copies the finished installer
 to `~/Downloads`. Nothing to choose and nothing to remember.
+
+`NODE_OPTIONS=--dns-result-order=ipv4first` works around a real, fairly common
+failure: some VPNs and mesh networks (Tailscale among them) advertise a
+default IPv6 route that isn't actually reachable, and Node tries that route
+first when a registry host offers both an A and AAAA record — surfacing as
+`yarn install` dying mid-fetch with `EHOSTUNREACH`. This flag makes Node try
+IPv4 first without disabling IPv6. If `yarn install` still fails on
+`EHOSTUNREACH` or a registry timeout after that, the network you're on can't
+reach the npm registry at all right now — check your VPN/proxy, not this repo.
 
 The build is **unsigned**, because signing needs an Apple Developer ID that only
 the publisher has. On macOS the first open is refused with "Apple cannot check
