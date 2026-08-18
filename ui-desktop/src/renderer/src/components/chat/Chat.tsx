@@ -1744,6 +1744,7 @@ export const Chat = (props: ChatProps) => {
         isActive={openChangeModal}
         symbol={props.symbol}
         bidsLoading={bidsLoading}
+        meta={meta}
         providersAvailability={providersAvailability}
         onChangeModel={(eventData) => {
           onCreateNewChat(eventData);

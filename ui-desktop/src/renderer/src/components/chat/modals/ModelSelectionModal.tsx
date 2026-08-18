@@ -157,6 +157,57 @@ const FilterCount = styled.span<{ $active: boolean }>`
     p.$active ? p.theme.colors.morMain : p.theme.colors.textSecondary};
 `;
 
+// The price-display toggle: show each model's rate (MOR/s) or the stake it takes
+// to open a 6-minute session. A segmented control, right-aligned on the same row
+// as the price-mode label so it reads as "Show price as: [ per second | 6-min
+// stake ]".
+const PriceModeRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 1.2rem;
+`;
+
+const PriceModeLabel = styled.span`
+  font-size: 1.1rem;
+  color: ${(p) => p.theme.colors.textSecondary};
+`;
+
+const PriceModeGroup = styled.div`
+  display: inline-flex;
+  border: 1px solid ${(p) => p.theme.colors.glassBorder};
+  border-radius: 999px;
+  overflow: hidden;
+`;
+
+const PriceModeBtn = styled.button<{ $active: boolean }>`
+  padding: 5px 12px;
+  border: none;
+  background: ${(p) =>
+    p.$active ? p.theme.colors.brandTint(0.16) : 'transparent'};
+  color: ${(p) =>
+    p.$active ? p.theme.colors.morMain : p.theme.colors.textSecondary};
+  font-size: 1.1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  &:not(:disabled):hover {
+    color: ${(p) => p.theme.colors.textPrimary};
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.5)};
+    outline-offset: -2px;
+  }
+`;
+
 const Body = styled.div`
   flex: 1 1 auto;
   min-height: 0;
@@ -315,11 +366,19 @@ const ModelSelectionModal = ({
   symbol,
   providersAvailability,
   bidsLoading,
+  meta,
 }: any) => {
   const theme = useTheme();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterId>('all');
   const [showTeeInfo, setShowTeeInfo] = useState(false);
+  const [priceMode, setPriceMode] = useState<'perSec' | 'stake6m'>('perSec');
+
+  // The 6-minute stake needs marketplace supply/budget; until those load, the
+  // stake cannot be computed, so that toggle is disabled rather than showing a
+  // wrong or empty number.
+  const metaReady =
+    Number(meta?.supply) > 0 && Number(meta?.budget) > 0;
 
   // Annotate each model with `isOnline` (true for local, otherwise derived
   // from provider availability checks). Sort online first within each section.
@@ -492,6 +551,39 @@ const ModelSelectionModal = ({
               );
             })}
           </FilterRow>
+          <PriceModeRow>
+            <PriceModeLabel>Show price as</PriceModeLabel>
+            <PriceModeGroup
+              role="group"
+              aria-label="Price display mode"
+              data-testid="price-mode-toggle"
+            >
+              <PriceModeBtn
+                type="button"
+                $active={priceMode === 'perSec'}
+                aria-pressed={priceMode === 'perSec'}
+                data-testid="price-mode-persec"
+                onClick={() => setPriceMode('perSec')}
+              >
+                Per second
+              </PriceModeBtn>
+              <PriceModeBtn
+                type="button"
+                $active={priceMode === 'stake6m'}
+                aria-pressed={priceMode === 'stake6m'}
+                data-testid="price-mode-stake"
+                disabled={!metaReady}
+                title={
+                  metaReady
+                    ? 'Stake to open the minimum 6-minute session'
+                    : 'Loading marketplace rates…'
+                }
+                onClick={() => setPriceMode('stake6m')}
+              >
+                6-min stake
+              </PriceModeBtn>
+            </PriceModeGroup>
+          </PriceModeRow>
           {bidsLoading && (
             <BidsLoadingHint>
               Loading marketplace options… local models are ready to use.
@@ -523,6 +615,8 @@ const ModelSelectionModal = ({
                     key={m.Id}
                     model={m}
                     symbol={symbol}
+                    priceMode={metaReady ? priceMode : 'perSec'}
+                    meta={meta}
                     onChangeModel={handlePick}
                   />
                 ))}
@@ -552,6 +646,8 @@ const ModelSelectionModal = ({
                     key={m.Id}
                     model={m}
                     symbol={symbol}
+                    priceMode={metaReady ? priceMode : 'perSec'}
+                    meta={meta}
                     onChangeModel={handlePick}
                   />
                 ))}
@@ -571,6 +667,8 @@ const ModelSelectionModal = ({
                     key={m.Id}
                     model={m}
                     symbol={symbol}
+                    priceMode={metaReady ? priceMode : 'perSec'}
+                    meta={meta}
                     onChangeModel={handlePick}
                   />
                 ))}
