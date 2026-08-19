@@ -21,6 +21,7 @@ import {
 } from '@tabler/icons-react';
 import { Btn, Flex } from '@renderer/components/common';
 import type { EscalationInfo } from './useSelfHeal';
+import { BUILD_SHA, BUILD_DIRTY } from '../../../../shared/build-info';
 
 const Card = styled(Flex.Column)`
   width: 100%;
@@ -191,6 +192,11 @@ const buildDiagnostics = (e: EscalationInfo, logTail = '') => {
   const raw = [
     `Morpheus setup failure`,
     `app version : ${version}`,
+    // The version string alone doesn't identify a build: it stays the same
+    // across many commits in a day of work. This is what actually answers
+    // "which commit produced the binary this crashed in" — see
+    // shared/build-info.ts.
+    `build       : ${BUILD_SHA}${BUILD_DIRTY ? ' (dirty)' : ''}`,
     `platform    : ${navigator.userAgent}`,
     `step        : ${e.key}`,
     `classified  : ${e.kind}`,
