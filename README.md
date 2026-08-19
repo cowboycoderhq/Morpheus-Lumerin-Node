@@ -128,7 +128,7 @@ Requires **Node >= 20** — nothing else. One line builds an installer for the
 machine you are on and puts it in your Downloads folder:
 
 ```bash
-(git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git || true) && cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
+(git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git || (cd Morpheus-Lumerin-Node && git fetch -q && git merge --ff-only -q @{u} || true)) && cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
 ```
 
 `npx` runs the exact Yarn release pinned in `ui-desktop/package.json`
@@ -139,13 +139,19 @@ dependencies, creates `.env` from `.env.example` if you do not have one, picks
 the right build target for your OS and CPU, and copies the finished installer
 to `~/Downloads`. Nothing to choose and nothing to remember.
 
-Safe to run more than once in the same spot: `(git clone ... || true)` means
-a second run — where `Morpheus-Lumerin-Node/` already exists from the first
-— doesn't stop the whole command with `git clone`'s "destination path
-already exists" error. `yarn app` then updates that existing checkout to the
-latest commit itself (fast-forward only — it will never discard local
-commits) before building, so re-running this exact line always builds
-current code, not whatever happened to be there already.
+Safe to run more than once in the same spot. `git clone` into a directory
+that already exists fails outright ("destination path already exists") —
+when it does, the fallback branch `cd`s into it and fast-forwards it to the
+latest commit itself (`git fetch && git merge --ff-only`; `|| true` so a
+diverged or offline checkout still falls through to building whatever is
+there rather than stopping). This lives in the command itself, not only in
+a script inside the repo: a checkout old enough to predate a fix has no way
+to run that fix's own self-update code, so the update has to happen before
+`yarn app` is ever invoked, from a copy-paste that's always current because
+it comes fresh from this page every time. `yarn app` also re-checks and
+fast-forwards on its own once inside a checkout that already has that logic
+— redundant on a checkout old enough to need the fallback above, but keeps
+working for anyone invoking `yarn app` directly without this wrapper.
 
 `NODE_OPTIONS=--dns-result-order=ipv4first` works around a real, fairly common
 failure: some VPNs and mesh networks (Tailscale among them) advertise a
