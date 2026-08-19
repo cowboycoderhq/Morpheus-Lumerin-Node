@@ -186,6 +186,85 @@ export const ChatIntroWarningText = styled(ChatIntroInnerText)`
   font-weight: 500;
 `;
 
+// --- Keep-alive (auto-restake) session-length picker ------------------------
+// Chains 6-minute stakes to cover a longer window while only ~one increment is
+// ever locked. Chips reuse the brand-tint pill language of ChatIntroButton.
+export const KeepAliveRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 0.4rem;
+`;
+
+export const KeepAliveLabel = styled.span`
+  font-size: ${(p) => p.theme.type.sm};
+  color: ${(p) => p.theme.colors.textSecondary};
+  margin-right: 0.2rem;
+`;
+
+export const KeepAliveChip = styled.button.attrs({ type: 'button' })<{
+  $active?: boolean;
+}>`
+  padding: 0.4rem 0.9rem;
+  border-radius: ${(p) => p.theme.radii.pill};
+  font-family: inherit;
+  font-size: ${(p) => p.theme.type.sm};
+  font-weight: 600;
+  cursor: pointer;
+  color: ${(p) =>
+    p.$active ? p.theme.colors.morMain : p.theme.colors.textSecondary};
+  background: ${(p) =>
+    p.$active ? p.theme.colors.brandTint(0.14) : 'transparent'};
+  border: 1px solid
+    ${(p) =>
+      p.$active
+        ? p.theme.colors.brandTint(0.85)
+        : p.theme.colors.brandTint(0.25)};
+  transition:
+    background 0.15s ease,
+    border 0.15s ease;
+
+  &:hover:not([disabled]) {
+    background: ${(p) => p.theme.colors.brandTint(0.1)};
+  }
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.morMain};
+    outline-offset: 2px;
+  }
+`;
+
+export const KeepAliveStatus = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: ${(p) => p.theme.colors.morMain};
+`;
+
+export const KeepAliveStopBtn = styled.button.attrs({ type: 'button' })`
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: ${(p) => p.theme.radii.pill};
+  font-family: inherit;
+  font-size: ${(p) => p.theme.type.sm};
+  font-weight: 600;
+  cursor: pointer;
+  color: ${(p) => p.theme.colors.textSecondary};
+  background: transparent;
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.3)};
+  transition:
+    color 0.15s ease,
+    border 0.15s ease;
+
+  &:hover {
+    color: ${(p) => p.theme.colors.morMain};
+    border-color: ${(p) => p.theme.colors.brandTint(0.7)};
+  }
+`;
+
 export const Control = styled.div`
   height: fit-content;
   position: relative;
