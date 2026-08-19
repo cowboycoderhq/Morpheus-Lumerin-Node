@@ -22,9 +22,11 @@ import WizardChrome, { Callout } from './WizardChrome';
 import { THEME_VARIANTS, ThemeVariant, themes } from '../../ui/theme';
 import { useThemeVariant } from '../../ui/ThemeVariantContext';
 
+// The 'aurora' variant is shown to users as "Lumen" (its internal key is
+// unchanged — see Settings THEME_LABELS).
 const THEME_COPY: Record<ThemeVariant, { label: string; blurb: string }> = {
   aurora: {
-    label: 'Aurora',
+    label: 'Lumen',
     blurb: 'A futuristic HUD — cyan accents, glass panels, quiet motion.',
   },
   classic: {
