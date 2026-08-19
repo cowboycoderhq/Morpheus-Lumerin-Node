@@ -24,6 +24,44 @@ import { fileURLToPath } from 'node:url';
 
 const uiDesktop = join(dirname(fileURLToPath(import.meta.url)), '..');
 
+// Re-running the README's one-liner on a machine that already has the repo
+// is a completely normal thing a real person does — not a mistake to
+// document around. `git clone` into a directory that already exists fails
+// outright, but that failure is easy to miss (scrolled past, or the person
+// isn't chaining the commands with &&) — and if the shell just carries on
+// into the pre-existing checkout, `yarn app` builds from whatever commit
+// happened to be sitting there, silently. That cost real diagnostic time:
+// a tester's freeze bug was already fixed upstream, but their checkout was
+// one commit behind and nothing said so — the build looked identical and
+// reported the exact prior commit's SHA, correctly, because it genuinely
+// was that commit.
+//
+// So: before building, bring THIS checkout up to date with its own remote,
+// same branch, fast-forward only. That's the safe half of "update" — it can
+// only succeed if nobody has local commits this checkout would otherwise
+// discard, so a contributor mid-change is left alone (a failed fast-forward
+// is not an error here, just a reason to build from what's already there).
+// Best-effort: no git, no network, or genuinely no remote configured all
+// degrade to "build whatever is checked out," same as before this existed.
+try {
+  const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: uiDesktop, encoding: 'utf8' }).trim();
+  const before = execSync('git rev-parse --short HEAD', { cwd: uiDesktop, encoding: 'utf8' }).trim();
+  execSync('git fetch --quiet', { cwd: uiDesktop, stdio: 'pipe' });
+  try {
+    execSync('git merge --ff-only --quiet @{u}', { cwd: uiDesktop, stdio: 'pipe' });
+    const after = execSync('git rev-parse --short HEAD', { cwd: uiDesktop, encoding: 'utf8' }).trim();
+    if (after !== before) {
+      console.log(`[app] Updated ${branch}: ${before} -> ${after} (was behind its remote)`);
+    }
+  } catch {
+    // No upstream configured, already current, or diverged (local commits
+    // this checkout would lose by fast-forwarding) — build from what is
+    // actually here rather than guess at resolving it.
+  }
+} catch (err) {
+  console.warn(`[app] Could not check for updates (${err.message}) — building the checkout as-is.`);
+}
+
 // A stale `out/` from an interrupted or unrelated earlier build has one way
 // to matter: electron-vite's production build overwrites the files it knows
 // about, but it does not delete files it no longer produces. A hashed chunk
