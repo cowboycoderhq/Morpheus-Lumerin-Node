@@ -19,8 +19,22 @@ if (process.contextIsolated) {
       return remote.app.getVersion()
     }
 
+    // Scheme-gate before handing anything to the OS launcher. Even though the
+    // renderer's link constants are all https, this bridge is reachable by any
+    // renderer code, so it must not pass file:/custom/javascript: schemes to
+    // shell.openExternal (the classic desktop-RCE vector). Mirrors the main
+    // process's openExternalSafe.
     const openLink = function (url) {
-      return shell.openExternal(url)
+      try {
+        const scheme = new URL(url).protocol
+        if (scheme === 'https:' || scheme === 'mailto:') {
+          return shell.openExternal(url)
+        }
+      } catch {
+        /* unparseable url — fall through to no-op */
+      }
+      console.warn('openLink blocked a non-https url')
+      return Promise.resolve()
     }
 
     contextBridge.exposeInMainWorld('ipcRenderer', {
