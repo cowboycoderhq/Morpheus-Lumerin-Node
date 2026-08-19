@@ -1,4 +1,5 @@
 import React from 'react';
+import { sendToMainProcess } from '../client/utils';
 
 /**
  * The app had NO error boundary anywhere. React's behaviour without one is not
@@ -19,15 +20,29 @@ import React from 'react';
  * handler in the table, so the dispatcher logs a warning and never replies),
  * and a boundary that awaits a reply that never comes would hang while trying
  * to report a hang.
+ *
+ * A real freeze report took an operator over an hour to diagnose because the
+ * only way to get the log out of the app was "ask them to find and paste
+ * ~/Library/Logs/morpheus-app/main.log by hand" — this screen is the one
+ * place every user of this path lands, so it is also the one place that
+ * matters most to make that a single click. "Open log" and "Copy log" below
+ * use `sendToMainProcess` directly (not the `client` HOC) for the same
+ * reason `componentDidCatch` uses raw ipcRenderer above: this boundary must
+ * keep working when whatever provides that context is what just broke. Both
+ * are wrapped so a failure in THEM can never replace this screen with a
+ * blanker one.
  */
 type Props = { children: React.ReactNode };
-type State = { error: Error | null };
+type State = {
+  error: Error | null;
+  logAction: 'idle' | 'opening' | 'opened' | 'copied' | 'failed';
+};
 
 export class RootErrorBoundary extends React.Component<Props, State> {
-  state: State = { error: null };
+  state: State = { error: null, logAction: 'idle' };
 
   static getDerivedStateFromError(error: Error): State {
-    return { error };
+    return { error, logAction: 'idle' };
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
@@ -44,11 +59,49 @@ export class RootErrorBoundary extends React.Component<Props, State> {
     }
   }
 
+  private openLog = async (): Promise<void> => {
+    this.setState({ logAction: 'opening' });
+    try {
+      const r: any = await sendToMainProcess('open-log-file', { lines: 200 });
+      this.setState({ logAction: r?.ok ? 'opened' : 'failed' });
+    } catch {
+      this.setState({ logAction: 'failed' });
+    }
+    setTimeout(() => this.setState({ logAction: 'idle' }), 2500);
+  };
+
+  private copyLog = async (): Promise<void> => {
+    try {
+      const r: any = await sendToMainProcess('get-main-log-tail', { lines: 200 });
+      const text = r?.text || '(log file was empty or unreadable)';
+      // Same bridge, same reason, as RemediationCard's copy button:
+      // navigator.clipboard rejects in the packaged app (main/index.ts denies
+      // the permission it needs), so this must go through the preload's
+      // clipboard bridge, not the web API.
+      const bridge = (window as any).copyToClipboard;
+      if (typeof bridge === 'function') {
+        bridge(text);
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
+      this.setState({ logAction: 'copied' });
+    } catch {
+      this.setState({ logAction: 'failed' });
+    }
+    setTimeout(() => this.setState({ logAction: 'idle' }), 2500);
+  };
+
   render(): React.ReactNode {
     if (!this.state.error) return this.props.children;
     // Deliberately plain: no styled-components, no theme, no icons. Whatever
     // just threw may BE the theme or an icon import, and a fallback that needs
     // the broken machinery is not a fallback.
+    const btnStyle: React.CSSProperties = {
+      padding: '0.7rem 1.4rem',
+      fontSize: '1.1rem',
+      cursor: 'pointer',
+    };
+    const { logAction } = this.state;
     return (
       <div
         data-testid="root-error"
@@ -83,17 +136,48 @@ export class RootErrorBoundary extends React.Component<Props, State> {
         >
           {String(this.state.error?.message ?? this.state.error)}
         </pre>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
+        <div
           style={{
-            padding: '0.7rem 1.4rem',
-            fontSize: '1.1rem',
-            cursor: 'pointer',
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: '1rem',
           }}
         >
-          Reload
-        </button>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={btnStyle}
+          >
+            Reload
+          </button>
+          <button
+            type="button"
+            data-testid="root-error-open-log"
+            onClick={() => void this.openLog()}
+            disabled={logAction === 'opening'}
+            style={btnStyle}
+          >
+            {logAction === 'opening' ? 'Opening…' : 'Open log'}
+          </button>
+          <button
+            type="button"
+            data-testid="root-error-copy-log"
+            onClick={() => void this.copyLog()}
+            style={btnStyle}
+          >
+            Copy log
+          </button>
+          {(logAction === 'opened' ||
+            logAction === 'copied' ||
+            logAction === 'failed') && (
+            <span style={{ fontSize: '1.05rem', opacity: 0.8 }}>
+              {logAction === 'opened' && 'Opened.'}
+              {logAction === 'copied' && 'Copied — paste it wherever you report this.'}
+              {logAction === 'failed' && "Couldn't reach the log — reload and try again."}
+            </span>
+          )}
+        </div>
       </div>
     );
   }

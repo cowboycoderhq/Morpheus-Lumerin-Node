@@ -52,6 +52,7 @@ const listeners = {
   'get-grok-status': handlers.getGrokStatus,
   'install-grok': handlers.installGrok,
   'get-main-log-tail': handlers.getMainLogTail,
+  'open-log-file': handlers.openLogFile,
   'get-whats-new-state': handlers.getWhatsNewState,
   'mark-whats-new-seen': handlers.markWhatsNewSeen,
   'open-in-grok': handlers.openInGrok,
