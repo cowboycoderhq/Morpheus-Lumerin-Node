@@ -83,7 +83,15 @@ for (const dir of ['out', 'dist']) {
 // checked-in 'dev-unbuilt' default rather than blocking the build.
 try {
   const sha = execSync('git rev-parse --short HEAD', { cwd: uiDesktop, encoding: 'utf8' }).trim();
-  const dirty = execSync('git status --porcelain', { cwd: uiDesktop, encoding: 'utf8' }).trim().length > 0;
+  // Excludes build-info.ts itself: this very step overwrites it on every
+  // build and it's never committed, so from the second build onward it
+  // would show up in `git status` regardless of whether anything real
+  // changed — making BUILD_DIRTY permanently stuck on ("acfd9a3f-dirty"
+  // reported after a clean re-run) instead of meaning what it says.
+  const dirty = execSync(
+    "git status --porcelain -- . ':!src/shared/build-info.ts'",
+    { cwd: uiDesktop, encoding: 'utf8' },
+  ).trim().length > 0;
   writeFileSync(
     join(uiDesktop, 'src/shared/build-info.ts'),
     `// Overwritten by scripts/build-app.mjs — see that file's comment.\n` +
