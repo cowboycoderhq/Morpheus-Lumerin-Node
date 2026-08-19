@@ -2,6 +2,7 @@ const { ipcMain } = require('electron')
 import createCore from '../../core'
 import logger from '../../logger'
 import subscriptions from './subscriptions'
+import { isTrustedSender } from './subscriptions/utils'
 import * as settings from './settings'
 import storage from './storage'
 
@@ -70,6 +71,13 @@ export function createClient(config) {
   }
 
   ipcMain.on('ui-ready', function (webContent, args) {
+    // Same trust boundary as the other renderer→main handlers: ui-ready echoes
+    // the full config and starts the wallet core, so a hostile origin must not
+    // reach it.
+    if (!isTrustedSender(webContent)) {
+      logger.warn('<-- ui-ready rejected: untrusted sender frame')
+      return
+    }
     const onboardingComplete = !!settings.getPasswordHash()
 
     storage
@@ -107,7 +115,11 @@ export function createClient(config) {
       })
   })
 
-  ipcMain.on('ui-unload', function () {
+  ipcMain.on('ui-unload', function (event) {
+    if (!isTrustedSender(event)) {
+      logger.warn('<-- ui-unload rejected: untrusted sender frame')
+      return
+    }
     stopCore(core)
     subscriptions.unsubscribe(core)
   })

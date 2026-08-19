@@ -29,9 +29,16 @@ const installExtension = (install as any).default as typeof install
 const isAppUrl = (url: string): boolean => {
   try {
     const u = new URL(url)
-    if (u.protocol === 'file:') return true // packaged renderer
+    // Packaged renderer only — the app's OWN bundle, not any file:// on disk
+    // (a downloaded/planted evil.html must not be trusted just for being file:).
+    if (u.protocol === 'file:') {
+      return decodeURIComponent(u.pathname).startsWith(app.getAppPath())
+    }
+    // Dev: the vite origin, compared by ORIGIN — a `startsWith` prefix check is
+    // defeated by `http://localhost:5173@evil.com` (real host = evil.com) and by
+    // a port suffix like `http://localhost:51730`.
     const devUrl = process.env['ELECTRON_RENDERER_URL']
-    if (is.dev && devUrl) return url.startsWith(devUrl) // vite dev server
+    if (is.dev && devUrl) return u.origin === new URL(devUrl).origin
     return false
   } catch {
     return false
