@@ -52,7 +52,15 @@ if [ -z "$COMMIT" ]; then
 fi
 echo COMMIT=$COMMIT
 # go mod tidy already handled in Dockerfile via go mod download
+#
+# -trimpath: without it, every dependency's source-file references embed the
+# building machine's full local username/home directory path (confirmed via
+# `strings` on a build from this flag set) -- a real, avoidable metadata leak
+# on a binary that ships publicly. -s -w alone does not cover this; it strips
+# the DWARF symbol table, not the separate embedded path strings Go's runtime
+# keeps for panic stack traces.
 go build \
+  -trimpath \
   -tags docker \
   -ldflags="-s -w \
     -X 'github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/config.BuildVersion=$VERSION' \
