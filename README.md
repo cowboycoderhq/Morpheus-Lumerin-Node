@@ -128,7 +128,7 @@ Requires **Node >= 20** — nothing else. One line builds an installer for the
 machine you are on and puts it in your Downloads folder:
 
 ```bash
-git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git && cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
+(git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git || true) && cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
 ```
 
 `npx` runs the exact Yarn release pinned in `ui-desktop/package.json`
@@ -138,6 +138,14 @@ happens to already be on your machine. That single `yarn app` then installs
 dependencies, creates `.env` from `.env.example` if you do not have one, picks
 the right build target for your OS and CPU, and copies the finished installer
 to `~/Downloads`. Nothing to choose and nothing to remember.
+
+Safe to run more than once in the same spot: `(git clone ... || true)` means
+a second run — where `Morpheus-Lumerin-Node/` already exists from the first
+— doesn't stop the whole command with `git clone`'s "destination path
+already exists" error. `yarn app` then updates that existing checkout to the
+latest commit itself (fast-forward only — it will never discard local
+commits) before building, so re-running this exact line always builds
+current code, not whatever happened to be there already.
 
 `NODE_OPTIONS=--dns-result-order=ipv4first` works around a real, fairly common
 failure: some VPNs and mesh networks (Tailscale among them) advertise a
