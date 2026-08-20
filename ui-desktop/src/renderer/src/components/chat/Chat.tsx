@@ -63,6 +63,8 @@ import {
   KeepAliveRow,
   KeepAliveLabel,
   KeepAliveChip,
+  SessionLengthSlider,
+  SessionLengthValue,
 } from './Chat.styles';
 import withChatState from '../../store/hocs/withChatState';
 import { abbreviateAddress } from '../../utils';
@@ -85,7 +87,10 @@ import {
   userTextFromPrompt,
 } from './utils';
 import { Cooldown } from './Cooldown';
-import { useKeepAlive } from '../keepalive/KeepAliveProvider';
+import {
+  useKeepAlive,
+  blocksForDuration,
+} from '../keepalive/KeepAliveProvider';
 import ImageViewer from 'react-simple-image-viewer';
 import { ChatData, HistoryMessage } from './interfaces';
 import { formatMor } from '../../utils/coinValue';
@@ -184,7 +189,14 @@ export const Chat = (props: ChatProps) => {
   // to cover the window while only ~one increment is ever locked. The restake
   // LOOP itself lives in KeepAliveProvider (above the tab router) so it survives
   // navigating away from Chat; this component only drives + reflects it.
-  const [keepAliveTargetMin, setKeepAliveTargetMin] = useState(0);
+  // Session length in SECONDS, chosen on the slider. Floor is 5:05 (300s
+  // contract minimum + 5s cushion for the stake→duration truncation); max 8h.
+  const [keepAliveTargetSec, setKeepAliveTargetSec] = useState(5 * 60 + 5);
+  // Restake strategy: 'seamless' overlaps blocks (gapless, needs ~2x a block's
+  // stake free) or 'economy' restakes sequentially (1x stake, small gap).
+  const [restakeMode, setRestakeMode] = useState<'seamless' | 'economy'>(
+    'seamless',
+  );
   // Chosen provider (bid Id) to stake against; null = Auto (router picks).
   const [selectedProviderBidId, setSelectedProviderBidId] = useState<
     string | null
@@ -452,7 +464,18 @@ export const Chat = (props: ChatProps) => {
     }
   };
 
-  const MIN_REQUEST_SECONDS = 5 * 60 + 60; // 5-min contract floor + 1-min cushion
+  const MIN_REQUEST_SECONDS = 5 * 60 + 5; // 305s = 300s contract floor + 5s cushion for stake→duration truncation
+
+  const formatDuration = (totalSec: number) => {
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = Math.floor(totalSec % 60);
+    return (
+      [h ? `${h}h` : '', m ? `${m}m` : '', s ? `${s}s` : '']
+        .filter(Boolean)
+        .join(' ') || '0s'
+    );
+  };
 
   const calculateAcceptableDuration = (
     pricePerSecond: number,
@@ -525,6 +548,17 @@ export const Chat = (props: ChatProps) => {
     isDirectPay: boolean,
     durationOverrideSec?: number,
   ) => {
+    // A one-off session must never open on top of a rolling run: the mirror
+    // effect would stomp activeSession back to the next rotated block, orphaning
+    // MOR that was already spent here. Today the Direct Pay button cannot render
+    // while a run is live (isCreateSessionMode is false whenever status.running
+    // is true), so this is currently unreachable — which is exactly the problem.
+    // That invariant lives in a render expression and a refactor of
+    // isCreateSessionMode would silently retire it. startRolling has the same
+    // guard; make it structural on both sides rather than incidental on one.
+    if (keepAlive.status?.running) {
+      return;
+    }
     setIsActionLoading(true);
     // On reopen, selectedModel may be unset (a saved chat opened directly), so
     // fall back to the chat's model rather than reading `.bids` off undefined.
@@ -669,16 +703,40 @@ export const Chat = (props: ChatProps) => {
       const perBlockStake = Number(
         calculateStake(blockPrice, MIN_REQUEST_SECONDS / 60),
       );
+      // Blocks do NOT tile end-to-end (seamless overlaps, economy gaps), so the
+      // count must come from blocksForDuration — the twin of the loop's stop
+      // condition. Pricing it as ceil(target / MIN_REQUEST_SECONDS) understated
+      // seamless by 50% at 2 blocks (2 priced, 3 opened) and ~10% at the max.
+      const overlap = restakeMode === 'seamless';
+      const blockCount = blocksForDuration(keepAliveTargetSec, overlap);
+      // A single block never restakes, so it only ever locks 1x.
+      //
+      // Multi-block needs 2x free in BOTH modes. Seamless obviously so — block
+      // N+1 opens before N's stake returns. Economy was written for 1x on the
+      // premise that REOPEN_DELAY_SEC (12s) is long enough for the old stake to
+      // come back; it is not. The stake returns only when the session is closed,
+      // and the closer is the router's autoclose poll — proxy-router
+      // internal/blockchainapi/session_expiry_handler.go, `time.NewTicker(1 *
+      // time.Minute)` — so the real return latency is ~0-60s plus a close-tx
+      // confirm. Reserving 1x let block 1 drain the wallet and block 2 revert,
+      // ending an 8-hour run ~5 minutes in with MOR already spent. Until the
+      // app closes each expired block itself and polls for the funds, economy
+      // reserves 2x like seamless. It still buys a real thing (no overlap =
+      // never two stakes locked at once) — just not a smaller balance to start.
+      const needsTwo = blockCount > 1;
+      const requiredFreeStake = (needsTwo ? 2 : 1) * perBlockStake;
       if (
         !aff.known ||
         (!chosenBid && aff.affordableCount < 1) ||
         !Number.isFinite(perBlockStake) ||
         perBlockStake <= 0 ||
-        Number(balances.mor) < 2 * perBlockStake
+        Number(balances.mor) < requiredFreeStake
       ) {
         props.toasts.toast(
           'error',
-          'Not enough MOR to keep a rolling session — you need about twice a 6-minute stake free. Add MOR and try again.',
+          needsTwo
+            ? 'Not enough MOR for a rolling session — you need about twice a 5-minute stake free. Shorten the session to a single block, or add MOR.'
+            : 'Not enough MOR for a session — you need about one 5-minute stake free. Add MOR and try again.',
         );
         return;
       }
@@ -692,9 +750,10 @@ export const Chat = (props: ChatProps) => {
       await keepAlive.start({
         modelId: model.Id,
         chatId,
-        totalMinutes: keepAliveTargetMin,
+        totalSeconds: keepAliveTargetSec,
         isDirectPay,
         bidId: chosenBid ? chosenBid.Id : null,
+        overlap,
       });
     } finally {
       startingRollingRef.current = false;
@@ -1583,8 +1642,8 @@ export const Chat = (props: ChatProps) => {
                 Starting your rolling session…
               </ChatIntroInnerTitle>
               <ChatIntroInnerText>
-                Opening the first 6-minute block — this can take a few seconds
-                while the stake confirms on-chain.
+                Opening the first block — this can take a few seconds while the
+                stake confirms on-chain.
               </ChatIntroInnerText>
             </ChatIntroInner>
           </ChatIntroContainer>
@@ -1692,49 +1751,58 @@ export const Chat = (props: ChatProps) => {
                   </KeepAliveRow>
                   <KeepAliveRow>
                     <KeepAliveLabel>Session length</KeepAliveLabel>
-                    {[
-                      { label: 'Auto', min: 0 },
-                      { label: '30m', min: 30 },
-                      { label: '1h', min: 60 },
-                      { label: '2h', min: 120 },
-                      { label: '4h', min: 240 },
-                    ].map((opt) => (
-                      <KeepAliveChip
-                        key={opt.min}
-                        $active={keepAliveTargetMin === opt.min}
-                        onClick={() => setKeepAliveTargetMin(opt.min)}
-                      >
-                        {opt.label}
-                      </KeepAliveChip>
-                    ))}
+                    <SessionLengthSlider
+                      min={MIN_REQUEST_SECONDS}
+                      max={
+                        Math.floor((8 * 60 * 60) / MIN_REQUEST_SECONDS) *
+                        MIN_REQUEST_SECONDS
+                      }
+                      step={MIN_REQUEST_SECONDS}
+                      value={keepAliveTargetSec}
+                      onChange={(e) =>
+                        setKeepAliveTargetSec(Number(e.target.value))
+                      }
+                    />
+                    <SessionLengthValue>
+                      {formatDuration(keepAliveTargetSec)}
+                    </SessionLengthValue>
+                  </KeepAliveRow>
+                  <KeepAliveRow>
+                    <KeepAliveLabel>Restaking</KeepAliveLabel>
+                    <KeepAliveChip
+                      $active={restakeMode === 'seamless'}
+                      onClick={() => setRestakeMode('seamless')}
+                    >
+                      Seamless
+                    </KeepAliveChip>
+                    <KeepAliveChip
+                      $active={restakeMode === 'economy'}
+                      onClick={() => setRestakeMode('economy')}
+                    >
+                      Economy · no overlap
+                    </KeepAliveChip>
                   </KeepAliveRow>
                   <ChatIntroInnerText style={{ marginTop: '0.4rem' }}>
-                    {keepAliveTargetMin > 0
-                      ? 'Rolling session: the app auto-restakes in 6-minute blocks to keep you in inference, so only ~one 6-minute stake is locked at a time (you need ~2× a 6-minute stake free). You can Stop anytime; each block’s stake returns when it lapses.'
-                      : 'Stake MOR to get free compute. Session lasts from 5 min up to 24 hours depending on the amount you stake. You can claim your stake in 24h.'}
+                    {restakeMode === 'seamless'
+                      ? 'Seamless: blocks overlap so inference never pauses. Needs ~2× a 5-minute stake free (only ~one block is locked at a time). Stop anytime; each block’s stake returns when it lapses.'
+                      : 'Economy: the next block opens only after the current one ends, so two stakes are never locked at once — but there is a pause at each restake. Still needs ~2× a 5-minute stake free to start. Stop anytime.'}
                   </ChatIntroInnerText>
                   <div style={{ display: 'flex', justifyContent: 'center' }}>
                     <ChatIntroButton
-                      onClick={() =>
-                        keepAliveTargetMin > 0
-                          ? startRolling(false)
-                          : onOpenSession(false, false)
-                      }
+                      onClick={() => startRolling(false)}
                       disabled={!isEnoughFunds}
                     >
                       Stake MOR
                     </ChatIntroButton>
                   </div>
                   <ChatIntroInnerText>
-                    Pay with your MOR tokens directly.{' '}
-                    {keepAliveTargetMin > 0
-                      ? 'Rolling sessions are staking-only for now — choose “Auto” to pay directly.'
-                      : 'The duration of the session is limited only with your MOR balance.'}
+                    Pay with your MOR tokens directly — the session length is
+                    limited only by your MOR balance (independent of the slider).
                   </ChatIntroInnerText>
                   <div style={{ display: 'flex', justifyContent: 'center' }}>
                     <ChatIntroButton
                       onClick={() => onOpenSession(false, true)}
-                      disabled={!isEnoughFundsForDirectPay || keepAliveTargetMin > 0}
+                      disabled={!isEnoughFundsForDirectPay}
                     >
                       Direct Pay
                     </ChatIntroButton>

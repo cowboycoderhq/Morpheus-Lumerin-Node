@@ -141,13 +141,14 @@ export function weiToMor(wei: bigint, maxFractionDigits = 8): string {
 // number: the RATE itself (MOR/s), or what it costs to START — the stake for the
 // minimum 6-minute session, which is what actually leaves the wallet on open.
 //
-// The 6-minute stake mirrors the marketplace floor used everywhere else
-// (calculateStake at MIN_REQUEST_SECONDS): price * 360 * supply / budget. That
+// The min-block stake mirrors the marketplace floor used everywhere else
+// (calculateStake at MIN_REQUEST_SECONDS): price * 305 * supply / budget. That
 // needs marketplace meta; without it the stake is unknowable, so this returns
 // null and the caller shows the rate instead. Display-only Number math (the ratio
 // dominates, exact wei precision is not needed to render a price label).
 
-const MIN_SESSION_SECONDS = 360; // 5-min contract floor + 1-min cushion
+// Keep in sync with MIN_REQUEST_SECONDS in Chat.tsx / KeepAliveProvider.tsx.
+const MIN_SESSION_SECONDS = 305; // 300s contract floor + 5s cushion for stake→duration truncation
 
 export function sixMinuteStakeMor(
   pricePerSecondWei: string | number,

@@ -204,6 +204,42 @@ export const KeepAliveLabel = styled.span`
   margin-right: 0.2rem;
 `;
 
+export const SessionLengthSlider = styled.input.attrs({ type: 'range' })`
+  flex: 1;
+  min-width: 120px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: ${(p) => p.theme.colors.brandTint(0.25)};
+  border-radius: ${(p) => p.theme.radii.pill};
+  outline: none;
+  cursor: pointer;
+
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: ${(p) => p.theme.colors.morMain};
+    border: 2px solid ${(p) => p.theme.colors.brandTint(0.85)};
+    cursor: pointer;
+  }
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.5)};
+    outline-offset: 4px;
+  }
+`;
+
+export const SessionLengthValue = styled.span`
+  min-width: 68px;
+  text-align: right;
+  font-family: inherit;
+  font-size: ${(p) => p.theme.type.sm};
+  font-weight: 600;
+  color: ${(p) => p.theme.colors.morMain};
+`;
+
 export const KeepAliveChip = styled.button.attrs({ type: 'button' })<{
   $active?: boolean;
 }>`
