@@ -316,6 +316,42 @@ const withChatState = (WrappedComponent: ComponentType<any>) => {
       }
     };
 
+    // Open a session against a SPECIFIC provider (bid) instead of letting the
+    // router choose. Same shape as onOpenSession but hits the by-bid route.
+    onOpenSessionByBid = async ({ bidId, duration, isDirectPay = false }) => {
+      this.context.toast('info', 'Processing...');
+      try {
+        const failoverSettings = await this.props.client.getFailoverSetting();
+        const authHeaders = await this.props.client.getAuthHeaders();
+        const path = `${this.props.config.chain.localProxyRouterUrl}/blockchain/bids/${bidId}/session`;
+        const body = {
+          failover: failoverSettings?.isEnabled || false,
+          sessionDuration: +duration,
+          directPayment: isDirectPay,
+        };
+        const response = await fetch(path, {
+          method: 'POST',
+          body: JSON.stringify(body),
+          headers: authHeaders,
+        });
+        const dataResponse = await response.json();
+        if (!response.ok) {
+          this.context.toast(
+            'error',
+            `Failed to open session: "${dataResponse.error}"`,
+          );
+          console.log('Failed initiate session by bid', dataResponse);
+          return;
+        }
+        this.context.toast('success', 'Session successfully created');
+        return dataResponse.sessionID;
+      } catch (e) {
+        console.error(e);
+        this.context.toast('error', 'Failed to open session');
+        return;
+      }
+    };
+
     getBalances = async () => {
       return await this.props.client.getBalances();
     };
@@ -334,6 +370,7 @@ const withChatState = (WrappedComponent: ComponentType<any>) => {
           getSessionsByUser={this.getSessionsByUser}
           closeSession={this.closeSession}
           onOpenSession={this.onOpenSession}
+          onOpenSessionByBid={this.onOpenSessionByBid}
           getBalances={this.getBalances}
           toasts={this.context}
           {...this.state}

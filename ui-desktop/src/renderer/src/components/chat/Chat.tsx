@@ -136,6 +136,11 @@ type ChatProps = {
     duration: number;
     isDirectPay: boolean;
   }) => Promise<any>;
+  onOpenSessionByBid: (props: {
+    bidId: string;
+    duration: number;
+    isDirectPay: boolean;
+  }) => Promise<any>;
   closeSession: (sessionId: string) => Promise<any>;
 };
 
@@ -183,6 +188,10 @@ export const Chat = (props: ChatProps) => {
   // LOOP itself lives in KeepAliveProvider (above the tab router) so it survives
   // navigating away from Chat; this component only drives + reflects it.
   const [keepAliveTargetMin, setKeepAliveTargetMin] = useState(0);
+  // Chosen provider (bid Id) to stake against; null = Auto (router picks).
+  const [selectedProviderBidId, setSelectedProviderBidId] = useState<
+    string | null
+  >(null);
   const keepAlive = useKeepAlive();
   // Guards the Stake button against a double-click opening two first blocks
   // before the first render reflects the started run.
@@ -522,40 +531,53 @@ export const Chat = (props: ChatProps) => {
       });
     }
 
-    // Size the session off the priciest provider we can AFFORD, not the priciest
-    // provider period — so a wallet that covers only some providers can still
-    // stake, matched to one of those. The router skips any it can't cover.
+    // If the user pinned a specific provider, stake against that bid; otherwise
+    // "Auto" lets the router choose. A pinned bid that's no longer in the model
+    // falls back to Auto rather than erroring.
+    const chosenBid = selectedProviderBidId
+      ? model.bids.find((b: any) => b.Id == selectedProviderBidId)
+      : null;
+
+    // Size the session off the priciest provider we can AFFORD (Auto), or off the
+    // pinned provider's price when one is chosen. Auto keeps the affordability
+    // feature's behaviour (a wallet covering only some providers can still stake).
     const aff = getStakeAffordability(model.bids, Number(balances.mor));
-    // A keep-alive increment forces the 6-minute floor (durationOverrideSec) so
-    // only one increment is ever staked, regardless of balance. Without an
-    // override this auto-sizes off balance, the existing single-session flow.
-    const duration =
+    // A keep-alive block forces the 6-minute floor (durationOverrideSec) so only
+    // one block is ever staked, regardless of balance. Without an override this
+    // auto-sizes off balance, the existing single-session flow.
+    const durationPrice = chosenBid
+      ? Number(chosenBid.PricePerSecond)
+      : aff.priceForDuration;
+    const rawDuration =
       durationOverrideSec ??
       (isDirectPay
         ? calculateAcceptableDurationForDirectPay(meta)
         : calculateAcceptableDuration(
-            aff.priceForDuration,
+            durationPrice,
             Number(balances.mor),
             meta,
           ));
+    // Hard-cap a staked session at the 24h contract ceiling. calculateAcceptableDuration's
+    // own 24h early-return is keyed off requiredStake.max (sized off the AUTO price), so a
+    // pinned CHEAPER provider could size past 24h — the chain would clamp it anyway, but the
+    // wallet would over-lock stake for time the session can't use. Auto never exceeds 24h, so
+    // this is a no-op there. Overrides (keep-alive's 6-min floor) and direct-pay are left as-is.
+    const duration =
+      durationOverrideSec !== undefined || isDirectPay
+        ? rawDuration
+        : Math.min(rawDuration, 24 * 60 * 60);
 
     // Don't attempt an on-chain open the wallet can't cover — it reverts with
     // "transfer amount exceeds balance" and strands the user in a dead session.
-    // Price this off the duration we are ACTUALLY opening, never the 6-minute
-    // floor: the floor is exactly what the button gate already tests, so a floor
-    // check here would be dead code that cannot fire while claiming to guard.
-    //
-    // Both arms price the CHEAPEST provider, because the question here is "can
-    // we afford ANYONE at this duration?" — the router matches an affordable
-    // provider, so only a balance under the cheapest is a true dead end. Costing
-    // this off the priciest affordable provider instead would re-block exactly
-    // the wallets this feature exists to admit (measured: it false-blocks ~40%
-    // of the sessions it stops, where a cheaper provider was still open; the
-    // cheapest-provider test is an EXACT match for "router refuses every bid" —
-    // by monotonicity of the stake formula in price).
+    // For Auto, price the guard off the CHEAPEST provider ("can we afford
+    // ANYONE?" — the router matches an affordable one). For a pinned provider,
+    // price off THAT provider, since the router won't substitute a cheaper one.
+    const guardPrice = chosenBid
+      ? Number(chosenBid.PricePerSecond)
+      : aff.minPrice;
     const stakeNeeded = isDirectPay
-      ? aff.minPrice * duration
-      : Number(calculateStake(aff.minPrice, duration / 60));
+      ? guardPrice * duration
+      : Number(calculateStake(guardPrice, duration / 60));
     if (
       Number.isFinite(stakeNeeded) &&
       stakeNeeded > 0 &&
@@ -570,11 +592,17 @@ export const Chat = (props: ChatProps) => {
     }
 
     try {
-      const openedSession = await props.onOpenSession({
-        modelId: model.Id,
-        duration,
-        isDirectPay,
-      });
+      const openedSession = chosenBid
+        ? await props.onOpenSessionByBid({
+            bidId: chosenBid.Id,
+            duration,
+            isDirectPay,
+          })
+        : await props.onOpenSession({
+            modelId: model.Id,
+            duration,
+            isDirectPay,
+          });
       if (!openedSession) {
         return;
       }
@@ -606,19 +634,26 @@ export const Chat = (props: ChatProps) => {
         );
         return;
       }
+      // A pinned provider stakes every block against that bid; Auto lets the
+      // router pick each block. Price the affordability gate off the pinned
+      // provider when chosen, else off the priciest AFFORDABLE provider (the one
+      // the router would size against).
+      const chosenBid = selectedProviderBidId
+        ? model.bids.find((b: any) => b.Id == selectedProviderBidId)
+        : null;
+      const aff = getStakeAffordability(model.bids, Number(balances.mor));
+      const blockPrice = chosenBid
+        ? Number(chosenBid.PricePerSecond)
+        : aff.priceForDuration;
       // Each block stakes only the 6-minute floor; you need ~2x that free so the
       // next block can open while the current one is still staked (the overlap
-      // that keeps inference gapless). Price the 2x off the PRICIEST AFFORDABLE
-      // provider (priceForDuration) — the one the router sizes the stake against
-      // — not the cheapest, or a wallet holding exactly 2x the cheapest passes
-      // here but can't cover the pricier provider the router matches.
-      const aff = getStakeAffordability(model.bids, Number(balances.mor));
+      // that keeps inference gapless).
       const perBlockStake = Number(
-        calculateStake(aff.priceForDuration, MIN_REQUEST_SECONDS / 60),
+        calculateStake(blockPrice, MIN_REQUEST_SECONDS / 60),
       );
       if (
         !aff.known ||
-        aff.affordableCount < 1 ||
+        (!chosenBid && aff.affordableCount < 1) ||
         !Number.isFinite(perBlockStake) ||
         perBlockStake <= 0 ||
         Number(balances.mor) < 2 * perBlockStake
@@ -641,6 +676,7 @@ export const Chat = (props: ChatProps) => {
         chatId,
         totalMinutes: keepAliveTargetMin,
         isDirectPay,
+        bidId: chosenBid ? chosenBid.Id : null,
       });
     } finally {
       startingRollingRef.current = false;
@@ -788,6 +824,7 @@ export const Chat = (props: ChatProps) => {
 
   const selectChat = async (chatData: ChatData) => {
     keepAlive.stop(); // navigating to another chat ends the rolling session
+    setSelectedProviderBidId(null); // provider pin doesn't carry across chats
     const modelId = chatData.modelId;
     if (!modelId) {
       console.warn('Model ID is missed');
@@ -1410,6 +1447,7 @@ export const Chat = (props: ChatProps) => {
 
   const onCreateNewChat = ({ modelId, isLocal }) => {
     keepAlive.stop(); // leaving this thread ends any rolling session
+    setSelectedProviderBidId(null); // provider pin doesn't carry across models
     abort = true;
     setMessages([]);
     setActiveSession(undefined);
@@ -1554,6 +1592,65 @@ export const Chat = (props: ChatProps) => {
                       — add more MOR to unlock the rest.
                     </ChatIntroWarningText>
                   )}
+                  <KeepAliveRow>
+                    <KeepAliveLabel>Provider</KeepAliveLabel>
+                    <KeepAliveChip
+                      $active={selectedProviderBidId === null}
+                      onClick={() => setSelectedProviderBidId(null)}
+                      title="Let the router pick an available provider each block"
+                    >
+                      Auto
+                    </KeepAliveChip>
+                    {(selectedModel?.bids ?? []).map((bid: any) => {
+                      const status = providersAvailability.find(
+                        (a: any) => a.id == bid.Provider,
+                      )?.status;
+                      const dot =
+                        status === 'available'
+                          ? '#4ade80'
+                          : status === 'disconnected'
+                            ? '#f87171'
+                            : '#9ca3af';
+                      const stakeWei = Number(
+                        calculateStake(
+                          Number(bid.PricePerSecond),
+                          MIN_REQUEST_SECONDS / 60,
+                        ),
+                      );
+                      // Can't afford even one 6-minute block from this provider.
+                      const unaffordable =
+                        Number.isFinite(stakeWei) &&
+                        stakeWei > Number(balances.mor);
+                      const stake6m = formatMor(stakeWei, 18);
+                      return (
+                        <KeepAliveChip
+                          key={bid.Id}
+                          $active={selectedProviderBidId === bid.Id}
+                          disabled={unaffordable}
+                          onClick={() =>
+                            !unaffordable && setSelectedProviderBidId(bid.Id)
+                          }
+                          title={`${bid.Provider} · ${status ?? 'unknown'}${
+                            unaffordable ? " · can't afford a block" : ''
+                          }`}
+                        >
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              width: '0.55rem',
+                              height: '0.55rem',
+                              borderRadius: '50%',
+                              marginRight: '0.4rem',
+                              background: dot,
+                              verticalAlign: 'middle',
+                            }}
+                          />
+                          {abbreviateAddress(bid.Provider, 4)}
+                          {stake6m ? ` · ${stake6m}` : ''}
+                        </KeepAliveChip>
+                      );
+                    })}
+                  </KeepAliveRow>
                   <KeepAliveRow>
                     <KeepAliveLabel>Session length</KeepAliveLabel>
                     {[

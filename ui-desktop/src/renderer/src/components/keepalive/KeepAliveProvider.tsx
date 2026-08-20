@@ -42,6 +42,7 @@ export interface KeepAliveStatus {
 
 interface KeepAliveRun extends KeepAliveStatus {
   isDirectPay: boolean;
+  bidId: string | null; // fixed provider for every block, or null = router picks
   id: number; // monotonic run token; guards against a stale tick acting on a new run
 }
 
@@ -50,6 +51,9 @@ export interface StartKeepAliveOpts {
   chatId: string;
   totalMinutes: number;
   isDirectPay: boolean;
+  // A specific provider's bid to stake every block against; null = let the
+  // router choose a provider each block ("Auto").
+  bidId?: string | null;
 }
 
 export interface KeepAliveContextValue {
@@ -101,23 +105,28 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
     // keep showing/using it until it expires. Never close it here.
   }, []);
 
-  // Open ONE 6-minute block for a model (replicates withChatState.onOpenSession's
-  // router call, reusable outside the Chat component). Returns the session id.
-  const openBlock = async (modelId: string, isDirectPay: boolean) => {
+  // Open ONE 6-minute block (replicates withChatState.onOpenSession's router call,
+  // reusable outside the Chat component). With a bidId, stakes against that
+  // specific provider; without, the router picks one. Returns the session id.
+  const openBlock = async (
+    modelId: string,
+    isDirectPay: boolean,
+    bidId: string | null,
+  ) => {
     const failover = await client.getFailoverSetting();
     const authHeaders = await client.getAuthHeaders();
-    const resp = await fetch(
-      `${urlRef.current}/blockchain/models/${modelId}/session`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          failover: failover?.isEnabled || false,
-          sessionDuration: MIN_REQUEST_SECONDS,
-          directPayment: isDirectPay,
-        }),
-        headers: authHeaders,
-      },
-    );
+    const path = bidId
+      ? `${urlRef.current}/blockchain/bids/${bidId}/session`
+      : `${urlRef.current}/blockchain/models/${modelId}/session`;
+    const resp = await fetch(path, {
+      method: 'POST',
+      body: JSON.stringify({
+        failover: failover?.isEnabled || false,
+        sessionDuration: MIN_REQUEST_SECONDS,
+        directPayment: isDirectPay,
+      }),
+      headers: authHeaders,
+    });
     const data = await resp.json();
     if (!resp.ok) {
       throw new Error(data?.error || 'open failed');
@@ -160,7 +169,7 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
     const myId = run.id;
     let newSession: any = null;
     try {
-      const newId = await openBlock(run.modelId, run.isDirectPay);
+      const newId = await openBlock(run.modelId, run.isDirectPay, run.bidId);
       if (!newId) {
         throw new Error('no session id returned');
       }
@@ -231,7 +240,13 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
   scheduleNextRef.current = scheduleNext;
 
   const start = useCallback(
-    async ({ modelId, chatId, totalMinutes, isDirectPay }: StartKeepAliveOpts) => {
+    async ({
+      modelId,
+      chatId,
+      totalMinutes,
+      isDirectPay,
+      bidId = null,
+    }: StartKeepAliveOpts) => {
       stop(); // replace any existing run
       // Drop the previous run's block so the consumer's mirror effect can't route
       // inference to a stale/expired session while this one's first block opens.
@@ -251,13 +266,14 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
         modelId,
         chatId,
         isDirectPay,
+        bidId,
         id: myId,
       };
       setStatus({ running: true, index: 1, total, targetEndTime, modelId, chatId });
 
       let firstSession: any = null;
       try {
-        const firstId = await openBlock(modelId, isDirectPay);
+        const firstId = await openBlock(modelId, isDirectPay, bidId);
         if (!firstId) {
           throw new Error('no session id returned');
         }

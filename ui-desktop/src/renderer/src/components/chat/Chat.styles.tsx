@@ -233,6 +233,10 @@ export const KeepAliveChip = styled.button.attrs({ type: 'button' })<{
     outline: 2px solid ${(p) => p.theme.colors.morMain};
     outline-offset: 2px;
   }
+  &[disabled] {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
 `;
 
 export const KeepAliveStatus = styled.span`
