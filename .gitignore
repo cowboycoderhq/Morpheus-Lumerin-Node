@@ -7,6 +7,12 @@
 *.internal.*
 .site/
 
+# Real, specific strings for scripts/check-identity-leak.mjs — a maintainer's
+# actual name/email/domain. Never committed; see .opsec-patterns.example.json
+# for the shape. The generic checks (any local path, any non-allowlisted git
+# author) run without this file.
+.opsec-patterns.local.json
+
 # This project builds with YARN — CI runs `yarn install --frozen-lockfile` and
 # yarn.lock is the tested dependency tree. A package-lock.json produced by a
 # stray `npm install` resolves a DIFFERENT tree, and the mismatch surfaces later

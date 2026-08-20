@@ -1,0 +1,35 @@
+#!/bin/bash
+# Tracked pre-commit hook (see .githooks/README.md for how this gets wired up).
+# Two gates, in order — cheapest/most-severe first:
+#
+# 1. Identity-leak gate: scans staged content for a local path or a
+#    non-allowlisted git author before anything else runs. A leak here is
+#    worse than a build failure and costs nothing to check.
+# 2. Build gate: blocks the commit if typecheck/build exit nonzero (exit
+#    CODE, not output — a defect shipped over visible errors once already).
+#    Path-scoped to ui-desktop, since that's the only build this repo's
+#    pre-commit can cheaply run.
+#
+# `git commit --no-verify` bypasses both — mirrored in CI as the backstop
+# for exactly that case (.github/workflows/opsec-check.yml).
+set -u
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+node "$REPO_ROOT/scripts/check-identity-leak.mjs" --staged
+CODE=$?
+if [ $CODE -ne 0 ]; then
+  exit $CODE
+fi
+
+STAGED=$(git diff --cached --name-only)
+echo "$STAGED" | grep -q '^ui-desktop/' || exit 0
+echo "build gate: ui-desktop staged — running typecheck+build (skip: --no-verify, visible in reflog)"
+cd "$REPO_ROOT/ui-desktop" || exit 2
+npm run build
+CODE=$?
+if [ $CODE -ne 0 ]; then
+  echo "BUILD GATE: blocked — typecheck/build exited $CODE. Fix before committing." >&2
+  exit $CODE
+fi
+exit 0

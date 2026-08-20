@@ -1,0 +1,47 @@
+#!/bin/bash
+# Tracked pre-push hook. Mechanizes the manual "opsec check before pushing to
+# the public remote" ritual — every push this repo's own history made was
+# preceded by a hand-run ahead/behind check and a grep for personal
+# identifiers. This makes that automatic and unskippable-by-forgetting
+# (though not unskippable outright: `git push --no-verify` bypasses it, same
+# as pre-commit — CI is the backstop that can't be skipped that way).
+#
+# Standard pre-push protocol: stdin carries one line per ref being pushed —
+# "<local ref> <local sha1> <remote ref> <remote sha1>". For each line, the
+# range of commits this push actually introduces is remote_sha1..local_sha1
+# — unless remote_sha1 is all-zeros (a brand-new ref on the far end), in
+# which case there is no "before" to diff against, so fall back to every
+# commit reachable from local_sha1 that isn't already known via some OTHER
+# already-configured remote-tracking ref (a reasonable bound that avoids
+# rescanning the entire imported upstream history on a fork's first push).
+set -u
+ZERO_SHA="0000000000000000000000000000000000000000"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CHECK="$REPO_ROOT/scripts/check-identity-leak.mjs"
+FAILED=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO_SHA" ] && continue # a delete — nothing to scan
+
+  if [ "$remote_sha" = "$ZERO_SHA" ]; then
+    OLDEST_NEW="$(git rev-list "$local_sha" --not --remotes | tail -1)"
+    if [ -z "$OLDEST_NEW" ]; then
+      continue # nothing new relative to what's already known via any remote
+    fi
+    RANGE_FOR_DIFF="${OLDEST_NEW}^..$local_sha"
+    COMMIT_ARGS=("$local_sha" "--not" "--remotes")
+  else
+    RANGE_FOR_DIFF="$remote_sha..$local_sha"
+    COMMIT_ARGS=("$remote_sha..$local_sha")
+  fi
+
+  node "$CHECK" --diff "$RANGE_FOR_DIFF" || FAILED=1
+  node "$CHECK" --commits "${COMMIT_ARGS[@]}" || FAILED=1
+done
+
+if [ "$FAILED" -ne 0 ]; then
+  echo "OPSEC GATE: blocked this push — see findings above. Fix before pushing, or" >&2
+  echo "'git push --no-verify' to bypass (CI still checks; see .github/workflows/opsec-check.yml)." >&2
+  exit 1
+fi
+exit 0

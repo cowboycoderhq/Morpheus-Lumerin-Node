@@ -1,0 +1,10 @@
+{
+  "//": "Copy this file to .opsec-patterns.local.json (gitignored, never committed) to add real, specific strings for scripts/check-identity-leak.mjs to check for — a real name, a personal email, a domain. Never put real values in THIS file: it is committed and public. The built-in generic checks (any /Users/<name>/ path, any git author outside the allowlist) work without this file at all; this is only for extra, maintainer-specific tripwires.",
+  "patterns": [
+    "example-name-never-a-real-one",
+    "example@personal-domain-placeholder.test"
+  ],
+  "allowedAuthorPatterns": [
+    "@example-brand-domain\\.test$"
+  ]
+}

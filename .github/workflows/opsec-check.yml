@@ -1,0 +1,54 @@
+name: Opsec check
+# Server-side backstop for scripts/check-identity-leak.mjs. The local
+# .githooks/pre-commit and pre-push hooks run the same checks, but both
+# accept `--no-verify` and neither installs itself onto a machine that never
+# runs `yarn install` in ui-desktop/ — this is the one that can't be skipped
+# by forgetting a flag or never having set the hook up.
+#
+# Deliberately UNGATED by github.repository, unlike build.yml's jobs — this
+# needs to run on THIS fork's own pushes, not only on the upstream repo. It
+# also runs on every branch (build.yml's push trigger is limited to
+# main/test/dev/cicd/*), because an identity leak is exactly as real on any
+# other branch.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  identity-leak-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Full tree scan (always — the cheap, unconditional safety net)
+        run: node scripts/check-identity-leak.mjs --tree
+        env:
+          OPSEC_EXTRA_PATTERNS: ${{ secrets.OPSEC_EXTRA_PATTERNS }}
+
+      - name: Content scan over this push/PR's actual range
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: node scripts/check-identity-leak.mjs --diff "${{ github.event.before }}..${{ github.event.after }}"
+        env:
+          OPSEC_EXTRA_PATTERNS: ${{ secrets.OPSEC_EXTRA_PATTERNS }}
+
+      - name: Commit-author scan over this push's actual range
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: node scripts/check-identity-leak.mjs --commits "${{ github.event.before }}..${{ github.event.after }}"
+        env:
+          OPSEC_EXTRA_PATTERNS: ${{ secrets.OPSEC_EXTRA_PATTERNS }}
+
+      - name: Content scan over this PR's range
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-identity-leak.mjs --diff "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+        env:
+          OPSEC_EXTRA_PATTERNS: ${{ secrets.OPSEC_EXTRA_PATTERNS }}
+
+      - name: Commit-author scan over this PR's range
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-identity-leak.mjs --commits "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+        env:
+          OPSEC_EXTRA_PATTERNS: ${{ secrets.OPSEC_EXTRA_PATTERNS }}
