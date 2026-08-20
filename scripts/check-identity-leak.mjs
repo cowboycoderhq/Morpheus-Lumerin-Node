@@ -258,7 +258,11 @@ function runCommits(revListArgs, allowedAuthorPatterns) {
     if (!authorLine) continue;
     for (const [role, who] of [['author', authorLine], ['committer', committerLine]]) {
       if (!who) continue;
-      const allowed = allowedAuthorPatterns.some((re) => re.test(who));
+      // Match against the bare email, not "Name <email>" — an allowlist
+      // pattern anchored with `$` (the default is @cowboycoderhq.com$)
+      // would never match the trailing `>` in the full string otherwise.
+      const email = who.match(/<([^>]+)>/)?.[1] ?? who;
+      const allowed = allowedAuthorPatterns.some((re) => re.test(email));
       if (!allowed) {
         findings.push({ file: `commit ${sha?.slice(0, 12)}`, pattern: `${role} not on the allowlist`, text: who });
       }
