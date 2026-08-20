@@ -161,6 +161,9 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     runsRef.current = new Map();
   }
   const runCounterRef = useRef(0);
+  // Session ids of runs that have ended, kept so their still-open final block
+  // remains claimed. See publish().
+  const retainedIdsRef = useRef<Map<string, string[]>>(new Map());
   const urlRef = useRef(url);
   urlRef.current = url;
   const addressRef = useRef(address);
@@ -175,7 +178,16 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
 
   const publish = () => {
     const nextStatuses: Record<string, KeepAliveStatus> = {};
+    // Seed with the ids of runs that have STOPPED. Their final block stays open
+    // for up to a full block after the run ends (we never close early — that
+    // would time-lock the stake), and dropping the claim the moment the run left
+    // the map left that paid block unowned and adoptable by any unbound chat on
+    // the same model. Retaining costs nothing: an id that has since expired is
+    // no longer in openSessions, so claiming it can never block anything real.
     const nextIds: Record<string, string[]> = {};
+    retainedIdsRef.current.forEach((ids, key) => {
+      nextIds[key] = [...ids];
+    });
     runsRef.current!.forEach((run, key) => {
       nextStatuses[key] = {
         running: run.running,
@@ -213,9 +225,22 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
   // thread is going away" must pass the id — an argument-less stop from a chat
   // switch would kill every other chat's auto-renewal, which is the whole point
   // of running them in parallel.
+  // Hand a dying run's opened ids to the retained map BEFORE dropping it, so its
+  // still-open final block keeps its claim (see publish()).
+  const retire = (run: KeepAliveRun, key: string) => {
+    const prior = retainedIdsRef.current.get(key) || [];
+    retainedIdsRef.current.set(
+      key,
+      Array.from(new Set([...prior, ...run.openedSessionIds])),
+    );
+  };
+
   const stop = useCallback((chatId?: string) => {
     if (chatId === undefined) {
-      runsRef.current!.forEach((run) => clearRunTimer(run));
+      runsRef.current!.forEach((run, key) => {
+        clearRunTimer(run);
+        retire(run, key);
+      });
       runsRef.current!.clear();
     } else {
       const run = runsRef.current!.get(chatId);
@@ -223,6 +248,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
         return;
       }
       clearRunTimer(run);
+      retire(run, chatId);
       runsRef.current!.delete(chatId);
     }
     publish();
@@ -374,7 +400,12 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       run.timer = setTimeout(() => {
         // Identity-checked: a NEW run may have been started on this same chat
         // during the wait, and clearing by key alone would delete that live run.
-        if (runsRef.current!.get(key)?.id === myId) {
+        const dying = runsRef.current!.get(key);
+        if (dying?.id === myId) {
+          // Same retention as an explicit stop: this fires when the block ENDS,
+          // but the id must stay claimed for the same reason (and a run that
+          // reached its target is the commonest way a run ends).
+          retire(dying, key);
           runsRef.current!.delete(key);
           publish();
         }
