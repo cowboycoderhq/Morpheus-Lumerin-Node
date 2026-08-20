@@ -88,6 +88,7 @@ import {
   userTextFromPrompt,
 } from './utils';
 import { Cooldown } from './Cooldown';
+import { useKeepAlive } from '../keepalive/KeepAliveProvider';
 import ImageViewer from 'react-simple-image-viewer';
 import { ChatData, HistoryMessage } from './interfaces';
 import { formatMor } from '../../utils/coinValue';
@@ -178,24 +179,14 @@ export const Chat = (props: ChatProps) => {
   // --- Keep-alive (auto-restake) --------------------------------------------
   // Target total minutes for a rolling session; 0 = off (a single auto-sized
   // session, the existing behaviour). When > 0, the app chains 6-minute stakes
-  // to cover the window while only ~one increment is ever locked.
+  // to cover the window while only ~one increment is ever locked. The restake
+  // LOOP itself lives in KeepAliveProvider (above the tab router) so it survives
+  // navigating away from Chat; this component only drives + reflects it.
   const [keepAliveTargetMin, setKeepAliveTargetMin] = useState(0);
-  const [keepAliveStatus, setKeepAliveStatus] = useState<{
-    running: boolean;
-    index: number;
-    total: number;
-    targetEndTime: number;
-  } | null>(null);
-  // The loop's live state lives in a ref so the scheduled timer reads current
-  // values without being torn down on every render.
-  const keepAliveRef = useRef<{
-    running: boolean;
-    targetEndTime: number;
-    index: number;
-    total: number;
-    isDirectPay: boolean;
-  } | null>(null);
-  const keepAliveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keepAlive = useKeepAlive();
+  // Guards the Stake button against a double-click opening two first blocks
+  // before the first render reflects the started run.
+  const startingRollingRef = useRef(false);
 
   // --- Cached data layer (stale-while-revalidate via react-query) ---------
   // These queries live in the app-level QueryClient, so navigating away from
@@ -436,12 +427,6 @@ export const Chat = (props: ChatProps) => {
 
   const MIN_REQUEST_SECONDS = 5 * 60 + 60; // 5-min contract floor + 1-min cushion
 
-  // Keep-alive opens the NEXT increment this many seconds before the current one
-  // expires, so inference never drops at the boundary. Both are staked during
-  // the overlap (~2x a 6-min stake), then the old one expires and returns to 1x.
-  // The overlap must comfortably exceed a session-open round-trip on Base.
-  const KEEPALIVE_OVERLAP_SEC = 25;
-
   const calculateAcceptableDuration = (
     pricePerSecond: number,
     balance: number,
@@ -481,13 +466,28 @@ export const Chat = (props: ChatProps) => {
   };
 
   const setSessionData = async (sessionId) => {
-    const allSessions = await refreshSessions();
-    const targetSessionData = allSessions.find((x) => x.Id == sessionId);
+    // The router can return a freshly-opened session id BEFORE that session is
+    // queryable via getSessionsByUser (tx still mining / indexing lag). Poll a
+    // few times before giving up, and NEVER commit a partial activeSession: a
+    // {sessionId}-only object has no `.Id`, so the next chat request would send
+    // session_id=undefined (router rejects it as invalid hex). On a hard miss,
+    // throw WITHOUT touching state so callers (including the keep-alive loop)
+    // stop cleanly and the prior good session stays intact.
+    let targetSessionData;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const allSessions = await refreshSessions();
+      targetSessionData = allSessions.find((x) => x.Id == sessionId);
+      if (targetSessionData) break;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    if (!targetSessionData) {
+      throw new Error(`Opened session ${sessionId} is not yet queryable`);
+    }
     setActiveSession({ ...targetSessionData, sessionId });
-    const targetModel = chainData.models.find(
+    const targetModel = chainData?.models?.find(
       (x) => x.Id == targetSessionData.ModelAgentId,
     );
-    const targetBid = targetModel.bids.find(
+    const targetBid = targetModel?.bids?.find(
       (x) => x.Id == targetSessionData.BidID,
     );
     setSelectedBid(targetBid);
@@ -585,188 +585,102 @@ export const Chat = (props: ChatProps) => {
     }
   };
 
-  // Stop a rolling session: stop SCHEDULING further increments. Never closes the
-  // current increment — an early close would time-lock most of its stake for up
-  // to ~24h; letting it expire naturally returns the full stake with no hold.
-  const stopKeepAlive = () => {
-    if (keepAliveTimerRef.current) {
-      clearTimeout(keepAliveTimerRef.current);
-      keepAliveTimerRef.current = null;
-    }
-    if (keepAliveRef.current) {
-      keepAliveRef.current = { ...keepAliveRef.current, running: false };
-    }
-    setKeepAliveStatus(null);
-  };
-
   // Start a rolling session that keeps the user in inference for `totalMinutes`
-  // by chaining 6-minute stakes to the same model. Only ~one increment (briefly
-  // ~two, across the boundary overlap) is ever locked.
-  const startKeepAlive = async (totalMinutes: number, isDirectPay: boolean) => {
-    const model =
-      selectedModel ??
-      chainData?.models?.find((m: any) => m.Id == chat?.modelId);
-    if (!model?.bids?.length) {
-      props.toasts.toast(
-        'error',
-        'This model is no longer available — pick another to continue.',
-      );
+  // by chaining 6-minute stakes to the same model. The restake LOOP runs in
+  // KeepAliveProvider (above the tab router) so it survives leaving Chat; here we
+  // only gate affordability, seed a fresh chat thread, and hand off to it.
+  const startRolling = async (isDirectPay: boolean) => {
+    // Re-entrancy guard: a rapid double-click must not open two first blocks.
+    if (startingRollingRef.current || keepAlive.status?.running) {
       return;
     }
-    // Each increment stakes only the 6-minute floor; you need ~2x that free so
-    // the next increment can open while the current one is still staked (the
-    // overlap that keeps inference gapless). Below that, don't start — the run
-    // would stall after the first increment. Price the 2x off the PRICIEST
-    // AFFORDABLE provider (priceForDuration) — the one onOpenSession sizes the
-    // stake against — not the cheapest, or a wallet holding exactly 2x the
-    // cheapest passes here but can't cover the pricier provider the router matches.
-    const aff = getStakeAffordability(model.bids, Number(balances.mor));
-    const perIncrementStake = Number(
-      calculateStake(aff.priceForDuration, MIN_REQUEST_SECONDS / 60),
-    );
-    if (
-      !aff.known ||
-      aff.affordableCount < 1 ||
-      !Number.isFinite(perIncrementStake) ||
-      perIncrementStake <= 0 ||
-      Number(balances.mor) < 2 * perIncrementStake
-    ) {
-      props.toasts.toast(
-        'error',
-        'Not enough MOR to keep a rolling session — you need about twice a 6-minute stake free. Add MOR and try again.',
-      );
-      return;
-    }
-
-    const total = Math.max(
-      1,
-      Math.ceil((totalMinutes * 60) / MIN_REQUEST_SECONDS),
-    );
-    const targetEndTime = Math.floor(Date.now() / 1000) + totalMinutes * 60;
-    keepAliveRef.current = {
-      running: true,
-      targetEndTime,
-      index: 1,
-      total,
-      isDirectPay,
-    };
-    setKeepAliveStatus({ running: true, index: 1, total, targetEndTime });
-
-    // First increment starts a fresh chat thread (isReopen=false). The 6-minute
-    // override keeps the stake to one increment. The scheduler effect (keyed on
-    // activeSession.EndsAt) arms the next increment once this one lands.
+    startingRollingRef.current = true;
     try {
-      const opened = await onOpenSession(
-        false,
-        isDirectPay,
-        MIN_REQUEST_SECONDS,
-      );
-      if (!opened) {
-        stopKeepAlive();
+      const model =
+        selectedModel ??
+        chainData?.models?.find((m: any) => m.Id == chat?.modelId);
+      if (!model?.bids?.length) {
+        props.toasts.toast(
+          'error',
+          'This model is no longer available — pick another to continue.',
+        );
+        return;
       }
-    } catch (e) {
-      // A fresh session can briefly lag chain indexing so setSessionData throws;
-      // don't leave the run half-started (running=true, no session/timer).
-      console.error('keep-alive: first increment failed', e);
-      props.toasts.toast('error', 'Could not start the rolling session.');
-      stopKeepAlive();
+      // Each block stakes only the 6-minute floor; you need ~2x that free so the
+      // next block can open while the current one is still staked (the overlap
+      // that keeps inference gapless). Price the 2x off the PRICIEST AFFORDABLE
+      // provider (priceForDuration) — the one the router sizes the stake against
+      // — not the cheapest, or a wallet holding exactly 2x the cheapest passes
+      // here but can't cover the pricier provider the router matches.
+      const aff = getStakeAffordability(model.bids, Number(balances.mor));
+      const perBlockStake = Number(
+        calculateStake(aff.priceForDuration, MIN_REQUEST_SECONDS / 60),
+      );
+      if (
+        !aff.known ||
+        aff.affordableCount < 1 ||
+        !Number.isFinite(perBlockStake) ||
+        perBlockStake <= 0 ||
+        Number(balances.mor) < 2 * perBlockStake
+      ) {
+        props.toasts.toast(
+          'error',
+          'Not enough MOR to keep a rolling session — you need about twice a 6-minute stake free. Add MOR and try again.',
+        );
+        return;
+      }
+
+      // Seed a fresh chat thread and hand the restaking to the provider. The
+      // mirror effect below adopts the provider's current block into activeSession.
+      const chatId = generateHashId();
+      setSelectedModel(model);
+      setMessages([]);
+      setChat({ id: chatId, createdAt: new Date(), modelId: model.Id });
+      await keepAlive.start({
+        modelId: model.Id,
+        chatId,
+        totalMinutes: keepAliveTargetMin,
+        isDirectPay,
+      });
+    } finally {
+      startingRollingRef.current = false;
     }
   };
 
-  // Auto-restake scheduler. While a keep-alive run is active, open the NEXT
-  // 6-minute increment shortly before the current one expires so inference never
-  // drops. Keyed on activeSession.EndsAt, so each landed increment re-arms the
-  // timer with that increment's closures (a mid-increment balance refetch won't
-  // re-arm, but affordability is backstopped by onOpenSession's own guard and
-  // the on-chain revert). Increments open with isReopen=true to preserve chat.id
-  // (conversation continuity) and are NEVER closed by us — natural expiry returns
-  // the full stake with no on-hold penalty.
+  // Mirror the provider's current block into local state so the header (staked +
+  // countdown) and inference (session_id header reads activeSession.Id) follow
+  // the background rotation. Runs on mount too, so returning to Chat mid-run
+  // restores the live session with no gap.
   useEffect(() => {
-    const ka = keepAliveRef.current;
-    if (!ka?.running || isLocal || !activeSession?.EndsAt) {
+    const cs = keepAlive.currentSession;
+    if (!keepAlive.status?.running || !cs) {
       return;
     }
-
-    const endsAt = Number(activeSession.EndsAt);
-    const nowSec = Math.floor(Date.now() / 1000);
-
-    // Within one increment of the target: stop scheduling. The current increment
-    // keeps serving inference until it lapses on its own; the run is done, so
-    // clear the keep-alive badge (the session itself stays active as normal).
-    if (nowSec + MIN_REQUEST_SECONDS >= ka.targetEndTime) {
-      keepAliveRef.current = { ...ka, running: false };
-      setKeepAliveStatus(null);
-      return;
+    setActiveSession(cs);
+    const model = chainData?.models?.find((m: any) => m.Id == cs.ModelAgentId);
+    const bid = model?.bids?.find((b: any) => b.Id == cs.BidID);
+    if (bid) {
+      setSelectedBid(bid);
     }
-
-    const fireAt = endsAt - KEEPALIVE_OVERLAP_SEC;
-    const delayMs = Math.max(0, (fireAt - nowSec) * 1000);
-
-    const tick = async () => {
-      const cur = keepAliveRef.current;
-      if (!cur?.running) {
-        return;
-      }
-      try {
-        const opened = await onOpenSession(
-          true,
-          cur.isDirectPay,
-          MIN_REQUEST_SECONDS,
-        );
-        if (!opened) {
-          // Couldn't open the next increment (e.g. balance ran low, or the open
-          // reverted). Stop gracefully; the current increment finishes its ~6
-          // minutes and returns its stake in full.
-          props.toasts.toast(
-            'info',
-            'Rolling session ended — could not open the next 6-minute block.',
-          );
-          stopKeepAlive();
-          return;
-        }
-      } catch (e) {
-        // setSessionData can throw if the new session lags chain indexing. Stop
-        // rather than zombie-run (running=true with no armed timer).
-        console.error('keep-alive: could not open next increment', e);
-        props.toasts.toast(
-          'info',
-          'Rolling session ended — could not open the next 6-minute block.',
-        );
-        stopKeepAlive();
-        return;
-      }
-      // Re-check AFTER the await: if Stop was pressed mid-open, do NOT revive the
-      // badge or bump the count. The one extra block that opened will lapse on
-      // its own (never closed → full stake back); just tell the user.
-      const c = keepAliveRef.current;
-      if (!c?.running) {
-        props.toasts.toast(
-          'info',
-          'Stopped — one 6-minute block was already opening and will lapse on its own.',
-        );
-        return;
-      }
-      const nextIndex = Math.min(c.index + 1, c.total);
-      keepAliveRef.current = { ...c, index: nextIndex };
-      setKeepAliveStatus({
-        running: true,
-        index: nextIndex,
-        total: c.total,
-        targetEndTime: c.targetEndTime,
-      });
-      // onOpenSession -> setSessionData updates activeSession.EndsAt, re-running
-      // this effect to arm the following increment.
-    };
-
-    keepAliveTimerRef.current = setTimeout(tick, delayMs);
-    return () => {
-      if (keepAliveTimerRef.current) {
-        clearTimeout(keepAliveTimerRef.current);
-        keepAliveTimerRef.current = null;
-      }
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession?.EndsAt, keepAliveStatus?.running, isLocal]);
+  }, [keepAlive.currentSession, keepAlive.status?.running]);
+
+  // Restore the rolling thread when Chat (re)mounts during an active run (e.g.
+  // returning from the Wallet tab). Re-point chat.id + model to the run and
+  // reload its transcript; the mirror effect handles the live session.
+  useEffect(() => {
+    const st = keepAlive.status;
+    if (!st?.running || chat?.id === st.chatId) {
+      return;
+    }
+    const model = chainData?.models?.find((m: any) => m.Id == st.modelId);
+    if (model) {
+      setSelectedModel(model);
+    }
+    setChat({ id: st.chatId, createdAt: new Date(), modelId: st.modelId });
+    loadChatHistory(st.chatId).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keepAlive.status?.running, keepAlive.status?.chatId]);
 
   const loadChatHistory = async (chatId: string) => {
     try {
@@ -851,7 +765,7 @@ export const Chat = (props: ChatProps) => {
   };
 
   const closeSession = async (sessionId: string) => {
-    stopKeepAlive(); // a manual close ends the rolling session; don't reopen
+    keepAlive.stop(); // a manual close ends the rolling session; don't reopen
     setIsActionLoading(true);
     await props.closeSession(sessionId);
     await refreshSessions();
@@ -873,7 +787,7 @@ export const Chat = (props: ChatProps) => {
   };
 
   const selectChat = async (chatData: ChatData) => {
-    stopKeepAlive(); // navigating to another chat ends the rolling session
+    keepAlive.stop(); // navigating to another chat ends the rolling session
     const modelId = chatData.modelId;
     if (!modelId) {
       console.warn('Model ID is missed');
@@ -1495,7 +1409,7 @@ export const Chat = (props: ChatProps) => {
   }, [selectedModel, meta.supply, meta.budget, balances.mor]);
 
   const onCreateNewChat = ({ modelId, isLocal }) => {
-    stopKeepAlive(); // leaving this thread ends any rolling session
+    keepAlive.stop(); // leaving this thread ends any rolling session
     abort = true;
     setMessages([]);
     setActiveSession(undefined);
@@ -1667,7 +1581,7 @@ export const Chat = (props: ChatProps) => {
                     <ChatIntroButton
                       onClick={() =>
                         keepAliveTargetMin > 0
-                          ? startKeepAlive(keepAliveTargetMin, false)
+                          ? startRolling(false)
                           : onOpenSession(false, false)
                       }
                       disabled={!isEnoughFunds}
@@ -1764,15 +1678,15 @@ export const Chat = (props: ChatProps) => {
                         <Cooldown endDate={activeSession?.EndsAt} />
                       </>
                     )}
-                    {keepAliveStatus?.running && (
+                    {keepAlive.status?.running && (
                       <>
                         {' · '}
                         <KeepAliveStatus>
                           <IconClock size={12} /> keep-alive{' '}
-                          {keepAliveStatus.index}/{keepAliveStatus.total} ·{' '}
-                          <Cooldown endDate={keepAliveStatus.targetEndTime} />{' '}
+                          {keepAlive.status.index}/{keepAlive.status.total} ·{' '}
+                          <Cooldown endDate={keepAlive.status.targetEndTime} />{' '}
                           left
-                          <KeepAliveStopBtn onClick={stopKeepAlive}>
+                          <KeepAliveStopBtn onClick={keepAlive.stop}>
                             <IconPlayerStopFilled size={12} /> Stop
                           </KeepAliveStopBtn>
                         </KeepAliveStatus>

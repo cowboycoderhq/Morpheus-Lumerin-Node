@@ -17,6 +17,7 @@ import { withClient } from '../store/hocs/clientContext';
 import selectors from '../store/selectors';
 import { queryKeys } from '../store/queries';
 import { getSessionsByUser } from '../store/utils/apiCallsHelper';
+import { KeepAliveProvider } from './keepalive/KeepAliveProvider';
 
 const fadeIn = keyframes`
   from {
@@ -120,15 +121,19 @@ export const Layout = () => (
     <Main
       data-scrollelement // Required by react-virtualized implementation in Dashboard/TxList
     >
-      <Routes>
-        <Route path="/wallet" element={<Dashboard />} />
-        <Route path="/chat" element={<Chat />} />
-        <Route path="/agents" element={<Agents />} />
-        <Route path="/models" element={<Models />} />
-        <Route path="/providers" element={<Providers />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="*" element={<Navigate replace to="/wallet" />} />
-      </Routes>
+      {/* KeepAliveProvider sits ABOVE <Routes> so a rolling session keeps
+          restaking across tab switches (Chat unmounts, this does not). */}
+      <KeepAliveProvider>
+        <Routes>
+          <Route path="/wallet" element={<Dashboard />} />
+          <Route path="/chat" element={<Chat />} />
+          <Route path="/agents" element={<Agents />} />
+          <Route path="/models" element={<Models />} />
+          <Route path="/providers" element={<Providers />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="*" element={<Navigate replace to="/wallet" />} />
+        </Routes>
+      </KeepAliveProvider>
     </Main>
     {/* <AutoPriceAdjuster /> */}
     <SessionPrefetcher />
