@@ -848,7 +848,16 @@ console.log('opencode: the provider plugin');
   const cfg2 = { provider: { theirs: { name: 'Their Provider' } } };
   await hooks.config(cfg2);
   ok('it adds the morpheus provider', !!cfg2.provider.morpheus);
-  ok('pointed at the running endpoint', cfg2.provider.morpheus.options.baseURL === base);
+  // A real opencode user found this exact gap: @ai-sdk/openai-compatible's
+  // baseURL appends /chat/completions directly, so the bare origin (what
+  // the descriptor stores, and what the /start command plugin separately
+  // needs) is the wrong value for THIS field — it made opencode POST
+  // /chat/completions instead of /v1/chat/completions and the endpoint,
+  // which only serves /v1/*, rejected it. This dynamically runs the actual
+  // generated plugin code, so it would have caught the real bug, not just
+  // its absence from a text scan.
+  ok('pointed at the running endpoint, at /v1 — not the bare origin',
+    cfg2.provider.morpheus.options.baseURL === `${base}/v1`);
   ok('carrying the key', cfg2.provider.morpheus.options.apiKey === TOKEN);
   ok('using the generic OpenAI-compatible adapter',
     cfg2.provider.morpheus.npm === '@ai-sdk/openai-compatible');

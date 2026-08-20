@@ -985,6 +985,18 @@ console.log('opencode: the config and the command we hand a terminal');
   ok('the provider plugin registers a config hook', /config: async \(config\)/.test(providerSrc));
   ok('the provider plugin only ever adds its own key',
     /config\.provider\.morpheus =/.test(providerSrc));
+  // Real bug, caught by a real opencode user: the descriptor's baseUrl is the
+  // bare ORIGIN (see the check above — it's shared with the /start command
+  // plugin, which needs the origin, not /v1). @ai-sdk/openai-compatible's
+  // baseURL is a different contract: it appends /chat/completions directly,
+  // so passing the origin straight through made opencode POST
+  // /chat/completions instead of /v1/chat/completions, and the endpoint
+  // (which only serves /v1/*) rejected it. Assert the FIX, not just its
+  // absence, so reverting to `baseURL: d.baseUrl` fails this by name.
+  ok('the provider plugin appends /v1 to the origin for @ai-sdk/openai-compatible',
+    /baseURL:\s*d\.baseUrl\.replace\(.*?\)\s*\+\s*'\/v1'/.test(providerSrc));
+  ok('and does NOT hand the bare origin straight to baseURL',
+    !/baseURL:\s*d\.baseUrl\s*,/.test(providerSrc));
   // A path with a space (Application Support) must survive JSON round-trip
   // intact — it is read by opencode, not by a shell, so it must NOT be quoted.
   ok('a path containing spaces is stored verbatim',
