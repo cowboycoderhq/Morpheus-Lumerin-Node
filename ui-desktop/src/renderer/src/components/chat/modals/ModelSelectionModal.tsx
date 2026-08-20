@@ -20,7 +20,11 @@ import {
 import Modal from '../../contracts/modals/Modal';
 import ModelRow from './ModelRow';
 import { isSecureModel, SECURE_MODE_INFO } from '../utils';
-import { sortModelsForPicker, ModelSortMode } from '../../../utils/marketplace';
+import {
+  sortModelsForPicker,
+  ModelSortMode,
+  modelPriceDisplay,
+} from '../../../utils/marketplace';
 
 /* The shared outer modal `Body` (in CreateContractModal.styles) bakes in
    `padding: 5rem` and never sets `overflow: hidden`, so an `auto`-height box
@@ -209,6 +213,52 @@ const PriceModeBtn = styled.button<{ $active: boolean }>`
   }
 `;
 
+// Price-range filter — two numeric inputs in the same unit as the price-mode
+// toggle, so "show as 6-min stake" filters in MOR and "per second" filters in MOR/s.
+const PriceRangeGroup = styled.div`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+`;
+
+const PriceRangeInput = styled.input`
+  width: 78px;
+  padding: 5px 8px;
+  border: 1px solid ${(p) => p.theme.colors.glassBorder};
+  border-radius: 8px;
+  background: transparent;
+  color: ${(p) => p.theme.colors.textPrimary};
+  font-size: 1.1rem;
+  font-family: inherit;
+
+  &::-webkit-outer-spin-button,
+  &::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  &::placeholder {
+    color: ${(p) => p.theme.colors.textSecondary};
+    opacity: 0.7;
+  }
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.5)};
+    outline-offset: -2px;
+  }
+`;
+
+const PriceRangeClear = styled.button`
+  border: none;
+  background: transparent;
+  color: ${(p) => p.theme.colors.textSecondary};
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 2px 4px;
+
+  &:hover {
+    color: ${(p) => p.theme.colors.morMain};
+  }
+`;
+
 const Body = styled.div`
   flex: 1 1 auto;
   min-height: 0;
@@ -375,6 +425,9 @@ const ModelSelectionModal = ({
   const [showTeeInfo, setShowTeeInfo] = useState(false);
   const [priceMode, setPriceMode] = useState<'perSec' | 'stake6m'>('perSec');
   const [sortMode, setSortMode] = useState<ModelSortMode>('standard');
+  // Price-range filter (in the current price-mode unit). Empty = no bound.
+  const [priceMin, setPriceMin] = useState('');
+  const [priceMax, setPriceMax] = useState('');
 
   // The 6-minute stake needs marketplace supply/budget; until those load, the
   // stake cannot be computed, so that toggle is disabled rather than showing a
@@ -431,8 +484,30 @@ const ModelSelectionModal = ({
   }, [enriched, search]);
 
   const visible = useMemo(() => {
+    // Price-range bounds in the CURRENT price-mode unit (MOR for 6-min stake,
+    // MOR/s for per-second). Empty or non-numeric = no bound.
+    const hasMin = priceMin.trim() !== '' && Number.isFinite(Number(priceMin));
+    const hasMax = priceMax.trim() !== '' && Number.isFinite(Number(priceMax));
+    const pMin = hasMin ? Number(priceMin) : -Infinity;
+    const pMax = hasMax ? Number(priceMax) : Infinity;
+    const priceActive = hasMin || hasMax;
+
+    // A model passes when its price (or price range across providers) OVERLAPS
+    // the requested [pMin, pMax]. Local models are free (0); unpriced/offline
+    // models are excluded once a bound is set.
+    const inPriceRange = (m: any) => {
+      if (!priceActive) return true;
+      if (m.isLocal) return 0 >= pMin && 0 <= pMax;
+      const pd = modelPriceDisplay(m.bids, priceMode, meta);
+      if (pd.kind === 'offline') return false;
+      const lo = pd.kind === 'single' ? pd.value : pd.min;
+      const hi = pd.kind === 'single' ? pd.value : pd.max;
+      return hi >= pMin && lo <= pMax;
+    };
+
     const filtered = enriched.filter((m: any) => {
       if (!matchesQuery(m, search)) return false;
+      if (!inPriceRange(m)) return false;
       const tags = m.Tags || [];
       switch (filter) {
         case 'all':
@@ -455,7 +530,7 @@ const ModelSelectionModal = ({
     });
 
     return sortModelsForPicker(filtered, sortMode);
-  }, [enriched, search, filter, sortMode]);
+  }, [enriched, search, filter, sortMode, priceMin, priceMax, priceMode, meta]);
 
   // Bail out *after* all hooks have run.
   if (!isActive) return null;
@@ -617,6 +692,46 @@ const ModelSelectionModal = ({
                 6-min stake
               </PriceModeBtn>
             </PriceModeGroup>
+          </PriceModeRow>
+          <PriceModeRow>
+            <PriceModeLabel>Price range</PriceModeLabel>
+            <PriceRangeGroup>
+              <PriceRangeInput
+                type="number"
+                min="0"
+                step="any"
+                inputMode="decimal"
+                placeholder="Min"
+                aria-label="Minimum price"
+                value={priceMin}
+                onChange={(e) => setPriceMin(e.target.value)}
+              />
+              <PriceModeLabel>–</PriceModeLabel>
+              <PriceRangeInput
+                type="number"
+                min="0"
+                step="any"
+                inputMode="decimal"
+                placeholder="Max"
+                aria-label="Maximum price"
+                value={priceMax}
+                onChange={(e) => setPriceMax(e.target.value)}
+              />
+              <PriceModeLabel>
+                {priceMode === 'stake6m' ? symbol : `${symbol}/s`}
+              </PriceModeLabel>
+              {(priceMin || priceMax) && (
+                <PriceRangeClear
+                  type="button"
+                  onClick={() => {
+                    setPriceMin('');
+                    setPriceMax('');
+                  }}
+                >
+                  Clear
+                </PriceRangeClear>
+              )}
+            </PriceRangeGroup>
           </PriceModeRow>
           {bidsLoading && (
             <BidsLoadingHint>

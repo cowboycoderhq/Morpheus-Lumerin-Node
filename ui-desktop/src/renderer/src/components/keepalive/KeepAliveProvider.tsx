@@ -9,7 +9,6 @@ import {
 } from 'react';
 import { useSelector } from 'react-redux';
 import selectors from '../../store/selectors';
-import { getSessionsByUser } from '../../store/utils/apiCallsHelper';
 import { withClient } from '../../store/hocs/clientContext';
 import { ToastsContext } from '../toasts';
 
@@ -135,21 +134,25 @@ const KeepAliveProviderInner = ({ client, children }: any) => {
   };
 
   // The router can return a session id before the session is queryable (tx still
-  // mining / indexing lag). Poll a few times before giving up.
+  // mining / indexing lag). Poll a few times before giving up. Fetch ONLY the
+  // newest page — a just-opened session is the newest under order=desc, so this
+  // avoids paginating the user's entire (potentially huge) session history, which
+  // otherwise made confirming each block take tens of seconds.
   const fetchSession = async (sessionId: string) => {
     for (let i = 0; i < 5; i++) {
-      let sessions: any[] | null | undefined = null;
+      let sessions: any[] = [];
       try {
         const authHeaders = await client.getAuthHeaders();
-        sessions = await getSessionsByUser(
-          urlRef.current,
-          addressRef.current,
-          authHeaders,
+        const resp = await fetch(
+          `${urlRef.current}/blockchain/sessions/user?user=${addressRef.current}&offset=0&limit=50&order=desc`,
+          { headers: authHeaders },
         );
+        const data = await resp.json();
+        sessions = data?.sessions || [];
       } catch {
-        sessions = null;
+        sessions = [];
       }
-      const s = (sessions || []).find((x: any) => x.Id == sessionId);
+      const s = sessions.find((x: any) => x.Id == sessionId);
       if (s) {
         return s;
       }

@@ -246,26 +246,66 @@ export const KeepAliveStatus = styled.span`
   color: ${(p) => p.theme.colors.morMain};
 `;
 
+// The rolling session gets its own slim bar below the header so the header row
+// stays uncluttered (identity + nav only) and the keep-alive status + Stop get
+// their own breathing room, aligned to the same 1120px content column.
+export const KeepAliveBar = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  max-width: 1120px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1rem 2.4rem;
+  background: ${(p) => p.theme.colors.brandTint(0.05)};
+  border-bottom: 1px solid ${(p) => p.theme.colors.brandTint(0.14)};
+  font-size: ${(p) => p.theme.type.sm};
+  color: ${(p) => p.theme.colors.textSecondary};
+`;
+
+export const KeepAliveBarInfo = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+`;
+
+export const KeepAliveBarLabel = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: ${(p) => p.theme.colors.morMain};
+  font-weight: 600;
+`;
+
 export const KeepAliveStopBtn = styled.button.attrs({ type: 'button' })`
   display: inline-flex;
   align-items: center;
-  gap: 0.2rem;
-  padding: 0.1rem 0.5rem;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  min-height: 32px;
+  padding: 0.4rem 1.1rem;
   border-radius: ${(p) => p.theme.radii.pill};
   font-family: inherit;
   font-size: ${(p) => p.theme.type.sm};
   font-weight: 600;
   cursor: pointer;
-  color: ${(p) => p.theme.colors.textSecondary};
+  color: ${(p) => p.theme.colors.textPrimary};
   background: transparent;
-  border: 1px solid ${(p) => p.theme.colors.brandTint(0.3)};
+  border: 1px solid ${(p) => p.theme.colors.brandTint(0.35)};
   transition:
     color 0.15s ease,
-    border 0.15s ease;
+    border 0.15s ease,
+    background 0.15s ease;
 
   &:hover {
     color: ${(p) => p.theme.colors.morMain};
     border-color: ${(p) => p.theme.colors.brandTint(0.7)};
+    background: ${(p) => p.theme.colors.brandTint(0.08)};
   }
 `;
 
