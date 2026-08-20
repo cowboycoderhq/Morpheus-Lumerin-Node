@@ -9,17 +9,27 @@ import (
 
 type ChatStorageInterface interface {
 	LoadChatFromFile(chatID string) (*ChatHistory, error)
-	StorePromptResponseToFile(chatID string, isLocal bool, modelID string, prompt interface{}, responses []Chunk, promptAt time.Time, responseAt time.Time) error
+	StorePromptResponseToFile(chatID string, isLocal bool, modelID string, sessionID string, prompt interface{}, responses []Chunk, promptAt time.Time, responseAt time.Time) error
 	GetChats() []Chat
 	DeleteChat(chatID string) error
 	UpdateChatTitle(chatID string, title string) error
 }
 
 type ChatHistory struct {
-	Title    string        `json:"title"`
-	ModelId  string        `json:"modelId"`
-	IsLocal  bool          `json:"isLocal"`
-	Messages []ChatMessage `json:"messages"`
+	Title   string `json:"title"`
+	ModelId string `json:"modelId"`
+	IsLocal bool   `json:"isLocal"`
+	// The marketplace session this chat's turns were served by. Empty for local
+	// models, and empty for chats written before this field existed (Go leaves
+	// absent JSON fields at the zero value, so old files load fine and pick the
+	// id up on their next write — no migration).
+	//
+	// This exists so a chat can be re-bound to ITS OWN session. Without it the
+	// client had to re-derive the session from the model on every chat switch
+	// (first open session wins), which made two chats on one model share one
+	// session and made a second session on the same provider unreachable.
+	SessionID string        `json:"sessionId"`
+	Messages  []ChatMessage `json:"messages"`
 }
 
 // ChatMessage.Prompt is an `interface{}`, so a history read back from disk holds
@@ -124,10 +134,14 @@ type ChatMessage struct {
 }
 
 type Chat struct {
-	ChatID    string `json:"chatId"`
-	ModelID   string `json:"modelId"`
-	Title     string `json:"title"`
-	IsLocal   bool   `json:"isLocal"`
+	ChatID  string `json:"chatId"`
+	ModelID string `json:"modelId"`
+	Title   string `json:"title"`
+	IsLocal bool   `json:"isLocal"`
+	// Mirrors ChatHistory.SessionID so the chat LIST alone is enough to bind each
+	// row to its own session; the client would otherwise have to fetch every
+	// chat's full transcript just to learn which session it belongs to.
+	SessionID string `json:"sessionId"`
 	CreatedAt int64  `json:"createdAt"`
 }
 

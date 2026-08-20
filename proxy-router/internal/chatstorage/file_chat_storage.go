@@ -14,7 +14,16 @@ import (
 
 // ChatStorage handles storing conversations to files.
 type ChatStorage struct {
-	dirPath            string                 // Directory path to store the files
+	dirPath string // Directory path to store the files
+	// Guards the fileMutexes MAP itself. The per-file mutexes serialise writes to
+	// one chat file; they do nothing for concurrent access to the map holding
+	// them. initFileMutex read-then-wrote it while other goroutines were reading
+	// it, which in Go is not a benign race — the runtime throws "concurrent map
+	// writes" and takes the whole proxy-router down, killing inference for every
+	// live session while their stakes keep burning time. Two prompts for
+	// DIFFERENT chats at once is all it takes, which concurrent rolling sessions
+	// turn from a rarity into the normal usage pattern.
+	mutexesMu          sync.Mutex
 	fileMutexes        map[string]*sync.Mutex // Map to store mutexes for each file
 	forwardChatContext bool
 }
@@ -28,17 +37,15 @@ func NewChatStorage(dirPath string) *ChatStorage {
 }
 
 // StorePromptResponseToFile stores the prompt and response to a file.
-func (cs *ChatStorage) StorePromptResponseToFile(identifier string, isLocal bool, modelId string, prompt interface{}, responses []gcs.Chunk, promptAt time.Time, responseAt time.Time) error {
+func (cs *ChatStorage) StorePromptResponseToFile(identifier string, isLocal bool, modelId string, sessionId string, prompt interface{}, responses []gcs.Chunk, promptAt time.Time, responseAt time.Time) error {
 	if err := os.MkdirAll(cs.dirPath, os.ModePerm); err != nil {
 		return err
 	}
 
 	filePath := filepath.Join(cs.dirPath, identifier+".json")
-	cs.initFileMutex(filePath)
-
-	// Lock the file mutex
-	cs.fileMutexes[filePath].Lock()
-	defer cs.fileMutexes[filePath].Unlock()
+	mu := cs.fileMutex(filePath)
+	mu.Lock()
+	defer mu.Unlock()
 
 	var chatHistory gcs.ChatHistory
 	if _, err := os.Stat(filePath); err == nil {
@@ -130,6 +137,17 @@ func (cs *ChatStorage) StorePromptResponseToFile(identifier string, isLocal bool
 		chatHistory.IsLocal = isLocal
 	}
 
+	// Updated on EVERY write, not only the first, because a chat outlives the
+	// session serving it: sessions expire and the user opens another for the same
+	// thread. Pinning it once would leave the chat bound to a dead session.
+	//
+	// Guarded on non-empty so a turn that carries no session (a local model, or a
+	// request with no session_id header) cannot erase a good binding — silently
+	// unbinding a chat would send the next prompt with session_id=undefined.
+	if sessionId != "" {
+		chatHistory.SessionID = sessionId
+	}
+
 	newMessages := append(chatHistory.Messages, newEntry)
 	chatHistory.Messages = newMessages
 
@@ -164,12 +182,21 @@ func (cs *ChatStorage) GetChats() []gcs.Chat {
 		if err != nil {
 			continue
 		}
+		// Messages[0] unguarded panicked on a zero-message file, and gin is built
+		// with gin.New() (no Recovery middleware), so one such file took out the
+		// whole request. This list is now the sole carrier of every chat's session
+		// binding — losing it wholesale is far worse than skipping one odd file.
+		var createdAt int64
+		if len(fileContent.Messages) > 0 {
+			createdAt = fileContent.Messages[0].PromptAt
+		}
 		chats = append(chats, gcs.Chat{
 			ChatID:    chatID,
 			Title:     fileContent.Title,
-			CreatedAt: fileContent.Messages[0].PromptAt,
+			CreatedAt: createdAt,
 			ModelID:   fileContent.ModelId,
 			IsLocal:   fileContent.IsLocal,
+			SessionID: fileContent.SessionID,
 		})
 	}
 
@@ -178,10 +205,9 @@ func (cs *ChatStorage) GetChats() []gcs.Chat {
 
 func (cs *ChatStorage) DeleteChat(identifier string) error {
 	filePath := filepath.Join(cs.dirPath, identifier+".json")
-	cs.initFileMutex(filePath)
-
-	cs.fileMutexes[filePath].Lock()
-	defer cs.fileMutexes[filePath].Unlock()
+	mu := cs.fileMutex(filePath)
+	mu.Lock()
+	defer mu.Unlock()
 
 	if err := os.Remove(filePath); err != nil {
 		return err
@@ -197,10 +223,9 @@ func (cs *ChatStorage) UpdateChatTitle(identifier string, title string) error {
 	chat.Title = title
 
 	filePath := filepath.Join(cs.dirPath, identifier+".json")
-	cs.initFileMutex(filePath)
-
-	cs.fileMutexes[filePath].Lock()
-	defer cs.fileMutexes[filePath].Unlock()
+	mu := cs.fileMutex(filePath)
+	mu.Lock()
+	defer mu.Unlock()
 
 	updatedContent, err := json.MarshalIndent(chat, "", "  ")
 	if err != nil {
@@ -216,10 +241,9 @@ func (cs *ChatStorage) UpdateChatTitle(identifier string, title string) error {
 
 func (cs *ChatStorage) LoadChatFromFile(identifier string) (*gcs.ChatHistory, error) {
 	filePath := filepath.Join(cs.dirPath, identifier+".json")
-	cs.initFileMutex(filePath)
-
-	cs.fileMutexes[filePath].Lock()
-	defer cs.fileMutexes[filePath].Unlock()
+	mu := cs.fileMutex(filePath)
+	mu.Lock()
+	defer mu.Unlock()
 
 	var data gcs.ChatHistory
 	fileContent, err := os.ReadFile(filePath)
@@ -234,9 +258,19 @@ func (cs *ChatStorage) LoadChatFromFile(identifier string) (*gcs.ChatHistory, er
 	return &data, nil
 }
 
-// initFileMutex initializes a mutex for the file if not already present.
-func (cs *ChatStorage) initFileMutex(filePath string) {
-	if _, exists := cs.fileMutexes[filePath]; !exists {
-		cs.fileMutexes[filePath] = &sync.Mutex{}
+// fileMutex returns the mutex for filePath, creating it if absent. Both the
+// lookup and the insert happen under mutexesMu, so the map is never read while
+// another goroutine writes it. Returning the mutex (rather than having callers
+// re-index the map afterwards) is what makes that guarantee hold end to end —
+// an unguarded `cs.fileMutexes[filePath].Lock()` at the call site would put the
+// read straight back.
+func (cs *ChatStorage) fileMutex(filePath string) *sync.Mutex {
+	cs.mutexesMu.Lock()
+	defer cs.mutexesMu.Unlock()
+	mu, exists := cs.fileMutexes[filePath]
+	if !exists {
+		mu = &sync.Mutex{}
+		cs.fileMutexes[filePath] = mu
 	}
+	return mu
 }

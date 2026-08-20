@@ -31,12 +31,19 @@ export type ChatTitle = {
   isLocal: boolean
   modelId: string
   title: string
+  // The session this chat is bound to. Optional because chats written before the
+  // router persisted it have no value, and local-model chats never do.
+  sessionId?: string
 }
 
 export type ChatHistory = {
   title: string
   modelId: string
-  sessionId: string
+  isLocal: boolean
+  // Was declared here long before the router actually sent it — the Go struct had
+  // no such field, so every read was `undefined`. It is real now; keep it
+  // optional so pre-existing chat files (which have no sessionId) type honestly.
+  sessionId?: string
   messages: ChatMessage[]
 }
 

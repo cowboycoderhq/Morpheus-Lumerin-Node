@@ -194,3 +194,48 @@ export function modelMatchesQuery(model, q) {
     .join(' ')}`.trim();
   return tokens.every((t) => haystack.includes(t));
 }
+
+// Which session does a chat talk through?
+//
+// The binding lives on the CHAT, not on the model. Resolving it from the model
+// (`openSessions.find(s => s.ModelAgentId === modelId)` — first open session
+// wins) was what made parallel sessions impossible: every chat on a model
+// collapsed onto one session, so a second session with the same provider could
+// never be reached even though the contract and the router both allow it.
+//
+// Rules, in order:
+//  - bound chat  -> ONLY its own session. If that session has closed the answer
+//    is undefined (the chat goes readonly and offers a reopen). It must never
+//    fall back to another open session on the same model: that would silently
+//    bill this thread's prompts to a different session.
+//  - unbound chat -> the legacy model lookup, so chats written before the router
+//    persisted sessionId keep working instead of going dead.
+// `claimedByOthers` is the set of session ids other chats are already bound to.
+// The legacy fallback MUST skip them: without it a legacy chat adopts a session
+// that a bound chat owns, and — unlike the old code, which merely recomputed the
+// same wrong answer each time — the router now PERSISTS that binding on the next
+// turn, so two chat files permanently claim one session and both bill to it.
+export function resolveChatSession(openSessions, chat, claimedByOthers) {
+  const open = openSessions || [];
+  if (chat?.sessionId) {
+    return open.find((s) => s.Id === chat.sessionId);
+  }
+  if (!chat?.modelId) {
+    return undefined;
+  }
+  const claimed = claimedByOthers || new Set();
+  return open.find(
+    (s) => s.ModelAgentId === chat.modelId && !claimed.has(s.Id),
+  );
+}
+
+// Session ids owned by chats OTHER than `exceptChatId`.
+export function sessionsClaimedByOtherChats(chats, exceptChatId) {
+  const claimed = new Set();
+  for (const c of chats || []) {
+    if (c?.sessionId && c.id !== exceptChatId) {
+      claimed.add(c.sessionId);
+    }
+  }
+  return claimed;
+}
