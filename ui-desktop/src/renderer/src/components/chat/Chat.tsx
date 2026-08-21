@@ -215,9 +215,42 @@ export const Chat = (props: ChatProps) => {
   // which point the stale drawer entry won and the just-paid-for session was
   // orphaned (the user had to stake a third time). Every binding change goes
   // through here so the two cannot drift.
-  const bindChatToSession = (chatId?: string, sessionId?: string) => {
+  // `persist` is false only where KeepAliveProvider has ALREADY written the
+  // binding for this block (it persists every run's rotation, including runs
+  // whose chat is not on screen). Everywhere else it must default to true.
+  const bindChatToSession = (
+    chatId?: string,
+    sessionId?: string,
+    persist = true,
+    modelId?: string,
+  ) => {
     if (!chatId || !sessionId) {
       return;
+    }
+    // Persist it. MOR is spent when the session OPENS, but the router used to
+    // record the owner only when the first prompt was stored — so opening (or
+    // reopening) a session and switching away before typing left the binding in
+    // renderer memory alone. On remount it was gone: the paid session was
+    // orphaned, or adopted by another chat, which then wrote the theft to disk.
+    // Fire-and-forget: a failed bind must not abandon a session that is already
+    // paid for, and the no-adoption rule means the worst case is a visible
+    // orphan rather than silent misbilling.
+    if (persist) {
+      props.client
+        ?.updateChatSession?.({ id: chatId, sessionId, modelId })
+        .then((okRes: boolean) => {
+          // The contract is "a failed bind surfaces as an orphan", so it has to
+          // actually surface. Returning false (disk full, permissions) used to be
+          // swallowed silently, which is the failure mode this whole change is
+          // meant to remove.
+          if (okRes === false) {
+            props.toasts.toast(
+              'error',
+              'Could not record which chat this session belongs to. It stays open and paid for — find it under Sessions.',
+            );
+          }
+        })
+        .catch((e: any) => console.warn('failed to persist chat session', e));
     }
     setChat((prev) =>
       prev && prev.id === chatId && prev.sessionId !== sessionId
@@ -438,9 +471,31 @@ export const Chat = (props: ChatProps) => {
     // one stake, and the router wrote that onto disk on the next prompt. Chat
     // unmounts on every tab switch, so this fired on a routine trip to Wallet
     // and back, not just at startup.
+    // The DURABLE record is the only claim that survives a relaunch: both
+    // keep-alive maps are refs and are empty after the process restarts, which is
+    // exactly the "open a session, quit before typing, reopen the app" case this
+    // whole change exists for. Fold the persisted bindings from GET /v1/chats in,
+    // or boot happily staples a paid session to a brand-new chat id again.
+    // MERGE per chat, never spread: a chat can have both a live run entry and a
+    // persisted one, and `{...live, ...persisted}` would silently drop whichever
+    // lost — the same key-overwrite that already cost this branch two defects.
+    const claimSources: Record<string, string[]> = {
+      ...keepAlive.sessionIdsByChat,
+    };
+    (
+      (chatTitlesQuery.data as Array<{ chatId: string; sessionId?: string }>) ||
+      []
+    ).forEach((t) => {
+      if (t?.sessionId) {
+        claimSources[t.chatId] = [
+          ...(claimSources[t.chatId] || []),
+          t.sessionId,
+        ];
+      }
+    });
     const openSessions = adoptableSessions(
       mappedSessions.filter((s) => !isClosed(s)),
-      keepAlive.sessionIdsByChat,
+      claimSources,
       keepAlive.retainedSessionIds,
     );
 
@@ -498,7 +553,7 @@ export const Chat = (props: ChatProps) => {
         setSelectedBid(openBid);
       })
       .catch((e) => console.error('Failed to load open bid', e));
-  }, [modelsDataQuery.data, sessionsQuery.data]);
+  }, [modelsDataQuery.data, sessionsQuery.data, chatTitlesQuery.data]);
 
   // Keep the chat-history drawer list in sync with the cached titles + models.
   useEffect(() => {
@@ -629,7 +684,12 @@ export const Chat = (props: ChatProps) => {
     // switched away, so its stake is never orphaned. Use targetSessionData.Id
     // rather than the raw argument so the stored id is the canonical one.
     const boundId = targetSessionData.Id ?? sessionId;
-    bindChatToSession(targetChatId, boundId);
+    bindChatToSession(
+      targetChatId,
+      boundId,
+      true,
+      targetSessionData.ModelAgentId,
+    );
 
     // Only touch the VISIBLE session state if that chat is still the open one.
     // activeSession drives the outgoing session_id header; writing it for a chat
@@ -938,7 +998,7 @@ export const Chat = (props: ChatProps) => {
     if (!isClosed(myRunSession)) {
       setIsReadonly(false);
     }
-    bindChatToSession(chat?.id, myRunSession.Id);
+    bindChatToSession(chat?.id, myRunSession.Id, false);
     const model = chainData?.models?.find(
       (m: any) => m.Id == myRunSession.ModelAgentId,
     );

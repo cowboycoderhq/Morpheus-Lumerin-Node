@@ -49,16 +49,16 @@ type BackendAttestationStatusProvider interface {
 }
 
 type ProxyController struct {
-	service                   *ProxyServiceSender
-	aiEngine                  AIEngine
-	chatStorage               gsc.ChatStorageInterface
-	storeChatContext          bool
-	forwardChatContext        bool
-	log                       lib.ILogger
-	authConfig                system.HTTPAuthConfig
-	ipfsManager               *IpfsManager
-	dockerManager             *DockerManager
-	backendAttestationStatus  BackendAttestationStatusProvider
+	service                  *ProxyServiceSender
+	aiEngine                 AIEngine
+	chatStorage              gsc.ChatStorageInterface
+	storeChatContext         bool
+	forwardChatContext       bool
+	log                      lib.ILogger
+	authConfig               system.HTTPAuthConfig
+	ipfsManager              *IpfsManager
+	dockerManager            *DockerManager
+	backendAttestationStatus BackendAttestationStatusProvider
 }
 
 func NewProxyController(service *ProxyServiceSender, aiEngine AIEngine, chatStorage gsc.ChatStorageInterface, storeChatContext, forwardChatContext bool, authConfig system.HTTPAuthConfig, ipfsManager *IpfsManager, log lib.ILogger) *ProxyController {
@@ -97,6 +97,7 @@ func (s *ProxyController) RegisterRoutes(r interfaces.Router) {
 	r.GET("/v1/chats/:id", s.authConfig.CheckAuth("get_chat_history"), s.GetChat)
 	r.DELETE("/v1/chats/:id", s.authConfig.CheckAuth("edit_chat_history"), s.DeleteChat)
 	r.POST("/v1/chats/:id", s.authConfig.CheckAuth("edit_chat_history"), s.UpdateChatTitle)
+	r.POST("/v1/chats/:id/session", s.authConfig.CheckAuth("edit_chat_history"), s.UpdateChatSession)
 	r.POST("/v1/audio/transcriptions", s.authConfig.CheckAuth("audio_transcription"), s.AudioTranscription)
 	r.POST("/v1/audio/speech", s.authConfig.CheckAuth("audio_speech"), s.AudioSpeech)
 	r.POST("/v1/embeddings", s.authConfig.CheckAuth("embeddings"), s.Embeddings)
@@ -501,6 +502,36 @@ func (c *ProxyController) UpdateChatTitle(ctx *gin.Context) {
 
 	err = c.chatStorage.UpdateChatTitle(params.ID.Hex(), req.Title)
 	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, structs.ErrRes{Error: err.Error()})
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"result": true})
+}
+
+// UpdateChatSession godoc
+//
+//	@Summary	Bind a chat to the session currently serving it
+//	@Tags		chat
+//	@Produce	json
+//	@Param		id		path		string					true	"Chat ID"	format(hex32)
+//	@Param		request	body		UpdateChatSessionReq	true	"Session"
+//	@Success	200		{object}	ResultResponse
+//	@Router		/v1/chats/{id}/session [post]
+func (c *ProxyController) UpdateChatSession(ctx *gin.Context) {
+	var params structs.PathHex32ID
+	if err := ctx.ShouldBindUri(&params); err != nil {
+		ctx.JSON(http.StatusBadRequest, structs.ErrRes{Error: err.Error()})
+		return
+	}
+
+	var req UpdateChatSessionReq
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		c.service.log.Errorf("error binding json: %s", err)
+		ctx.JSON(http.StatusBadRequest, structs.ErrRes{Error: err.Error()})
+		return
+	}
+
+	if err := c.chatStorage.UpdateChatSession(params.ID.Hex(), req.SessionID, req.ModelID); err != nil {
 		ctx.JSON(http.StatusInternalServerError, structs.ErrRes{Error: err.Error()})
 		return
 	}

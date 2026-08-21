@@ -55,6 +55,14 @@ type UpdateChatTitleReq struct {
 	Title string `json:"title" validate:"required"`
 }
 
+// Binds a chat to the session serving it. Sent when the session is OPENED and
+// on every rolling rotation — the stake is spent at open, so the durable record
+// cannot wait for the first prompt.
+type UpdateChatSessionReq struct {
+	SessionID string `json:"sessionId" validate:"required"`
+	ModelID   string `json:"modelId"`
+}
+
 type ResultResponse struct {
 	Result bool `json:"result"`
 }
@@ -68,17 +76,17 @@ type ChatCompletionRequestSwaggerExample struct {
 }
 
 type AudioSpeechRequestExample struct {
-	Input string `json:"input" example:"This is a text to speech generation prompt."`
-	Voice string `json:"voice" example:"af_bella"`
-	ResponseFormat string `json:"response_format" example:"mp3"`
-	Speed float64 `json:"speed" example:"0.5"`
-}	
+	Input          string  `json:"input" example:"This is a text to speech generation prompt."`
+	Voice          string  `json:"voice" example:"af_bella"`
+	ResponseFormat string  `json:"response_format" example:"mp3"`
+	Speed          float64 `json:"speed" example:"0.5"`
+}
 
 type EmbeddingsRequestExample struct {
-	Input string `json:"input" example:"This is a text to generate embeddings for."`
-	Dimensions int `json:"dimensions" example:"1024"`
+	Input          string `json:"input" example:"This is a text to generate embeddings for."`
+	Dimensions     int    `json:"dimensions" example:"1024"`
 	EncodingFormat string `json:"encoding_format" example:"float"`
-	User string `json:"user"`
+	User           string `json:"user"`
 }
 
 type CIDReq struct {

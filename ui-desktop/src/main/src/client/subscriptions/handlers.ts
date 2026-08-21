@@ -394,6 +394,34 @@ export const updateChatHistoryTitle = async (params: {
   }
 }
 
+// Bind a chat to the session serving it. Called when the session is OPENED and
+// on every rolling rotation — the stake is spent at open, so the durable record
+// cannot wait for the first prompt (a session opened and never typed in was
+// otherwise recorded nowhere, and got orphaned or adopted by another chat).
+//
+// Returns false rather than throwing: the caller treats a failed bind as an
+// orphaned session to surface, never as a reason to abandon the open.
+export const updateChatSession = async (params: {
+  id: string
+  sessionId: string
+  modelId?: string
+}): Promise<boolean> => {
+  const { id, sessionId, modelId } = params
+  try {
+    const path = `${config.chain.localProxyRouterUrl}/v1/chats/${id}/session`
+    const response = await fetch(path, {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, modelId }),
+      headers: await getAuthHeaders()
+    })
+    const body = await response.json()
+    return body.result
+  } catch (e) {
+    console.log('Error', e)
+    return false
+  }
+}
+
 export const checkProviderConnectivity = async (params: {
   address: string
   endpoint: string

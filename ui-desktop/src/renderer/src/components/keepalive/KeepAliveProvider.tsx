@@ -276,6 +276,27 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     // keep showing/using it until it expires. Never close it here.
   }, []);
 
+  // Persist the chat -> session binding the moment a block opens, from HERE
+  // rather than from Chat's mirror effect. The mirror only runs for the chat the
+  // user is LOOKING AT, but runs rotate in the background every ~305s for chats
+  // that are not on screen — those rotations would never have reached disk, so
+  // the durable record would name a block that expired hours ago.
+  //
+  // Fire-and-forget: the stake is already spent, and a failed write must not
+  // stop the run. Worst case the binding is stale until the next rotation.
+  const persistBinding = (
+    chatId: string,
+    sessionId?: string,
+    modelId?: string,
+  ) => {
+    if (!chatId || !sessionId) {
+      return;
+    }
+    client
+      ?.updateChatSession?.({ id: chatId, sessionId, modelId })
+      .catch((e: any) => console.warn('keep-alive: bind not persisted', e));
+  };
+
   // Open ONE 6-minute block (replicates withChatState.onOpenSession's router call,
   // reusable outside the Chat component). With a bidId, stakes against that
   // specific provider; without, the router picks one. Returns the session id.
@@ -384,6 +405,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     }
     cur.index = Math.min(cur.index + 1, cur.total);
     cur.openedSessionIds.push(newSession.Id);
+    persistBinding(key, newSession.Id, cur.modelId);
     publish();
     setSessionsByChat((prev) => ({ ...prev, [key]: newSession }));
     scheduleNextRef.current(key, newSession);
@@ -515,6 +537,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
         return; // stopped or superseded during the await
       }
       runsRef.current!.get(chatId)?.openedSessionIds.push(firstSession.Id);
+      persistBinding(chatId, firstSession.Id, modelId);
       setSessionsByChat((prev) => ({ ...prev, [chatId]: firstSession }));
       publish();
       scheduleNextRef.current(chatId, firstSession);

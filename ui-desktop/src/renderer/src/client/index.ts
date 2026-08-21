@@ -237,6 +237,7 @@ const createClient = function (createStore) {
       'update-chat-history-title',
       750000,
     ),
+    updateChatSession: utils.forwardToMainProcess('update-chat-session', 750000),
     // Failover
     getFailoverSetting: utils.forwardToMainProcess(
       'get-failover-setting',

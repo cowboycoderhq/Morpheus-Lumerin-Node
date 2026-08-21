@@ -131,7 +131,11 @@ func (cs *ChatStorage) StorePromptResponseToFile(identifier string, isLocal bool
 		return fmt.Errorf("unsupported prompt type: %T", prompt)
 	}
 
-	if chatHistory.Messages == nil && len(chatHistory.Messages) == 0 {
+	// len(), not `== nil`. Binding a session at OPEN time creates the file with
+	// an empty-but-non-nil Messages slice, which made the nil check false — so
+	// title/modelId/isLocal would never have been written on the first prompt,
+	// leaving every bound-before-typed chat permanently untitled in the list.
+	if len(chatHistory.Messages) == 0 {
 		chatHistory.ModelId = modelId
 		chatHistory.Title = title
 		chatHistory.IsLocal = isLocal
@@ -175,8 +179,18 @@ func (cs *ChatStorage) GetChats() []gcs.Chat {
 			continue
 		}
 
-		chatID := file.Name()
-		chatID = chatID[:len(chatID)-5]
+		// Only .json, and never slice blindly: `name[:len-5]` panics on any
+		// shorter name, and GetChats is the sole carrier of every chat's session
+		// binding on a server built with gin.New() (no Recovery) — one stray file
+		// in the directory took out the whole list.
+		name := file.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		chatID := strings.TrimSuffix(name, ".json")
+		if chatID == "" {
+			continue
+		}
 
 		fileContent, err := cs.LoadChatFromFile(chatID)
 		if err != nil {
@@ -237,6 +251,53 @@ func (cs *ChatStorage) UpdateChatTitle(identifier string, title string) error {
 	}
 
 	return nil
+}
+
+func (cs *ChatStorage) UpdateChatSession(identifier string, sessionID string, modelID string) error {
+	if sessionID == "" {
+		// Never erase a good binding with an empty id (same rule as the prompt
+		// write path): an unbind would send the next prompt with no session.
+		return nil
+	}
+	if err := os.MkdirAll(cs.dirPath, os.ModePerm); err != nil {
+		return err
+	}
+
+	filePath := filepath.Join(cs.dirPath, identifier+".json")
+	mu := cs.fileMutex(filePath)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Unlike UpdateChatTitle this must tolerate a MISSING file and create one.
+	// The binding is written when the session opens, which is before any prompt
+	// has been stored, so for a brand-new chat no file exists yet. A zero-message
+	// chat file is the whole point: it records that MOR was staked for this chat
+	// even though nothing has been said in it.
+	var chat gcs.ChatHistory
+	if content, err := os.ReadFile(filePath); err == nil {
+		if err := json.Unmarshal(content, &chat); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if chat.Messages == nil {
+		chat.Messages = []gcs.ChatMessage{}
+	}
+	chat.SessionID = sessionID
+	// modelId matters as much as the session id. The renderer drops any chat row
+	// whose modelId does not resolve to a known model, so a binding written
+	// without it produces a row that is invisible in the drawer, claims nothing,
+	// and lets the next unbound chat adopt the very session it just paid for.
+	if modelID != "" {
+		chat.ModelId = modelID
+	}
+
+	updated, err := json.MarshalIndent(chat, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filePath, updated, 0644)
 }
 
 func (cs *ChatStorage) LoadChatFromFile(identifier string) (*gcs.ChatHistory, error) {

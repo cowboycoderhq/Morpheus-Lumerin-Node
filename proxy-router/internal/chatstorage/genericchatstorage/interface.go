@@ -13,6 +13,11 @@ type ChatStorageInterface interface {
 	GetChats() []Chat
 	DeleteChat(chatID string) error
 	UpdateChatTitle(chatID string, title string) error
+	// Bind a chat to the session now serving it. Called when the session is
+	// OPENED (and on every rolling rotation), not at the first prompt — the stake
+	// is spent at open, so a binding that only appears with the first message
+	// leaves paid sessions unrecorded for as long as the user does not type.
+	UpdateChatSession(chatID string, sessionID string, modelID string) error
 }
 
 type ChatHistory struct {
