@@ -115,6 +115,22 @@ const Probe = () => {
       <button data-testid="stop-a" onClick={() => ka.stop('chatA')}>
         stop A
       </button>
+      {/* Restarting a run on a chat whose PREVIOUS final block is still open
+          must not drop that block's claim. */}
+      <button
+        data-testid="restart-a"
+        onClick={() =>
+          ka.start({
+            modelId: '0xmodelA',
+            chatId: 'chatA',
+            totalSeconds: 20 * MIN_REQUEST_SECONDS,
+            isDirectPay: false,
+            bidId: SAME_BID,
+          })
+        }
+      >
+        restart A
+      </button>
       <div data-testid="running-count">{ka.runningCount}</div>
       <div data-testid="running-chats">
         {running
@@ -125,6 +141,27 @@ const Probe = () => {
       <div data-testid="session-a">{sessionOf('chatA')}</div>
       <div data-testid="session-b">{sessionOf('chatB')}</div>
       <div data-testid="opens">{JSON.stringify(opens)}</div>
+      {/* Claims must survive a run ending: the final block stays open for up to
+          a full block (we never close early), so dropping its claim with the run
+          left a paid block adoptable by any unbound chat on the same model. */}
+      {/* MERGE per chat, do not spread-overwrite. A spread makes the live entry
+          replace the retained one for the same chat — which is precisely the
+          production bug this probe exists to detect, so a spread here would hide
+          it. Mirrors claimedSessionIds' union. */}
+      <div data-testid="claimed-ids">
+        {JSON.stringify(
+          [...new Set([
+            ...Object.keys(ka.retainedSessionIds),
+            ...Object.keys(ka.sessionIdsByChat),
+          ])].reduce((acc, k) => {
+            acc[k] = [...new Set([
+              ...(ka.retainedSessionIds[k] || []),
+              ...(ka.sessionIdsByChat[k] || []),
+            ])];
+            return acc;
+          }, {}),
+        )}
+      </div>
     </div>
   );
 };
