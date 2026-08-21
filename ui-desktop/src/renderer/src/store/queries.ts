@@ -20,6 +20,9 @@ export const queryKeys = {
   chatTitles: ['chatTitles'] as const,
   // provider connectivity ping results
   providersAvailability: ['providersAvailability'] as const,
+  // the chain's ceiling on ONE session (getMaxSessionDuration), read from the
+  // Diamond — owner-settable, so it is fetched rather than assumed
+  maxSessionSeconds: ['maxSessionSeconds'] as const,
   // wallet ETH/MOR balances (+ MOR rate)
   balances: (address?: string) => ['balances', address ?? ''] as const,
   // Blockscout transaction history

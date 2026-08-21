@@ -26,6 +26,8 @@ const SELECTOR = {
   bidFee: '0x8dbb4647',
   // getMinMaxBidPricePerSecond() -> (uint256, uint256)
   minMaxBidPricePerSecond: '0x38c8ac62',
+  // getMaxSessionDuration() -> uint128
+  maxSessionDuration: '0xa9756858',
 } as const;
 
 export type MarketplaceParams = {
@@ -104,6 +106,70 @@ export async function getMarketplaceParams(
     minPricePerSecond: band[0],
     maxPricePerSecond: band[1],
   };
+}
+
+// ---- Session-length ceiling -----------------------------------------------
+// The chain caps ONE session. `SessionRouter.getSessionEnd` computes a duration
+// from the stake and then clamps it to this number, so stake buying more than
+// the cap buys nothing at all — it just sits locked for the session. Any UI that
+// lets a user name a length has to know the cap before it prices a stake.
+//
+// Read, not hardcoded, for the same reason as everything else in this file: it
+// is owner-settable (`SessionRouter.setMaxSessionDuration`, onlyOwner), so a
+// copy in the source goes stale the day governance moves it — and going stale
+// HERE means quoting a stake for time the chain will not sell.
+
+/** Deployment value (7 days) — the floor to fall back on, never the source of truth. */
+export const FALLBACK_MAX_SESSION_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * The band a cap must fall in to be believed.
+ *
+ * Below `MIN_SESSION_DURATION` the contract's own rules make it meaningless. The
+ * upper bound is the load-bearing one: the cap becomes a BLOCK LENGTH, and a
+ * block length is both a stake size and a `setTimeout` delay. A wrong-contract
+ * read returning a uint128 max (3.4e38) would be accepted by a bare `> 0` test
+ * and then (a) be sent as a session duration whose stake the router computes and
+ * transfers in full while the contract clamps the time it buys, and (b) overflow
+ * setTimeout's signed 32-bit delay into a 1ms tight loop. Thirty days is
+ * comfortably above the deployed 7 and far below either hazard.
+ */
+const MIN_BELIEVABLE_CAP_SECONDS = 5 * 60;
+const MAX_BELIEVABLE_CAP_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * The chain's per-session ceiling, in seconds.
+ *
+ * Never throws: a session-open screen that cannot reach an ETH node must still
+ * be usable, and the deployment value is the correct guess when the real one is
+ * unreachable. It is a floor-ish default, not a claim — if governance has RAISED
+ * the cap we merely under-offer, which costs the user nothing.
+ */
+export async function getMaxSessionSeconds(
+  rpcUrl: string,
+  diamond: string,
+): Promise<number> {
+  if (!rpcUrl || !diamond) {
+    return FALLBACK_MAX_SESSION_SECONDS;
+  }
+  try {
+    const hex = await ethCall(rpcUrl, diamond, SELECTOR.maxSessionDuration);
+    const seconds = Number(firstWord(hex));
+    // An answer outside the believable band means we are talking to the wrong
+    // contract, not that sessions may run for 1e31 years. Distrust it — in BOTH
+    // directions. Testing only `> 0` let a uint128-max read through, which is
+    // the read that turns into an unbounded stake and a 1ms timer loop.
+    if (
+      !Number.isFinite(seconds) ||
+      seconds < MIN_BELIEVABLE_CAP_SECONDS ||
+      seconds > MAX_BELIEVABLE_CAP_SECONDS
+    ) {
+      return FALLBACK_MAX_SESSION_SECONDS;
+    }
+    return seconds;
+  } catch {
+    return FALLBACK_MAX_SESSION_SECONDS;
+  }
 }
 
 // ---- MOR <-> wei ----------------------------------------------------------
