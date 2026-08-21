@@ -29,7 +29,20 @@ import { ToastsContext } from '../toasts';
 
 export const MIN_REQUEST_SECONDS = 5 * 60 + 5; // block unit: 305s = 300s contract floor + 5s cushion for stake→duration truncation
 export const OVERLAP_SEC = 25; // seamless mode: open the next block this early; covers open-tx latency
-export const REOPEN_DELAY_SEC = 12; // economy mode: open the next block this long AFTER the old one ends
+// Economy waits until the old block has EXPIRED, then closes it itself and
+// waits for the stake to come back before opening the next.
+//
+// The buffer is what keeps the close free. SessionRouter._rewardUserAfterClose
+// only skips the ~24h hold when `closedAt >= endsAt`, and closedAt is
+// block.timestamp at MINING time, not our clock — so firing exactly at endsAt
+// risks mining a second early, which locks nearly the whole block's stake
+// (the lock scales with time already used, so a near-miss is the WORST case).
+export const CLOSE_BUFFER_SEC = 8;
+// Cap on waiting for the stake to return. The router's own autoclose ticker is
+// 1 minute, so this must exceed it comfortably or we would give up on a stake
+// that was always going to arrive.
+export const STAKE_RETURN_TIMEOUT_SEC = 150;
+export const REOPEN_DELAY_SEC = CLOSE_BUFFER_SEC; // kept: strideSeconds still prices the gap
 
 // How far the run advances in wall-clock per block. Blocks do NOT tile
 // end-to-end: seamless OVERLAPS by OVERLAP_SEC, economy leaves a REOPEN_DELAY_SEC
@@ -354,6 +367,41 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     return null;
   };
 
+  // Close an EXPIRED block ourselves instead of waiting for the router's
+  // once-a-minute autoclose sweep. Verified against SessionRouter.sol: a close at
+  // or after endsAt takes the `isClosingLate_` branch, which skips the
+  // userStakesOnHold push entirely and returns the full user stake in that one
+  // transaction — no 24h lock. That is what lets economy run on 1x.
+  const closeBlock = async (sessionId: string) => {
+    const authHeaders = await client.getAuthHeaders();
+    const resp = await fetch(
+      `${urlRef.current}/blockchain/sessions/${sessionId}/close`,
+      { method: 'POST', headers: authHeaders },
+    );
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || data?.error) {
+      throw new Error(data?.error || 'close failed');
+    }
+    return data;
+  };
+
+  // Wait until the chain agrees the block is closed — that is the moment the
+  // stake is back in the wallet. Polling the real signal replaces the old
+  // 12-second guess, which was below the floor of the router's 1-minute sweep
+  // and so was wrong essentially always.
+  const waitForStakeReturn = async (sessionId: string) => {
+    const deadline = Date.now() + STAKE_RETURN_TIMEOUT_SEC * 1000;
+    while (Date.now() < deadline) {
+      const s = await fetchSession(sessionId);
+      // No record, or a non-zero ClosedAt, both mean it is no longer holding.
+      if (!s || Number(s.ClosedAt) > 0) {
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    return false;
+  };
+
   // Forward-declared so tick and scheduleNext can reference each other.
   const scheduleNextRef = useRef<(key: string, session: any) => void>(() => {});
 
@@ -374,6 +422,34 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     const myId = run.id;
     let newSession: any = null;
     try {
+      // ECONOMY: recycle the SAME stake instead of needing a second one. The old
+      // block has expired by now (scheduleNext fires this at endsAt +
+      // CLOSE_BUFFER_SEC), so closing it is the free, late kind and returns the
+      // full stake in one tx. Then wait for the chain to confirm before opening
+      // the next block — the previous code just slept 12s and hoped, which is
+      // below the floor of the router's 1-minute autoclose sweep, so the reopen
+      // reverted with block 1 already paid for.
+      //
+      // Best-effort on purpose: if the close fails (provider unreachable, so no
+      // signed receipt) we fall through and try the open anyway. The router's
+      // sweep will close it eventually; the worst case is the old behaviour, not
+      // a stuck run.
+      if (!run.overlap) {
+        const prev = run.openedSessionIds[run.openedSessionIds.length - 1];
+        if (prev) {
+          try {
+            await closeBlock(prev);
+            await waitForStakeReturn(prev);
+          } catch (e) {
+            console.warn('keep-alive: economy close/refund wait failed', e);
+          }
+        }
+        // Re-check identity: the close + wait can take a minute, and Stop or a
+        // new run on this chat may have happened meanwhile.
+        if (runsRef.current!.get(key)?.id !== myId) {
+          return;
+        }
+      }
       const newId = await openBlock(run.modelId, run.isDirectPay, run.bidId);
       if (!newId) {
         throw new Error('no session id returned');
@@ -457,9 +533,12 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     // Seamless: open N+1 just BEFORE N ends (overlap → gapless, 2x stake).
     // Economy: open N+1 just AFTER N ends, once its stake has returned (1x
     // stake, small gap while the stake recycles).
+    // Economy fires AFTER expiry (never at it) so our own close is guaranteed to
+    // be the late, penalty-free kind; the close+confirm wait then happens inside
+    // tick before the next open.
     const fireAt = run.overlap
       ? endsAt - OVERLAP_SEC
-      : endsAt + REOPEN_DELAY_SEC;
+      : endsAt + CLOSE_BUFFER_SEC;
     const delayMs = Math.max(0, (fireAt - nowSec) * 1000);
     clearRunTimer(run);
     run.timer = setTimeout(() => {

@@ -904,19 +904,17 @@ export const Chat = (props: ChatProps) => {
       const blockCount = blocksForDuration(keepAliveTargetSec, overlap);
       // A single block never restakes, so it only ever locks 1x.
       //
-      // Multi-block needs 2x free in BOTH modes. Seamless obviously so — block
-      // N+1 opens before N's stake returns. Economy was written for 1x on the
-      // premise that REOPEN_DELAY_SEC (12s) is long enough for the old stake to
-      // come back; it is not. The stake returns only when the session is closed,
-      // and the closer is the router's autoclose poll — proxy-router
-      // internal/blockchainapi/session_expiry_handler.go, `time.NewTicker(1 *
-      // time.Minute)` — so the real return latency is ~0-60s plus a close-tx
-      // confirm. Reserving 1x let block 1 drain the wallet and block 2 revert,
-      // ending an 8-hour run ~5 minutes in with MOR already spent. Until the
-      // app closes each expired block itself and polls for the funds, economy
-      // reserves 2x like seamless. It still buys a real thing (no overlap =
-      // never two stakes locked at once) — just not a smaller balance to start.
-      const needsTwo = blockCount > 1;
+      // Seamless needs 2x: block N+1 opens BEFORE N expires, so two stakes are
+      // briefly locked at once. Economy needs 1x — it now closes each expired
+      // block itself (a late close, which SessionRouter returns in full with no
+      // 24h hold) and waits for the chain to confirm the stake is back before
+      // opening the next, so only one stake is ever committed.
+      //
+      // Economy was temporarily forced to 2x because it previously just slept
+      // REOPEN_DELAY_SEC and assumed the refund had landed. It had not: the only
+      // thing closing blocks was the router's 1-minute autoclose sweep, so a 1x
+      // wallet reverted on the first restake with block 1 already paid for.
+      const needsTwo = blockCount > 1 && overlap;
       // Reserve what the OTHER live runs still need. Each run asking only "can I
       // peak at 2x?" oversubscribes the wallet once several are live: with a
       // 3.05 MOR balance and 0.305 MOR blocks the gate approved NINE concurrent
@@ -2133,13 +2131,13 @@ export const Chat = (props: ChatProps) => {
                       $active={restakeMode === 'economy'}
                       onClick={() => setRestakeMode('economy')}
                     >
-                      Economy · no overlap
+                      Economy · 1× stake
                     </KeepAliveChip>
                   </KeepAliveRow>
                   <ChatIntroInnerText style={{ marginTop: '0.4rem' }}>
                     {restakeMode === 'seamless'
                       ? 'Seamless: blocks overlap so inference never pauses. Needs ~2× a 5-minute stake free (only ~one block is locked at a time). Stop anytime; each block’s stake returns when it lapses.'
-                      : 'Economy: the next block opens only after the current one ends, so two stakes are never locked at once — but there is a pause at each restake. Still needs ~2× a 5-minute stake free to start. Stop anytime.'}
+                      : 'Economy: each block is closed as soon as it expires and the stake is recycled into the next one, so only ~1× a 5-minute stake is ever committed — at the cost of a pause (up to a minute) at each restake while the refund confirms. Stop anytime.'}
                   </ChatIntroInnerText>
                   <div style={{ display: 'flex', justifyContent: 'center' }}>
                     <ChatIntroButton
