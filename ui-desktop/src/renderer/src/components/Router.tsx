@@ -15,8 +15,9 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import Providers from './providers/Providers';
 import { withClient } from '../store/hocs/clientContext';
 import selectors from '../store/selectors';
-import { queryKeys } from '../store/queries';
-import { getSessionsByUser } from '../store/utils/apiCallsHelper';
+import { queryKeys, buildModelsData } from '../store/queries';
+import { getLiveSessionsByUser } from '../store/utils/apiCallsHelper';
+import { FALLBACK_MAX_SESSION_SECONDS } from '../utils/marketplace';
 import { KeepAliveProvider } from './keepalive/KeepAliveProvider';
 
 const fadeIn = keyframes`
@@ -86,9 +87,8 @@ const Main = styled.div`
   }
 `;
 
-// Warms the shared session cache as soon as the main app shell mounts, so the
-// first visit to the Chat or Wallet tab finds sessions already loaded (the
-// heaviest, paginated, cross-tab call). Subsequent visits hit the cache via the
+// Warms what the Chat screen blocks on, as soon as the app shell mounts, so the
+// first visit finds it already loaded. Subsequent visits hit the cache via the
 // stale-while-revalidate config. Failures are non-fatal — the tabs refetch.
 const SessionPrefetcher = withClient(({ client }: any) => {
   const queryClient = useQueryClient();
@@ -101,15 +101,70 @@ const SessionPrefetcher = withClient(({ client }: any) => {
     if (!address || !url) {
       return;
     }
-    queryClient
-      .prefetchQuery({
-        queryKey: queryKeys.sessions(address),
-        queryFn: async () => {
-          const authHeaders = await client.getAuthHeaders();
-          return (await getSessionsByUser(url, address, authHeaders)) || [];
-        },
-      })
-      .catch((e) => console.warn('Session prefetch failed', e));
+    // Warm exactly what Chat's first paint blocks on, and nothing else.
+    //
+    // This used to prefetch the FULL session history — an unbounded serial walk
+    // (one chain read per 50 sessions) that nothing gates on any more. It did
+    // not merely waste work: it saturated the router at boot, so the requests
+    // Chat actually needs queued behind it and the first click felt slow even
+    // once Chat's own fetching was fixed.
+    //
+    // Now: the models composite (the real gate) and the bounded live-session
+    // window. The historical tail loads lazily, in Chat, behind the paint.
+    //
+    // WAIT for the router first. This effect runs as soon as the wallet address
+    // exists, which is well before the bundled proxy-router finishes starting —
+    // so the prefetch used to fail with `fetch failed` on every launch, get
+    // swallowed by the catch, and never retry. It looked like a warm cache and
+    // was an empty one, and the user paid the full cost on their first click.
+    let cancelled = false;
+    const routerReady = async () => {
+      for (let i = 0; i < 60 && !cancelled; i++) {
+        try {
+          const r = await fetch(`${url}/healthcheck`);
+          if (r.ok) return true;
+        } catch {
+          /* not up yet */
+        }
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+      return false;
+    };
+
+    routerReady().then((ready) => {
+      if (!ready || cancelled) {
+        return;
+      }
+      queryClient
+        .prefetchQuery({
+          queryKey: queryKeys.modelsData,
+          queryFn: () => buildModelsData(url, client),
+        })
+        .catch((e) => console.warn('Models prefetch failed', e));
+
+      queryClient
+        .prefetchQuery({
+          queryKey: queryKeys.liveSessions(address),
+          queryFn: async () => {
+            const authHeaders = await client.getAuthHeaders();
+          // The deployment cap, not a chain read: this only decides how many
+          // pages to walk, and Chat re-reads the live value for anything that
+          // prices a stake. Over-walking by a page is free; a chain read here
+          // would put another round trip in front of the thing we are warming.
+            return await getLiveSessionsByUser(
+              url,
+              address,
+              authHeaders,
+              FALLBACK_MAX_SESSION_SECONDS,
+            );
+          },
+        })
+        .catch((e) => console.warn('Live session prefetch failed', e));
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [address, url, queryClient, client]);
 
   return null;

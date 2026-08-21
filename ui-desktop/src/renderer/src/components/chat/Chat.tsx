@@ -151,6 +151,16 @@ type ChatProps = {
   };
   getModelsData: () => Promise<any>;
   getSessionsByUser: (address: string) => Promise<any>;
+  // Optional so a consumer wired only to the older contract still renders (see
+  // the fallback in liveSessionsQuery).
+  getLiveSessionsByUser?: (
+    address: string,
+    maxSessionSeconds: number,
+  ) => Promise<{ sessions: any[]; nextOffset: number; complete: boolean }>;
+  getSessionsFromOffset?: (
+    address: string,
+    startOffset: number,
+  ) => Promise<any[]>;
   getProvidersAvailability: (providers: any[]) => Promise<any[]>;
   getBidInfo: (id: string) => Promise<any>;
   getBidsByModelId: (id: string) => Promise<any>;
@@ -326,16 +336,96 @@ export const Chat = (props: ChatProps) => {
     queryFn: () => props.getModelsData(),
   });
 
-  const sessionsQuery = useQuery({
-    queryKey: queryKeys.sessions(props.address),
-    queryFn: () => props.getSessionsByUser(props.address),
+  // The chain's ceiling on ONE session (`getMaxSessionDuration`, 7 days at the
+  // time of writing). Read, never hardcoded — it is owner-settable, and a stale
+  // copy would quote a stake for time the chain will not sell. Cached for the
+  // hour: it does not move, but it can, and a keystroke must not cost a round
+  // trip. Falls back to the deployment value if no ETH node is reachable.
+  const maxSessionQuery = useQuery({
+    queryKey: queryKeys.maxSessionSeconds,
+    staleTime: 60 * 60_000,
+    queryFn: async () => {
+      const cfg: any = await props.client.getProxyRouterDerivedConfig();
+      const rpcUrl = cfg?.DerivedConfig?.EthNodeURLs?.[0] ?? '';
+      return getMaxSessionSeconds(rpcUrl, props.config?.chain?.diamondAddress);
+    },
+  });
+  const maxSessionSeconds =
+    maxSessionQuery.data ?? FALLBACK_MAX_SESSION_SECONDS;
+
+  // Sessions load in two stages, and only the FIRST one gates the screen.
+  //
+  // Stage 1 walks the newest pages until it has every session that could still
+  // be open (see getLiveSessionsByUser for why that set is bounded). That is the
+  // whole correctness requirement: a chat whose session is live must never
+  // render as sessionless, because the user would then be invited to pay for a
+  // second one.
+  //
+  // Stage 2 walks the rest — closed, historical sessions that only affect how
+  // OLD chats are labelled. Blocking first paint on it meant opening Chat cost
+  // one chain read per 50 sessions ever created, serially, forever growing: a
+  // rolling session mints one on-chain session per block, so every afternoon of
+  // testing made the next open slower.
+  const liveSessionsQuery = useQuery({
+    queryKey: queryKeys.liveSessions(props.address),
+    // Falls back to the full walk when the bounded fetcher is not wired in.
+    // Slower, but "sessions never load" is the worse failure on this screen: the
+    // gate below would hold the spinner forever, and any consumer that mounts
+    // Chat with only the old contract would hang rather than degrade.
+    queryFn: () =>
+      props.getLiveSessionsByUser
+        ? props.getLiveSessionsByUser(props.address, maxSessionSeconds)
+        : Promise.resolve(props.getSessionsByUser(props.address)).then(
+            (all: any) => ({
+              sessions: all ?? [],
+              nextOffset: (all ?? []).length,
+              complete: true,
+            }),
+          ),
     enabled: !!props.address,
+  });
+
+  const liveWindow = liveSessionsQuery.data;
+
+  const sessionsTailQuery = useQuery({
+    queryKey: queryKeys.sessionsTail(props.address, liveWindow?.nextOffset),
+    queryFn: () =>
+      props.getSessionsFromOffset!(props.address, liveWindow?.nextOffset ?? 0),
+    // Only when the live walk actually stopped early. A short final page means
+    // the history is already complete and there is no tail to ask for. The
+    // fallback path always reports complete, so this never fires without the
+    // fetcher present.
+    enabled:
+      !!props.address &&
+      !!liveWindow &&
+      !liveWindow.complete &&
+      !!props.getSessionsFromOffset,
   });
 
   const chatTitlesQuery = useQuery({
     queryKey: queryKeys.chatTitles,
     queryFn: () => props.client.getChatHistoryTitles(),
   });
+
+  // The two stages, as one list. Live sessions come first (they are the newest),
+  // then the tail once it lands. Every existing `sessions` consumer reads this
+  // and cannot tell the difference — except that it now arrives in two parts,
+  // the first of which is enough to be correct.
+  const sessionsData = useMemo(() => {
+    const live = liveWindow?.sessions;
+    if (!live) {
+      return undefined;
+    }
+    const tail = sessionsTailQuery.data;
+    return tail?.length ? [...live, ...tail] : live;
+  }, [liveWindow, sessionsTailQuery.data]);
+
+  // Stands in for the old sessionsQuery so the rest of the component (and the
+  // loading gate) keeps reading one thing.
+  const sessionsQuery = {
+    data: sessionsData,
+    isLoading: liveSessionsQuery.isLoading,
+  };
 
   // Bid fan-out for every marketplace model. Runs in the background after the
   // base model list is available; does NOT gate the initial render. Mirrors the
@@ -627,23 +717,6 @@ export const Chat = (props: ChatProps) => {
   const MIN_REQUEST_SECONDS = 5 * 60 + 5; // 305s = 300s contract floor + 5s cushion for stake→duration truncation
   // SessionStorage.MIN_SESSION_DURATION — what the chain actually refuses below.
   const CONTRACT_MIN_SESSION_SECONDS = 5 * 60;
-
-  // The chain's ceiling on ONE session (`getMaxSessionDuration`, 7 days at the
-  // time of writing). Read, never hardcoded — it is owner-settable, and a stale
-  // copy would quote a stake for time the chain will not sell. Cached for the
-  // hour: it does not move, but it can, and a keystroke must not cost a round
-  // trip. Falls back to the deployment value if no ETH node is reachable.
-  const maxSessionQuery = useQuery({
-    queryKey: queryKeys.maxSessionSeconds,
-    staleTime: 60 * 60_000,
-    queryFn: async () => {
-      const cfg: any = await props.client.getProxyRouterDerivedConfig();
-      const rpcUrl = cfg?.DerivedConfig?.EthNodeURLs?.[0] ?? '';
-      return getMaxSessionSeconds(rpcUrl, props.config?.chain?.diamondAddress);
-    },
-  });
-  const maxSessionSeconds =
-    maxSessionQuery.data ?? FALLBACK_MAX_SESSION_SECONDS;
 
   // What the typed text means, in one place. Everything downstream — the note,
   // the chips, the affordability gate, the open itself — reads THIS, so the
@@ -1257,10 +1330,30 @@ export const Chat = (props: ChatProps) => {
   // `sessions` consumer) updates, and return the freshly-mapped list for callers
   // that need it synchronously (e.g. setSessionData).
   const refreshSessions = async () => {
-    const fresh = await queryClient.fetchQuery({
-      queryKey: queryKeys.sessions(props.address),
-      queryFn: () => props.getSessionsByUser(props.address),
+    // Refetch the LIVE window only. This runs immediately after opening a
+    // session — the one we are looking for is the newest that exists, so
+    // re-walking the entire history to find it would put the old unbounded cost
+    // back on the money path, where it hurts most. The tail is unchanged by a
+    // new session (it only grows at the newest end), so it stays cached.
+    const live = await queryClient.fetchQuery({
+      queryKey: queryKeys.liveSessions(props.address),
+      queryFn: () =>
+        props.getLiveSessionsByUser
+          ? props.getLiveSessionsByUser(props.address, maxSessionSeconds)
+          : Promise.resolve(props.getSessionsByUser(props.address)).then(
+              (all: any) => ({
+                sessions: all ?? [],
+                nextOffset: (all ?? []).length,
+                complete: true,
+              }),
+            ),
+      staleTime: 0,
     });
+    const tail =
+      queryClient.getQueryData<any[]>(
+        queryKeys.sessionsTail(props.address, live?.nextOffset),
+      ) ?? [];
+    const fresh = [...(live?.sessions ?? []), ...tail];
     const models = allModels ?? [];
     return (fresh || []).reduce((res, item) => {
       const sessionModel = models.find((x) => x.Id == item.ModelAgentId);

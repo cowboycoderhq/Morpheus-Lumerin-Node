@@ -5,11 +5,14 @@ import { ToastsContext } from '../../components/toasts';
 import selectors from '../selectors';
 import {
   getSessionsByUser,
+  getLiveSessionsByUser,
+  getSessionsFromOffset,
   getBidsByModelId,
   getActiveBidsByProvider,
   getBidInfoById,
 } from '../utils/apiCallsHelper';
 import { ApiGateway } from 'src/main/src/client/apiGateway';
+import { buildModelsData } from '../queries';
 
 const AvailabilityStatus = {
   available: 'available',
@@ -121,26 +124,14 @@ const withChatState = (WrappedComponent: ComponentType<any>) => {
       }
     };
 
-    getModelsData = async () => {
-      const [localModels, modelsResp, providersResp, meta, userBalances] =
-        await Promise.all([
-          this.getLocalModels(),
-          this.getAllModels(),
-          this.getProviders(),
-          this.getMetaInfo(),
-          this.getBalances(),
-        ]);
-
-      const models = modelsResp.filter((m) => !m.IsDeleted);
-      const providers = providersResp.filter((m) => !m.IsDeleted);
-
-      const result = [
-        ...localModels.map((m) => ({ ...m, isLocal: true })),
-        ...models,
-      ];
-
-      return { models: result, providers, meta, userBalances };
-    };
+    // Delegates to the shared builder so the boot prefetcher and this path
+    // produce byte-identical data for the same cache key. Two implementations
+    // of the same composite is how a "warm" cache silently misses.
+    getModelsData = async () =>
+      buildModelsData(
+        this.props.config.chain.localProxyRouterUrl,
+        this.props.client,
+      );
 
     getProvidersAvailability = async (providers) => {
       const isValidUrl = (url) => {
@@ -224,6 +215,37 @@ const withChatState = (WrappedComponent: ComponentType<any>) => {
         this.props.config.chain.localProxyRouterUrl,
         user,
         authHeaders,
+      );
+    };
+
+    // Only the sessions that could still be open — bounded, so opening Chat
+    // costs a page or two instead of the whole history. Returns the offset the
+    // tail should continue from, so nothing is fetched twice.
+    getLiveSessionsByUser = async (user, maxSessionSeconds) => {
+      if (!user) {
+        return { sessions: [], nextOffset: 0, complete: true };
+      }
+
+      const authHeaders = await this.props.client.getAuthHeaders();
+      return await getLiveSessionsByUser(
+        this.props.config.chain.localProxyRouterUrl,
+        user,
+        authHeaders,
+        maxSessionSeconds,
+      );
+    };
+
+    getSessionsFromOffset = async (user, startOffset) => {
+      if (!user) {
+        return [];
+      }
+
+      const authHeaders = await this.props.client.getAuthHeaders();
+      return await getSessionsFromOffset(
+        this.props.config.chain.localProxyRouterUrl,
+        user,
+        authHeaders,
+        startOffset,
       );
     };
 
@@ -368,6 +390,8 @@ const withChatState = (WrappedComponent: ComponentType<any>) => {
           getLocalModels={this.getLocalModels}
           getModelsData={this.getModelsData}
           getSessionsByUser={this.getSessionsByUser}
+          getLiveSessionsByUser={this.getLiveSessionsByUser}
+          getSessionsFromOffset={this.getSessionsFromOffset}
           closeSession={this.closeSession}
           onOpenSession={this.onOpenSession}
           onOpenSessionByBid={this.onOpenSessionByBid}
