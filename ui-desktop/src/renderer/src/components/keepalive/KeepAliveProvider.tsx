@@ -93,7 +93,7 @@ interface KeepAliveRun extends KeepAliveStatus {
   // What one block of this run costs. Needed to reserve the pending overlap of
   // OTHER live runs when gating a new one — without it the gate approves each
   // run in isolation and the wallet is oversubscribed N-fold.
-  perBlockStakeMor: number;
+  perBlockStakeWei: number;
 }
 
 export interface StartKeepAliveOpts {
@@ -107,7 +107,7 @@ export interface StartKeepAliveOpts {
   isDirectPay: boolean;
   // MOR one block of this run stakes. Recorded so the provider can tell a new
   // run's affordability gate what the existing runs still need.
-  perBlockStakeMor?: number;
+  perBlockStakeWei?: number;
   // A specific provider's bid to stake every block against; null = let the
   // router choose a provider each block ("Auto").
   bidId?: string | null;
@@ -136,12 +136,12 @@ export interface KeepAliveContextValue {
   // still entitled to this session?", never "which run should I stop?".
   retainedSessionIds: Record<string, string[]>;
   runningCount: number;
-  // MOR that live runs OTHER than `exceptChatId` still need to fund their next
-  // overlap. A new run's gate must add this to its own requirement: each run
+  // WEI that live SEAMLESS runs other than `exceptChatId` still need to fund
+  // their next overlap. Economy runs contribute nothing — they recycle. A new run's gate must add this to its own requirement: each run
   // asking only "can I peak at 2x?" oversubscribes the wallet once several are
   // live, and every run that loses the race reverts having already paid for its
   // first block.
-  committedOverlapMor: (exceptChatId?: string) => number;
+  committedOverlapWei: (exceptChatId?: string) => number;
   start: (opts: StartKeepAliveOpts) => Promise<void>;
   // Stop one run, or every run when called with no argument.
   stop: (chatId?: string) => void;
@@ -153,7 +153,7 @@ export const KeepAliveContext = createContext<KeepAliveContextValue>({
   sessionIdsByChat: {},
   retainedSessionIds: {},
   runningCount: 0,
-  committedOverlapMor: () => 0,
+  committedOverlapWei: () => 0,
   start: async () => {},
   stop: () => {},
 });
@@ -240,13 +240,20 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
   // runs hold a second block's worth briefly at each rotation; economy runs need
   // their next block's stake before the previous one's has returned. Either way
   // the money is spoken for and a new run must not count it as free.
-  const committedOverlapMor = useCallback((exceptChatId?: string) => {
+  const committedOverlapWei = useCallback((exceptChatId?: string) => {
     let total = 0;
     runsRef.current!.forEach((run, key) => {
       if (!run.running || key === exceptChatId) {
         return;
       }
-      const per = Number(run.perBlockStakeMor);
+      // ECONOMY runs reserve nothing. They close each expired block and recycle
+      // that exact stake into the next one, so they never hold two at once —
+      // counting them made every extra run reserve a block it will never need,
+      // and three economy runs blocked a wallet with plenty spare.
+      if (!run.overlap) {
+        return;
+      }
+      const per = Number(run.perBlockStakeWei);
       if (Number.isFinite(per) && per > 0) {
         total += per;
       }
@@ -555,7 +562,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       isDirectPay,
       bidId = null,
       overlap = true,
-      perBlockStakeMor = 0,
+      perBlockStakeWei = 0,
     }: StartKeepAliveOpts) => {
       // Replace only THIS chat's run. It used to be a bare stop() that killed
       // every run, which is what made concurrent auto-renewal impossible.
@@ -587,7 +594,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
         id: myId,
         timer: null,
         openedSessionIds: [],
-        perBlockStakeMor: Number(perBlockStakeMor) || 0,
+        perBlockStakeWei: Number(perBlockStakeWei) || 0,
       });
       publish();
 
@@ -646,7 +653,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       sessionIdsByChat,
       retainedSessionIds,
       runningCount,
-      committedOverlapMor,
+      committedOverlapWei,
       start,
       stop,
     }),
@@ -656,7 +663,7 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
       sessionIdsByChat,
       retainedSessionIds,
       runningCount,
-      committedOverlapMor,
+      committedOverlapWei,
       start,
       stop,
     ],
