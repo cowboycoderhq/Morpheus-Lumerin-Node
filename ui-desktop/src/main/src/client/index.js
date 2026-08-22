@@ -3,6 +3,7 @@ import createCore from '../../core'
 import logger from '../../logger'
 import subscriptions from './subscriptions'
 import { isTrustedSender } from './subscriptions/utils'
+import * as handlers from './subscriptions/handlers'
 import * as settings from './settings'
 import storage from './storage'
 
@@ -106,6 +107,13 @@ export function createClient(config) {
         core.events = events
         core.api = api
         subscriptions.subscribe(core)
+        // Bring the OpenAI-compatible endpoint back up if the user left it
+        // enabled. No-op when disabled, which is the default. Never allowed to
+        // break app startup — it is an optional local convenience, not a
+        // dependency of the wallet.
+        handlers.startOpenAiApiIfEnabled().catch(function (err) {
+          logger.warn('Could not start the OpenAI-compatible endpoint', err)
+        })
       })
       .catch(function (err) {
         console.log('panic')

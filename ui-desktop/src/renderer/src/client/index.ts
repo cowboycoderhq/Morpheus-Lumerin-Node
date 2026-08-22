@@ -247,6 +247,22 @@ const createClient = function (createStore) {
       'set-failover-setting',
       750000,
     ),
+    // OpenAI-compatible local endpoint
+    getOpenAiApiConfig: utils.forwardToMainProcess('get-openai-api-config'),
+    setOpenAiApiConfig: utils.forwardToMainProcess('set-openai-api-config'),
+    regenerateOpenAiApiToken: utils.forwardToMainProcess(
+      'regenerate-openai-api-token',
+    ),
+    // opencode handoff
+    // The installer can legitimately take minutes (brew tap + download).
+    installOpencode: utils.forwardToMainProcess('install-opencode', 750000),
+    // Generous on purpose: the handoff reads the on-chain model registry, which
+    // is measured in seconds, not milliseconds. On the default 10s this timed
+    // out in the renderer while main went on to open the terminal — the worst
+    // kind of failure, one that reports an error for work that succeeded.
+    openInOpencode: utils.forwardToMainProcess('open-in-opencode', 120000),
+    getOpencodeStatus: utils.forwardToMainProcess('get-opencode-status', 60000),
+    setOpencodeCwd: utils.forwardToMainProcess('set-opencode-cwd'),
     checkProviderConnectivity: utils.forwardToMainProcess(
       'check-provider-connectivity',
       750000,

@@ -176,7 +176,7 @@ export const Layout = () => (
     <Main
       data-scrollelement // Required by react-virtualized implementation in Dashboard/TxList
     >
-      {/* KeepAliveProvider sits ABOVE <Routes> so a rolling session keeps
+      {/* KeepAliveProvider sits ABOVE <Routes> so a chained session keeps
           restaking across tab switches (Chat unmounts, this does not). */}
       <KeepAliveProvider>
         <Routes>

@@ -6,6 +6,7 @@ import { useContext, useEffect, useState } from 'react';
 import {
   IconPalette,
   IconRouter,
+  IconPlugConnected,
   IconServerCog,
   IconTrash,
 } from '@tabler/icons-react';
@@ -54,6 +55,14 @@ type CommonProps = {
 const Common = (props: CommonProps) => {
   const [ethNodeUrl, setEthUrl] = useState<string>('');
   const [useFailover, setUseFailover] = useState<boolean>(false);
+  // OpenAI-compatible endpoint. `apiCfg` mirrors what main reports back, so the
+  // toggle reflects whether the port is ACTUALLY bound rather than what we asked
+  // for — a port collision must not read as "on".
+  const [apiCfg, setApiCfg] = useState<any>(null);
+  const [apiTokenShown, setApiTokenShown] = useState(false);
+  const [ocStatus, setOcStatus] = useState<any>(null);
+  const [ocBusy, setOcBusy] = useState(false);
+  const [ocOutput, setOcOutput] = useState<string>('');
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const { variant, setVariant } = useThemeVariant();
 
@@ -66,6 +75,12 @@ const Common = (props: CommonProps) => {
         | { isEnabled?: boolean }
         | undefined;
       setUseFailover(Boolean(failoverSettings?.isEnabled));
+      try {
+        setApiCfg(await props.client.getOpenAiApiConfig());
+        setOcStatus(await props.client.getOpencodeStatus());
+      } catch (e) {
+        console.warn('Could not read the OpenAI endpoint config', e);
+      }
     })();
   }, []);
 
@@ -149,6 +164,140 @@ const Common = (props: CommonProps) => {
           />
         </FieldRow>
         <Btn onClick={() => props.updateEthNodeUrl(ethNodeUrl)}>Save</Btn>
+      </SectionCard>
+
+      <SectionCard>
+        <Flex.Row align="center" gap="0.8rem">
+          <IconPlugConnected size={20} stroke={1.75} color="currentColor" />
+          <SectionHeader>OpenAI-compatible API</SectionHeader>
+        </Flex.Row>
+        <SectionDescription>
+          Serve this app&apos;s models to tools that speak the OpenAI API —
+          opencode, an OpenAI SDK, or anything that takes a base URL and a key.
+          It listens on your machine only.
+        </SectionDescription>
+        <SettingsCallout tone="info">
+          The endpoint never opens a session on its own, so it cannot spend MOR:
+          it serves your local models plus any marketplace model you already
+          have a session open for. Open a session in Chat first, then point your
+          tool at it.
+        </SettingsCallout>
+        <FieldRow>
+          <ToggleRow htmlFor="openai-api-enabled">
+            <ToggleInput
+              id="openai-api-enabled"
+              checked={Boolean(apiCfg?.enabled)}
+              onChange={async (e) => {
+                const next = await props.client.setOpenAiApiConfig({
+                  enabled: Boolean(e.target.checked),
+                });
+                setApiCfg(next);
+              }}
+            />
+            <ToggleLabel>
+              Enable the endpoint
+              {apiCfg?.enabled && !apiCfg?.running
+                ? ' — could not bind, is the port in use?'
+                : ''}
+            </ToggleLabel>
+          </ToggleRow>
+        </FieldRow>
+        {apiCfg?.running && (
+          <>
+            <FieldRow>
+              <TextInput
+                id="openai-api-base"
+                label="Base URL"
+                value={`http://127.0.0.1:${apiCfg.port}/v1`}
+                readOnly
+                onChange={() => undefined}
+              />
+            </FieldRow>
+            <FieldRow>
+              <TextInput
+                id="openai-api-key"
+                label="API key"
+                type={apiTokenShown ? 'text' : 'password'}
+                value={apiCfg.token}
+                readOnly
+                onChange={() => undefined}
+              />
+            </FieldRow>
+            <Flex.Row gap="0.8rem">
+              <GhostBtn onClick={() => setApiTokenShown((v) => !v)}>
+                {apiTokenShown ? 'Hide' : 'Show'} key
+              </GhostBtn>
+              <GhostBtn
+                onClick={() => props.client.copyToClipboard(apiCfg.token)}
+              >
+                Copy key
+              </GhostBtn>
+              <GhostBtn
+                onClick={async () =>
+                  setApiCfg(await props.client.regenerateOpenAiApiToken())
+                }
+              >
+                Regenerate
+              </GhostBtn>
+            </Flex.Row>
+            {apiCfg.lastActivity && (
+              <SettingsCallout tone="info">
+                Last external use: {apiCfg.lastActivity.modelName} at{' '}
+                {new Date(apiCfg.lastActivity.at).toLocaleTimeString()}.
+              </SettingsCallout>
+            )}
+
+            {/* opencode setup lives inside this card because it is only
+                meaningful once the endpoint it talks to is running. */}
+            <SectionDescription style={{ marginTop: '1.6rem' }}>
+              {ocStatus?.installed
+                ? `opencode ${ocStatus.version} is installed. Open a session in Chat and you'll be offered a one-click handoff.`
+                : 'opencode is not installed. It is a terminal coding agent that can drive the models above.'}
+            </SectionDescription>
+            {!ocStatus?.installed && (
+              <>
+                <SettingsCallout tone="info">
+                  This runs <code>{ocStatus?.installCommand}</code> in a shell.
+                  Nothing is installed until you click.
+                </SettingsCallout>
+                <Btn
+                  disabled={ocBusy}
+                  onClick={async () => {
+                    setOcBusy(true);
+                    setOcOutput('');
+                    try {
+                      const r = (await props.client.installOpencode()) as { output?: string };
+                      setOcStatus(
+                        await props.client.getOpencodeStatus(),
+                      );
+                      // Show the installer's own output either way — a silent
+                      // failure here is the worst outcome.
+                      setOcOutput(r?.output ?? '');
+                    } finally {
+                      setOcBusy(false);
+                    }
+                  }}
+                >
+                  {ocBusy ? 'Installing…' : 'Install opencode'}
+                </Btn>
+              </>
+            )}
+            {ocOutput && (
+              <SettingsCallout tone="info">
+                <pre
+                  style={{
+                    whiteSpace: 'pre-wrap',
+                    maxHeight: '12rem',
+                    overflow: 'auto',
+                    margin: 0,
+                  }}
+                >
+                  {ocOutput}
+                </pre>
+              </SettingsCallout>
+            )}
+          </>
+        )}
       </SectionCard>
 
       <SectionCard>

@@ -45,6 +45,13 @@ const listeners = {
   'update-chat-session': handlers.updateChatSession,
   // Failover
   'get-failover-setting': handlers.isFailoverEnabled,
+  'get-openai-api-config': handlers.getOpenAiApiConfig,
+  'set-openai-api-config': handlers.setOpenAiApiConfig,
+  'regenerate-openai-api-token': handlers.regenerateOpenAiApiToken,
+  'get-opencode-status': handlers.getOpencodeStatus,
+  'install-opencode': handlers.installOpencode,
+  'open-in-opencode': handlers.openInOpencode,
+  'set-opencode-cwd': handlers.setOpencodeCwd,
   'set-failover-setting': handlers.setFailoverSetting,
   'check-provider-connectivity': handlers.checkProviderConnectivity,
 

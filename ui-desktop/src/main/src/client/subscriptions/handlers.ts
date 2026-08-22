@@ -16,6 +16,25 @@ import {
   setPasswordHash
 } from '../settings'
 import config from '../../../config'
+import {
+  OpenAiCompatServer,
+  defaultConfig as defaultOpenAiConfig,
+  generateToken,
+  type OpenAiApiConfig,
+  type ExternalActivity
+} from '../../openai-compat/server'
+import { getOpenAiApiSetting, setOpenAiApiSetting } from '../settings'
+import {
+  buildLaunchScript,
+  buildMorpheusConfig,
+  detectOpencode,
+  installCommand,
+  launchInTerminal,
+  writeMorpheusConfig
+} from '../../opencode/setup'
+import path from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import os from 'node:os'
 import fs from 'node:fs'
 import {
@@ -971,4 +990,218 @@ export const suggestAddresses = async (mnemonic: string) => {
 
 export const quitApp = async () => {
   app.quit()
+}
+
+
+// ---- OpenAI-compatible local endpoint ---------------------------------------
+//
+// One server instance for the app's lifetime; `sync()` starts, stops or rebinds
+// it to match the stored config. Disabled by default, and even when enabled it
+// cannot open a paid session unless `allowAutoOpen` is explicitly turned on —
+// so by default nothing reaching this port can cause a chain transaction.
+
+let openAiServer: OpenAiCompatServer | null = null
+// Most recent external use, surfaced in the UI. Deliberately not a log of
+// prompts — only that something used a model, and when.
+let lastExternalActivity: ExternalActivity | null = null
+
+const readOpenAiConfig = (): OpenAiApiConfig => {
+  const stored = getOpenAiApiSetting()
+  const base = defaultOpenAiConfig()
+  if (!stored || typeof stored !== 'object') {
+    // First read also PERSISTS the generated token, so the value shown in
+    // Settings is stable rather than changing on every launch.
+    setOpenAiApiSetting(base)
+    return base
+  }
+  const merged: OpenAiApiConfig = {
+    enabled: Boolean(stored.enabled),
+    port: Number(stored.port) || base.port,
+    token: typeof stored.token === 'string' && stored.token ? stored.token : base.token,
+    allowAutoOpen: Boolean(stored.allowAutoOpen),
+    maxStakeMor: Number.isFinite(Number(stored.maxStakeMor))
+      ? Number(stored.maxStakeMor)
+      : base.maxStakeMor
+  }
+  if (merged.token !== stored.token) {
+    setOpenAiApiSetting(merged)
+  }
+  return merged
+}
+
+const ensureOpenAiServer = (): OpenAiCompatServer => {
+  if (!openAiServer) {
+    openAiServer = new OpenAiCompatServer({
+      routerUrl: () => config.chain.localProxyRouterUrl,
+      authHeaders: getAuthHeaders,
+      walletAddress: () => {
+        const stored = wallet.getAddress() as { address?: string } | undefined
+        return stored?.address
+      },
+      config: readOpenAiConfig,
+      onActivity: (activity) => {
+        lastExternalActivity = activity
+      },
+      log: (message) => log.info(message)
+    })
+  }
+  return openAiServer
+}
+
+export const getOpenAiApiConfig = async () => ({
+  ...readOpenAiConfig(),
+  running: ensureOpenAiServer().isRunning(),
+  lastActivity: lastExternalActivity
+})
+
+export const setOpenAiApiConfig = async (next: Partial<OpenAiApiConfig>) => {
+  const current = readOpenAiConfig()
+  const merged: OpenAiApiConfig = {
+    ...current,
+    ...next,
+    // The token is replaced only through regenerateOpenAiApiToken, never by a
+    // config write — so a UI round-trip cannot blank it by omission.
+    token: current.token
+  }
+  setOpenAiApiSetting(merged)
+  try {
+    await ensureOpenAiServer().sync()
+  } catch (e) {
+    log.error('openai-compat: could not apply config', e)
+    return { ...merged, running: false, error: String(e) }
+  }
+  return { ...merged, running: ensureOpenAiServer().isRunning() }
+}
+
+export const regenerateOpenAiApiToken = async () => {
+  const current = readOpenAiConfig()
+  const merged = { ...current, token: generateToken() }
+  setOpenAiApiSetting(merged)
+  await ensureOpenAiServer().sync()
+  return { ...merged, running: ensureOpenAiServer().isRunning() }
+}
+
+// Called once at startup so an endpoint left enabled comes back up with the app.
+export const startOpenAiApiIfEnabled = async () => {
+  try {
+    await ensureOpenAiServer().sync()
+  } catch (e) {
+    log.error('openai-compat: startup failed', e)
+  }
+}
+
+
+// ---- opencode handoff --------------------------------------------------------
+//
+// Hands a live session to `opencode`. The app publishes its OWN opencode config
+// and points OPENCODE_CONFIG at it, so the user's ~/.config/opencode/opencode.jsonc
+// is never read or rewritten — see ../../opencode/setup.ts for why that matters.
+
+const opencodeDir = () => path.join(app.getPath('userData'), 'opencode')
+const opencodeConfigPath = () => path.join(opencodeDir(), 'morpheus.json')
+
+export const getOpencodeStatus = async () => {
+  const status = await detectOpencode()
+  const api = readOpenAiConfig()
+  return {
+    ...status,
+    installCommand: installCommand().display,
+    // The handoff needs the endpoint running: opencode talks to it, not to us.
+    endpointEnabled: api.enabled,
+    endpointRunning: ensureOpenAiServer().isRunning(),
+    configPath: opencodeConfigPath()
+  }
+}
+
+export const installOpencode = async () => {
+  const { file, args, display } = installCommand()
+  log.info(`opencode: running installer — ${display}`)
+  try {
+    const { stdout, stderr } = await promisify(execFile)(file, args, {
+      timeout: 10 * 60 * 1000,
+      maxBuffer: 4 * 1024 * 1024
+    })
+    const status = await detectOpencode()
+    return { ok: status.installed, status, output: `${stdout}\n${stderr}`.trim() }
+  } catch (e: any) {
+    // Surfaced verbatim in the UI. An installer that fails silently is worse
+    // than one that never ran.
+    return {
+      ok: false,
+      status: await detectOpencode(),
+      output: `${e?.stdout ?? ''}\n${e?.stderr ?? ''}\n${String(e?.message ?? e)}`.trim()
+    }
+  }
+}
+
+/**
+ * Write the provider config and open a terminal running opencode against
+ * `modelId`. Refuses rather than guesses when the endpoint is not actually
+ * serving — a terminal that opens onto a connection error is a worse outcome
+ * than a clear message here.
+ */
+export const openInOpencode = async ({ modelId, cwd }: { modelId: string; cwd?: string }) => {
+  const api = readOpenAiConfig()
+  if (!api.enabled || !ensureOpenAiServer().isRunning()) {
+    return {
+      ok: false,
+      reason: 'endpoint_off',
+      message:
+        'Turn on the OpenAI-compatible API in Settings first — opencode connects to it, not to the app directly.'
+    }
+  }
+
+  const status = await detectOpencode()
+  if (!status.installed || !status.path) {
+    return { ok: false, reason: 'not_installed', message: 'opencode is not installed yet.' }
+  }
+
+  // Callers here hold the hex32 chain id; the endpoint advertises names. Resolve
+  // through the endpoint itself rather than comparing the two forms — that
+  // mismatch is what made this report "not serving" for a live session.
+  // ONE pass: resolving the id and listing models both need the usable-model
+  // set, and asking for them separately meant paying the 5-10s /blockchain/models
+  // read twice — which exceeded the IPC timeout and made this look like it had
+  // failed while the terminal opened anyway.
+  const { advertised, models } = await ensureOpenAiServer().resolveForHandoff(modelId)
+  if (!advertised) {
+    return {
+      ok: false,
+      reason: 'model_unavailable',
+      message: `The endpoint is not currently serving "${modelId}". Is the session still open?`
+    }
+  }
+
+  const configPath = opencodeConfigPath()
+  writeMorpheusConfig(
+    configPath,
+    buildMorpheusConfig({
+      baseUrl: `http://127.0.0.1:${api.port}/v1`,
+      apiKey: api.token,
+      models
+    })
+  )
+
+  const workdir = cwd || (getOpenAiApiSetting()?.opencodeCwd as string) || app.getPath('home')
+  try {
+    const script = buildLaunchScript({
+      opencodePath: status.path,
+      configPath,
+      // opencode must be given the ADVERTISED id — it has to match the config's
+      // model key and what /v1/models returns.
+      modelId: advertised,
+      cwd: workdir
+    })
+    await launchInTerminal(path.join(opencodeDir(), 'open-morpheus.command'), script)
+    return { ok: true, modelId: advertised, cwd: workdir, configPath }
+  } catch (e) {
+    // buildLaunchScript throws on control characters rather than quoting them.
+    return { ok: false, reason: 'unsafe_input', message: String(e) }
+  }
+}
+
+export const setOpencodeCwd = async (cwd: string) => {
+  const current = readOpenAiConfig()
+  setOpenAiApiSetting({ ...(getOpenAiApiSetting() ?? {}), ...current, opencodeCwd: cwd })
+  return { cwd }
 }
