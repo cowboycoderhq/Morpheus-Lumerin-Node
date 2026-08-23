@@ -105,6 +105,8 @@ import { Cooldown } from './Cooldown';
 import {
   useKeepAlive,
   blocksForDuration,
+  requiredFreeStake,
+  peakBlockStakes,
 } from '../keepalive/KeepAliveProvider';
 import {
   parseDuration,
@@ -767,6 +769,12 @@ export const Chat = (props: ChatProps) => {
     sessionBlockSeconds,
   );
   const sessionRenews = sessionBlockCount > 1;
+  // The SAME figure startRolling gates on, so the disclosure and the refusal
+  // can never quote different prices for the same plan.
+  const sessionPeakStakes = peakBlockStakes(
+    sessionBlockCount,
+    sessionBlockSeconds,
+  );
   // Unit completions for what has been typed. Capped so the menu cannot grow
   // tall enough to sit over the Stake button beneath it.
   const lengthSuggestions = durationSuggestions(sessionLengthInput).slice(0, 5);
@@ -1129,17 +1137,20 @@ export const Chat = (props: ChatProps) => {
       );
       // A single block never restakes, so it only ever locks 1x.
       //
-      // Seamless needs 2x: block N+1 opens BEFORE N expires, so two stakes are
-      // briefly locked at once. Economy needs 1x — it now closes each expired
-      // block itself (a late close, which SessionRouter returns in full with no
-      // 24h hold) and waits for the chain to confirm the stake is back before
-      // opening the next, so only one stake is ever committed.
+      // ANY renewing plan needs 2x, in BOTH modes. Seamless is obvious: block
+      // N+1 opens before N expires, so two stakes are briefly live at once.
+      // Economy is the same in practice — closing block N returns only the time
+      // it did NOT use (~0.06% of a block that ran to its end) and locks the
+      // rest until the end of the UTC day, so block N+1 must be funded with new
+      // MOR while N's is still held. Measured on Base mainnet 2026-08-06; see
+      // utils/marketplace.ts.
       //
-      // Economy was temporarily forced to 2x because it previously just slept
-      // REOPEN_DELAY_SEC and assumed the refund had landed. It had not: the only
-      // thing closing blocks was the router's 1-minute autoclose sweep, so a 1x
-      // wallet reverted on the first restake with block 1 already paid for.
-      const needsTwo = blockCount > 1 && overlap;
+      // This said `blockCount > 1 && overlap`, on a recycling premise that the
+      // deployed contract does not implement. That understated economy by half
+      // and let the gate approve renewing runs the wallet could not fund.
+      // Kept for the wording of the refusal below; the AMOUNT comes from the
+      // shared predicate so the gate and its checks cannot drift apart.
+      const needsTwo = blockCount > 1;
       // Reserve what the OTHER live runs still need. Each run asking only "can I
       // peak at 2x?" oversubscribes the wallet once several are live: with a
       // 3.05 MOR balance and 0.305 MOR blocks the gate approved NINE concurrent
@@ -1150,21 +1161,30 @@ export const Chat = (props: ChatProps) => {
       // No argument: startRolling always seeds a brand-new chat id, so there is
       // never an existing run of its own to exclude.
       const otherRunsNeed = keepAlive.committedOverlapWei();
-      const requiredFreeStake =
-        (needsTwo ? 2 : 1) * perBlockStake + otherRunsNeed;
+      const needed = requiredFreeStake(
+        blockCount,
+        perBlockStake,
+        otherRunsNeed,
+        sessionBlockSeconds,
+      );
       if (
         !aff.known ||
         (!chosenBid && aff.affordableCount < 1) ||
         !Number.isFinite(perBlockStake) ||
         perBlockStake <= 0 ||
-        freeMor < requiredFreeStake
+        freeMor < needed
       ) {
         props.toasts.toast(
           'error',
           otherRunsNeed > 0
             ? `Not enough MOR for a session of ${formatDurationLong(askedSec)} — your ${keepAlive.runningCount} running session(s) still need about ${formatMor(otherRunsNeed, 18) ?? '—'} MOR. Stop one, shorten this session, or add MOR.`
             : needsTwo
-              ? `Not enough MOR for a session of ${formatDurationLong(askedSec)} — it renews every ${formatDurationLong(sessionBlockSeconds)} and needs about twice one renewal's stake (${formatMor(perBlockStake, 18) ?? '—'} MOR) free. Switch to Economy, shorten it, or add MOR.`
+              ? // No "switch to Economy" — that used to be offered as the cheaper
+                // option, and it is not one: both modes need the same MOR now.
+                // Quote the peak the gate actually enforces, not a hardcoded
+                // "twice" — at a short chain cap several blocks' holds overlap
+                // and the multiple is higher.
+                `Not enough MOR for a session of ${formatDurationLong(askedSec)} — it renews every ${formatDurationLong(sessionBlockSeconds)} and needs about ${formatMor(perBlockStake * peakBlockStakes(blockCount, sessionBlockSeconds), 18) ?? '—'} MOR free, because a renewal opens before the previous stake comes back. Shorten it, or add MOR.`
               : `Not enough MOR for a session of ${formatDurationLong(askedSec)} — it needs about ${formatMor(perBlockStake, 18) ?? '—'} MOR staked. Shorten the session, or add MOR.`,
         );
         return;
@@ -2515,19 +2535,28 @@ export const Chat = (props: ChatProps) => {
                           <strong>{sessionBlockCount} sessions</strong> of up to{' '}
                           {formatDurationLong(sessionBlockSeconds)}, staking
                           about {formatMor(stakePreviewWei, 18) ?? '…'} MOR each.
-                          MOR is locked until the end of the day, so those
-                          stakes ACCUMULATE across renewals — they do not come
-                          back between them.{' '}
-                          {/* Mode-accurate AND count-accurate: claiming "only
-                              one is staked at a time" directly above the
-                              Seamless card's "needs about twice one session's
-                              stake" was the page contradicting itself on a
-                              money figure; claiming the two-at-once cost for a
-                              plan that never renews was the same error again,
-                              in the other direction. */}
-                          {/* Both modes now cost the same MOR: nothing is
-                              released between renewals, so "one at a time" is
-                              no longer a saving either mode can offer. */}
+                          You need{' '}
+                          <strong>
+                            {formatMor(
+                              stakePreviewWei * sessionPeakStakes,
+                              18,
+                            ) ?? '…'}{' '}
+                            MOR
+                          </strong>{' '}
+                          free to start — a renewal opens before the previous
+                          stake comes back, and each one returns at the end of
+                          the day it closes.{' '}
+                          {/* This said the stakes ACCUMULATE across renewals
+                              and never come back between them, which read as
+                              "a 1-year plan needs 53x a block's stake". The
+                              gate 30 lines up charges the PEAK, not the sum,
+                              and the peak is what the wallet actually has to
+                              carry: a block's hold clears by the end of the day
+                              it closed, which at the 7-day cap is six days
+                              before the next block opens. Quote the same number
+                              the gate enforces, computed from the same
+                              function, so the screen cannot disagree with the
+                              refusal it is about to show. */}
                           Each is priced again when it opens, so this is a plan,
                           not a purchase — and it lasts only as long as the app
                           keeps running.
@@ -2554,23 +2583,30 @@ export const Chat = (props: ChatProps) => {
                     <>
                       <KeepAliveRow>
                         <KeepAliveLabel>Renewing</KeepAliveLabel>
+                        {/* The labels no longer quote a stake multiple. They
+                            read "2× stake" and "1× stake", which contradicted
+                            the sentence right below them and, worse, priced a
+                            saving that does not exist: both modes cost the same
+                            because a closed block's stake is locked to the end
+                            of the day either way. The only real difference is
+                            whether inference pauses at each renewal. */}
                         <KeepAliveChip
                           $active={restakeMode === 'seamless'}
                           onClick={() => setRestakeMode('seamless')}
                         >
-                          Seamless · 2× stake
+                          Seamless · no pause
                         </KeepAliveChip>
                         <KeepAliveChip
                           $active={restakeMode === 'economy'}
                           onClick={() => setRestakeMode('economy')}
                         >
-                          Economy · 1× stake
+                          Sequential · brief gap
                         </KeepAliveChip>
                       </KeepAliveRow>
                       <ChatIntroInnerText style={{ marginTop: '0.4rem' }}>
                         {restakeMode === 'seamless'
-                          ? `Seamless: the next session opens before the current one ends, so inference never pauses. Every stake stays locked until the end of the day, so budget for the whole plan rather than one session's worth.`
-                          : `Economy: the next session opens only after the current one expires, so there is a short gap in inference. It does NOT lower what you stake — MOR is locked until the end of the day either way, so each renewal needs new MOR rather than reusing the last stake.`}
+                          ? `Seamless: the next session opens before the current one ends, so inference never pauses. The previous stake is still locked when the next one opens, so keep the figure above free — not just one session's worth.`
+                          : `Sequential: the next session opens only after the current one expires, so there is a short gap in inference. It costs exactly the same — MOR is locked until the end of the day either way, so each renewal needs new MOR rather than reusing the last stake. Pick this only if an overlap would be a problem.`}
                       </ChatIntroInnerText>
                     </>
                   )}

@@ -6,10 +6,10 @@ import { ChatHistory } from '../../../../src/renderer/src/components/chat/ChatHi
 
 // The Close button, on the real ChatHistory.
 //
-// Closing a session EARLY does not spend the stake — it time-locks part of it
-// for a day (SessionRouter._rewardUserAfterClose). Close used to be ONE click
-// with no warning, and a real user closed a session well before it ended and
-// watched part of the stake go unreachable for 24h.
+// Closing a session does not spend the stake — it time-locks the part you used
+// until the end of the UTC day (SessionRouter._rewardUserAfterClose). Close used
+// to be ONE click with no warning, so a user could close a session well
+// before it ended and find part of the stake unreachable for a day.
 //
 // The fixture is not a real session: it is chain-derived and resolves to
 // none, keeping only the used-share formula the contract applies:
@@ -17,7 +17,12 @@ import { ChatHistory } from '../../../../src/renderer/src/components/chat/ChatHi
 // ends 1787873854 (1199s). `?at=` sets the clock, so the case can stand at a
 // chosen moment inside or past the session:
 //   at=1787872961  -> 306s in, the close point this case pins  -> locks 58.5734 MOR
-//   at=1787873854  -> exactly endsAt                      -> locks nothing
+//   at=1787873854  -> exactly endsAt                      -> locks the LOT
+//
+// That last line used to read "locks nothing", from the vendored contract's
+// `if (!isClosingLate_)` guard. The deployed Diamond has no such guard —
+// measured on Base mainnet 2026-08-06 — so running a session to its end locks
+// the whole stake, and the panel must not advise waiting as a way to avoid it.
 // PROVENANCE: two of the fields below are DRAWN from published Base mainnet
 // data and two are SHAPED from it; none of them is any session's record.
 // ModelName is product data, ClosedAt is a sentinel, and Provider is
