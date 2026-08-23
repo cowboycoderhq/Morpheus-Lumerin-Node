@@ -442,6 +442,34 @@ console.log('openai endpoint: the enable toggle actually binds and unbinds');
   ok('re-enabling brings it back', back.status === 200);
 }
 
+// ---- unknown headers must not break admission ------------------------------
+// grok-build injects X-XAI-Token-Auth, x-authenticateresponse and a client-mode
+// header into EVERY request to 127.0.0.1 (verified in its source:
+// is_cli_chat_proxy_url returns true for loopback unconditionally). A client we
+// want to support therefore sends headers we never asked for, and admission
+// must ignore them rather than treat them as suspicious.
+console.log('');
+console.log('admission: headers we did not ask for');
+{
+  const withJunk = await fetch(`${base}/v1/models`, {
+    headers: {
+      ...auth,
+      'X-XAI-Token-Auth': 'xai-grok-cli',
+      'x-authenticateresponse': 'authenticate-response',
+      'X-Some-Client-Mode': 'whatever',
+    },
+  });
+  ok('a client sending its own extra headers is still admitted', withJunk.status === 200);
+
+  // But the Origin refusal must NOT be relaxed by the same tolerance: a browser
+  // is still a browser however many other headers it sends.
+  const browsery = await fetch(`${base}/v1/models`, {
+    headers: { ...auth, 'X-XAI-Token-Auth': 'xai-grok-cli', Origin: 'https://evil.example' },
+  });
+  ok('extra headers do not smuggle a browser past the Origin refusal',
+    browsery.status === 403);
+}
+
 // ---- /morpheus/v1: the surface `/start` drives ------------------------------
 // One route here can spend. Everything below is about proving it cannot be
 // reached by accident, cannot be talked past, and cannot stake a figure other
