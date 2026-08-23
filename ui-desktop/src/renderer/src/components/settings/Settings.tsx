@@ -60,6 +60,9 @@ const Common = (props: CommonProps) => {
   // for — a port collision must not read as "on".
   const [apiCfg, setApiCfg] = useState<any>(null);
   const [apiTokenShown, setApiTokenShown] = useState(false);
+  // In-flight text for the spend-cap fields, keyed by config field. Only a
+  // usable number is committed; see the inputs below.
+  const [capDraft, setCapDraft] = useState<Record<string, string>>({});
   const [ocStatus, setOcStatus] = useState<any>(null);
   const [ocBusy, setOcBusy] = useState(false);
   const [ocOutput, setOcOutput] = useState<string>('');
@@ -247,13 +250,108 @@ const Common = (props: CommonProps) => {
               </SettingsCallout>
             )}
 
+            {/* The one switch on this screen that lets something OUTSIDE the
+                app spend MOR. It is off by default and stays off unless it is
+                turned on here — the endpoint being enabled is not enough. */}
+            <SectionDescription style={{ marginTop: '1.6rem' }}>
+              Opening sessions from outside the app
+            </SectionDescription>
+            <FieldRow>
+              <ToggleRow htmlFor="openai-api-auto-open">
+                <ToggleInput
+                  id="openai-api-auto-open"
+                  checked={Boolean(apiCfg?.allowAutoOpen)}
+                  onChange={async (e) => {
+                    setApiCfg(
+                      await props.client.setOpenAiApiConfig({
+                        allowAutoOpen: Boolean(e.target.checked),
+                      }),
+                    );
+                  }}
+                />
+                <ToggleLabel>
+                  Let <code>/start</code> in opencode stake MOR
+                </ToggleLabel>
+              </ToggleRow>
+            </FieldRow>
+            <SettingsCallout tone={apiCfg?.allowAutoOpen ? 'warning' : 'info'}>
+              {apiCfg?.allowAutoOpen
+                ? 'A tool holding the key above can open paid sessions without asking the app. The limits below are what bound it.'
+                : 'While this is off, nothing reaching the endpoint can cause a blockchain transaction — it can only use sessions you already opened.'}
+            </SettingsCallout>
+            {apiCfg?.allowAutoOpen && (
+              <Flex.Row gap="0.8rem">
+                {(
+                  [
+                    ['maxStakeMor', 'Max MOR per session'],
+                    ['maxDailyStakeMor', 'Max MOR per day'],
+                    ['maxDailySessions', 'Max sessions per day'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <TextInput
+                    key={key}
+                    id={`openai-api-${key}`}
+                    label={label}
+                    // The DRAFT while typing, the stored value otherwise.
+                    // Committing the parsed number on every keystroke made
+                    // clearing the field write 0 — a cap of zero refuses
+                    // everything — and backspacing to retype was enough to do
+                    // it. Hold the text, commit only a usable number.
+                    value={capDraft[key] ?? String(apiCfg[key] ?? '')}
+                    onChange={async (e: any) => {
+                      // This control calls onChange({ id, value }), NOT a DOM
+                      // event — reading e.target.value threw on every
+                      // keystroke and the field could not be edited at all.
+                      const text = String(e?.value ?? '');
+                      setCapDraft((d) => ({ ...d, [key]: text }));
+                      const n = Number(text);
+                      if (text.trim() === '' || !Number.isFinite(n) || n < 0) {
+                        return;
+                      }
+                      setApiCfg(
+                        await props.client.setOpenAiApiConfig({ [key]: n }),
+                      );
+                    }}
+                    onBlur={() =>
+                      setCapDraft((d) => {
+                        const next = { ...d };
+                        delete next[key];
+                        return next;
+                      })
+                    }
+                  />
+                ))}
+              </Flex.Row>
+            )}
+
             {/* opencode setup lives inside this card because it is only
                 meaningful once the endpoint it talks to is running. */}
             <SectionDescription style={{ marginTop: '1.6rem' }}>
               {ocStatus?.installed
-                ? `opencode ${ocStatus.version} is installed. Open a session in Chat and you'll be offered a one-click handoff.`
+                ? `opencode ${ocStatus.version} is installed. Open it below and run /start, or open a session in Chat for a one-click handoff.`
                 : 'opencode is not installed. It is a terminal coding agent that can drive the models above.'}
             </SectionDescription>
+            {ocStatus?.installed && (
+              <Btn
+                disabled={ocBusy}
+                onClick={async () => {
+                  setOcBusy(true);
+                  try {
+                    // No model: opencode opens with the Morpheus provider
+                    // configured and nothing selected, which is where /start
+                    // is meant to be run from.
+                    const r: any = await props.client.openInOpencode({});
+                    if (!r?.ok) {
+                      setOcOutput(r?.message ?? 'Could not open opencode.');
+                    }
+                  } finally {
+                    setOcBusy(false);
+                  }
+                }}
+              >
+                {ocBusy ? 'Opening…' : 'Open opencode'}
+              </Btn>
+            )}
             {!ocStatus?.installed && (
               <>
                 <SettingsCallout tone="info">

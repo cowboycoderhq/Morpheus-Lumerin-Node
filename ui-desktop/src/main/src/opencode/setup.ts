@@ -143,6 +143,31 @@ export function buildMorpheusConfig(input: MorpheusProviderInput): string {
 export function writeStartPlugin(path: string, contents: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, contents, { encoding: 'utf8', mode: 0o600 });
+  // `mode` applies only on creation; set it on every write (see below).
+  chmodSync(path, 0o600);
+}
+
+/**
+ * The endpoint descriptor both generated plugins read.
+ *
+ * Auto-loaded plugins get no options, so this file is how the URL, key and
+ * model list reach them. It is the ONE artifact of this integration that holds
+ * a credential — hence 0600 on every write, not just on creation.
+ */
+export function writeEndpointDescriptor(
+  path: string,
+  descriptor: {
+    baseUrl: string;
+    apiKey: string;
+    models: { id: string; label: string }[];
+  },
+): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(descriptor, null, 2), {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  chmodSync(path, 0o600);
 }
 
 export function writeMorpheusConfig(path: string, contents: string): void {
@@ -171,7 +196,8 @@ export function shellQuote(value: string): string {
 export type LaunchInput = {
   opencodePath: string;
   configPath: string;
-  modelId: string;
+  /** Omitted → launch with no model preselected, so `/start` can choose one. */
+  modelId?: string;
   cwd: string;
 };
 
@@ -190,6 +216,10 @@ export function buildLaunchScript(input: LaunchInput): string {
   // No model id, path or directory has a legitimate reason to contain one, so
   // this fails closed instead of relying on quoting to stay perfect forever.
   for (const [field, value] of Object.entries(input)) {
+    // An absent modelId is legitimate; only inspect what is actually there.
+    if (value === undefined) {
+      continue;
+    }
     if (/[\u0000-\u001f\u007f]/.test(String(value))) {
       throw new Error(
         `Refusing to build a launch command: ${field} contains a control character.`,
@@ -197,12 +227,17 @@ export function buildLaunchScript(input: LaunchInput): string {
     }
   }
 
-  const model = `morpheus/${input.modelId}`;
+  // No model asked for -> no -m flag. opencode then opens with the Morpheus
+  // provider configured and nothing preselected, which is the state `/start`
+  // expects to be run from.
+  const launch = input.modelId
+    ? `exec ${shellQuote(input.opencodePath)} -m ${shellQuote(`morpheus/${input.modelId}`)}`
+    : `exec ${shellQuote(input.opencodePath)}`;
   return [
     '#!/bin/bash',
     `cd ${shellQuote(input.cwd)} || exit 1`,
     `export OPENCODE_CONFIG=${shellQuote(input.configPath)}`,
-    `exec ${shellQuote(input.opencodePath)} -m ${shellQuote(model)}`,
+    launch,
     '',
   ].join('\n');
 }
