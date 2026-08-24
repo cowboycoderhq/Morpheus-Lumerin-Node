@@ -123,6 +123,14 @@ export function buildGrokModelsToml(input: GrokModelsConfigInput): string {
     lines.push(`name = ${tomlString(`Morpheus: ${model.label}`)}`);
     lines.push(`base_url = ${tomlString(input.baseUrl)}`);
     lines.push(`api_key = ${tomlString(input.apiKey)}`);
+    // The credential that actually gets through. grok treats a loopback URL as
+    // first-party xAI and, with its disable_api_key_auth kill switch on, swaps
+    // `api_key` for its own IdP session token before the request leaves — so
+    // the endpoint saw an 838-char JWT instead of our key and refused it. This
+    // header it does not rewrite.
+    lines.push(
+      `extra_headers = { "X-Morpheus-Key" = ${tomlString(input.apiKey)} }`,
+    );
     lines.push('api_backend = "chat_completions"');
     lines.push('');
   }

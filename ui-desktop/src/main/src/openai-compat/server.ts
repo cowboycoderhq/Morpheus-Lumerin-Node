@@ -208,11 +208,24 @@ export class OpenAiCompatServer {
         authorization: req.headers['authorization'] ?? null,
         host: req.headers['host'] ?? null,
         origin: (req.headers['origin'] as string) ?? null,
+        morpheusKey: (req.headers['x-morpheus-key'] as string) ?? null,
       },
       cfg.token,
       cfg.port,
     );
     if (!admission.ok) {
+      // A 401 with no explanation is undiagnosable from the other side: the
+      // client just says "authentication required" and the user has no way to
+      // learn WHICH credential arrived. Describe the shape of what was sent —
+      // never the value.
+      const auth = String(req.headers['authorization'] ?? '');
+      const scheme = auth.split(' ')[0] || '(none)';
+      this.deps.log?.(
+        `openai-compat: refused ${req.method} ${(req.url ?? '').split('?')[0]} — ` +
+          `${admission.code}; authorization=${scheme}, token length ${
+            auth.split(' ')[1]?.length ?? 0
+          }, host=${String(req.headers['host'] ?? '(none)')}`,
+      );
       sendJson(
         res,
         admission.status,
@@ -1016,6 +1029,21 @@ export class OpenAiCompatServer {
         return; // client left; nothing to answer
       }
       throw e;
+    }
+
+    // A non-2xx from the router is passed through verbatim, which leaves the
+    // caller holding a bare "HTTP 400" and no way to learn why. Say what the
+    // router objected to — this is our own upstream's error text, not user
+    // content, and without it the failure is undiagnosable from a terminal.
+    if (!upstream.ok) {
+      const peek = await upstream
+        .clone()
+        .text()
+        .catch(() => '');
+      this.deps.log?.(
+        `openai-compat: the router refused ${upstream.status} for model ` +
+          `${resolution.model.id} — ${peek.slice(0, 300)}`,
+      );
     }
 
     // Pass the router's response through untouched. It already emits OpenAI's
