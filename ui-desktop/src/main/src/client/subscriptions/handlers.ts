@@ -35,6 +35,11 @@ import {
   writeEndpointDescriptor
 } from '../../opencode/setup'
 import { GrokSupervisor, bringAppToFront } from '../../grok/supervisor'
+import {
+  buildGrokModelsToml,
+  managedConfigPath,
+  writeGrokModelsConfig
+} from '../../grok/models-config'
 import { buildProviderPlugin } from '../../opencode/start-plugin'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
@@ -1045,6 +1050,11 @@ const readOpenAiConfig = (): OpenAiApiConfig => {
 
 const ensureOpenAiServer = (): OpenAiCompatServer => {
   if (!openAiServer) {
+    // Publishing Morpheus models into grok's picker follows the ENDPOINT, not
+    // the Settings screen. Hanging it off getGrokStatus meant the models only
+    // appeared once someone opened Settings — so a user who just wanted to pick
+    // a model in their terminal found nothing there.
+    setImmediate(() => startGrokModelsRefresh())
     openAiServer = new OpenAiCompatServer({
       routerUrl: () => config.chain.localProxyRouterUrl,
       authHeaders: getAuthHeaders,
@@ -1223,7 +1233,55 @@ const ensureGrokSupervisor = (): GrokSupervisor => {
   return grokSupervisor
 }
 
-export const getGrokStatus = async () => ensureGrokSupervisor().status()
+/**
+ * Publish the models grok can currently reach, into its managed config.
+ *
+ * Cheap and idempotent, so it runs on a timer rather than trying to observe
+ * every place a session can open or close (the Chat tab, the keep-alive loop,
+ * and the endpoint itself all can). A stale list is the failure that matters:
+ * a model in the picker whose session has expired fails inside grok, where the
+ * user has no way to see why.
+ */
+export const refreshGrokModels = async () => {
+  const api = readOpenAiConfig()
+  if (!api.enabled || !ensureOpenAiServer().isRunning()) {
+    // Endpoint off: publish an EMPTY list rather than leaving the last one
+    // behind, so the picker never offers a model that cannot answer.
+    writeGrokModelsConfig(
+      managedConfigPath(),
+      buildGrokModelsToml({ baseUrl: '', apiKey: '', models: [] })
+    )
+    return { models: 0 }
+  }
+  const advertised = await ensureOpenAiServer()
+    .advertisedModels()
+    .catch(() => [] as { id: string; label: string }[])
+  writeGrokModelsConfig(
+    managedConfigPath(),
+    buildGrokModelsToml({
+      baseUrl: `http://127.0.0.1:${api.port}/v1`,
+      apiKey: api.token,
+      models: advertised
+    })
+  )
+  return { models: advertised.length }
+}
+
+let grokModelsTimer: NodeJS.Timeout | null = null
+const startGrokModelsRefresh = (): void => {
+  if (grokModelsTimer) return
+  const tick = () => {
+    refreshGrokModels().catch((e) => log.warn(`grok models: ${String(e)}`))
+  }
+  tick()
+  grokModelsTimer = setInterval(tick, 60_000)
+  grokModelsTimer.unref?.()
+}
+
+export const getGrokStatus = async () => {
+  startGrokModelsRefresh()
+  return ensureGrokSupervisor().status()
+}
 
 export const setGrokEnabled = async (enabled: boolean) => {
   const sup = ensureGrokSupervisor()

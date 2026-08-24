@@ -50,6 +50,7 @@ const listeners = {
   'regenerate-openai-api-token': handlers.regenerateOpenAiApiToken,
   'get-opencode-status': handlers.getOpencodeStatus,
   'get-grok-status': handlers.getGrokStatus,
+  'refresh-grok-models': handlers.refreshGrokModels,
   'set-grok-enabled': handlers.setGrokEnabled,
   'grok-picker-done': handlers.grokPickerDone,
   'install-opencode': handlers.installOpencode,
