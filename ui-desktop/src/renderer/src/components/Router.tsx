@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router';
 import { useSelector } from 'react-redux';
 import { useQueryClient } from '@tanstack/react-query';
@@ -11,6 +11,7 @@ import Chat from './chat/Chat';
 import Models from './models/Models';
 import Agents from './agents/Agents';
 import Settings from './settings/Settings';
+import StartPickerModal from './grok/StartPickerModal';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import Providers from './providers/Providers';
 import { withClient } from '../store/hocs/clientContext';
@@ -170,8 +171,51 @@ const SessionPrefetcher = withClient(({ client }: any) => {
   return null;
 });
 
+/**
+ * `/start`, typed in a grok terminal, has to surface SOMEWHERE in this window —
+ * so the host sits above the routes rather than inside a tab. Putting it in Chat
+ * would make the picker depend on which tab the user happened to be looking at.
+ */
+const GrokStartHost = withClient(({ client }: any) => {
+  const [request, setRequest] = useState<any>(null);
+  const [api, setApi] = useState<any>(null);
+
+  useEffect(() => {
+    const onRequest = async (_e: any, payload: any) => {
+      // Read the endpoint fresh: the port or token may have moved since this
+      // window opened, and a stale pair fails as an unexplainable 401.
+      try {
+        setApi(await client.getOpenAiApiConfig());
+      } catch {
+        setApi(null);
+      }
+      setRequest(payload);
+    };
+    (window as any).ipcRenderer?.on?.('grok-picker-request', onRequest);
+    return () => {
+      (window as any).ipcRenderer?.removeListener?.('grok-picker-request', onRequest);
+    };
+  }, [client]);
+
+  if (!request) return null;
+  return (
+    <StartPickerModal
+      open
+      args={request.args ?? ''}
+      baseUrl={api?.port ? `http://127.0.0.1:${api.port}` : ''}
+      token={api?.token ?? ''}
+      onDone={(outcome) => {
+        // ALWAYS report back — the terminal is holding a turn open until we do.
+        void client.grokPickerDone({ requestId: request.requestId, ...outcome });
+        setRequest(null);
+      }}
+    />
+  );
+});
+
 export const Layout = () => (
   <Container data-testid="router-container">
+    <GrokStartHost />
     <Sidebar />
     <Main
       data-scrollelement // Required by react-virtualized implementation in Dashboard/TxList
