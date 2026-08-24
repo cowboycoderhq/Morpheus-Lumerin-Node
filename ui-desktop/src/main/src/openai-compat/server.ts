@@ -242,6 +242,10 @@ export class OpenAiCompatServer {
       await this.serveCatalog(res);
       return;
     }
+    if (req.method === 'GET' && url === '/morpheus/v1/providers') {
+      await this.serveProviders(req, res);
+      return;
+    }
     if (req.method === 'POST' && url === '/morpheus/v1/quote') {
       await this.serveQuote(req, res);
       return;
@@ -503,19 +507,70 @@ export class OpenAiCompatServer {
   }
 
   /**
-   * Every model with at least one live bid, and the providers behind it.
+   * The model list, WITHOUT per-model bids.
    *
-   * This is what `/start` pages through. Prices are quoted per HOUR because a
-   * per-second wei figure in a picker tells a human nothing.
+   * It used to fetch every model's bids so the list could show a price and
+   * hide models nobody serves. Measured against the live router that cost
+   * **108 seconds** for 380 models — the picker sat frozen and the user
+   * cancelled. The bids for ONE model are cheap; the bids for all of them are
+   * not, and the flow only ever needs the one you pick. See
+   * /morpheus/v1/providers.
    */
+  private catalogCache: { at: number; body: any } | null = null;
+  private static readonly CATALOG_TTL_MS = 60_000;
+
   private async serveCatalog(res: ServerResponse): Promise<void> {
+    if (
+      this.catalogCache &&
+      Date.now() - this.catalogCache.at < OpenAiCompatServer.CATALOG_TTL_MS
+    ) {
+      sendJson(res, 200, this.catalogCache.body);
+      return;
+    }
+
+    const url = this.deps.routerUrl();
+    const headers = await this.deps.authHeaders();
+    let chainModels: any = { models: [] };
+    try {
+      const r = await fetch(`${url}/blockchain/models`, { headers });
+      if (r.ok) chainModels = await r.json();
+    } catch {
+      /* fall through to the empty list, which the caller reports plainly */
+    }
+
+    const models = ((chainModels?.models ?? []) as any[])
+      .filter((m) => !m.IsDeleted)
+      .map((m) => ({ id: m.Id, name: m.Name || m.Id }));
+
+    const body = {
+      models,
+      maxSessionSeconds: this.capSeconds(),
+      minSessionSeconds: MIN_SESSION_SECONDS,
+    };
+    this.catalogCache = { at: Date.now(), body };
+    sendJson(res, 200, body);
+  }
+
+  /**
+   * The providers bidding on ONE model, priced per hour.
+   *
+   * Per-hour rather than per-second because a wei-scale per-second figure in a
+   * picker tells a human nothing about what a session costs.
+   */
+  private async serveProviders(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const modelId = new URL(req.url ?? '', 'http://127.0.0.1').searchParams.get('modelId');
+    if (!modelId) {
+      sendJson(res, 400, errorBody('modelId is required.', 'missing_fields'));
+      return;
+    }
+
     const pricing = await this.pricingInputs();
     if (!pricing) {
       sendJson(
         res,
         503,
         errorBody(
-          'Cannot price sessions right now — the local router did not return the token supply and daily budget. Is it running?',
+          'Cannot price sessions right now — the local router did not return the token supply and daily budget.',
           'pricing_unavailable',
         ),
       );
@@ -524,40 +579,23 @@ export class OpenAiCompatServer {
 
     const url = this.deps.routerUrl();
     const headers = await this.deps.authHeaders();
-    const getJson = async (path: string, fallback: any): Promise<any> => {
-      try {
-        const r = await fetch(`${url}${path}`, { headers });
-        if (!r.ok) return fallback;
-        return await r.json();
-      } catch {
-        return fallback;
-      }
-    };
-
-    const chainModels = await getJson('/blockchain/models', { models: [] });
-    const models = ((chainModels?.models ?? []) as any[]).filter(
-      (m) => !m.IsDeleted,
-    );
-
-    // Bids are per-model and the list is long, so fetch concurrently in bounded
-    // rounds. Serial paging here is what made the Chat tab take 20-30 seconds.
-    const bidsByModel = new Map<string, any[]>();
-    const BATCH = 8;
-    for (let i = 0; i < models.length; i += BATCH) {
-      const slice = models.slice(i, i + BATCH);
-      const results = await Promise.all(
-        slice.map((m: any) =>
-          getJson(`/blockchain/models/${m.Id}/bids/active`, { bids: [] }),
-        ),
-      );
-      slice.forEach((m: any, j: number) => {
-        const bids = results[j]?.bids ?? [];
-        if (bids.length) bidsByModel.set(m.Id, bids);
-      });
+    let bids: any[] = [];
+    try {
+      const r = await fetch(`${url}/blockchain/models/${modelId}/bids/active`, { headers });
+      if (r.ok) bids = (await r.json())?.bids ?? [];
+    } catch {
+      bids = [];
     }
 
+    const catalog = buildCatalog(
+      [{ Id: modelId, Name: modelId }],
+      new Map([[modelId, bids]]),
+      pricing.supply,
+      pricing.budget,
+    );
     sendJson(res, 200, {
-      models: buildCatalog(models, bidsByModel, pricing.supply, pricing.budget),
+      modelId,
+      providers: catalog[0]?.providers ?? [],
       maxSessionSeconds: this.capSeconds(),
       minSessionSeconds: MIN_SESSION_SECONDS,
     });

@@ -15,7 +15,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { pathToFileURL } from 'url';
 import { OpenAiCompatServer, generateToken } from '../../src/main/src/openai-compat/server.ts';
-import { buildStartPlugin, buildProviderPlugin } from '../../src/main/src/opencode/start-plugin.ts';
+import { buildProviderPlugin } from '../../src/main/src/opencode/start-plugin.ts';
 
 let pass = 0;
 let fail = 0;
@@ -496,19 +496,37 @@ console.log('morpheus: catalog, quote, and the one spending route');
   );
   ok('a browser Origin cannot reach the spending route', originRefused.status === 403);
 
-  // --- catalog ---
-  const catalog = await (await fetch(`${base}/morpheus/v1/catalog`, { headers: auth })).json();
+  // --- catalog: models ONLY ---
+  // It used to return every model's providers too. Measured against the live
+  // router that was 108 SECONDS for 380 models — the picker froze and the user
+  // cancelled. Bids are fetched for the one model actually chosen.
+  const catalogRes = await fetch(`${base}/morpheus/v1/catalog`, { headers: auth });
+  const catalog = await catalogRes.json();
   const model = catalog.models.find((m) => m.id === '0xremote1');
-  ok('catalog lists a model with live bids', !!model);
-  ok('catalog names every provider behind it', model.providers.length === 3);
-  ok('catalog exposes the bidId a session is opened against',
-    model.providers.every((p) => typeof p.bidId === 'string' && p.bidId));
-  // 1e15 wei/s * 3600s * 1e18 / 1e18 / 1e18 = 3.6 MOR
-  const cheap = model.providers.find((p) => p.bidId === '0xbidCHEAP');
-  ok(`catalog prices per HOUR, not per second (got ${cheap.stakeMorPerHour})`,
-    Math.abs(cheap.stakeMorPerHour - 3.6) < 1e-9);
+  ok('catalog lists the model', !!model);
+  ok('catalog names it', model.name === 'deepseek-v4');
+  ok('catalog does NOT carry per-model providers — that is the slow part',
+    model.providers === undefined);
   ok('catalog states the chain cap so the picker can bound its duration',
     catalog.maxSessionSeconds === 604800 && catalog.minSessionSeconds === 305);
+
+  // --- providers for ONE model ---
+  const provRes = await fetch(
+    `${base}/morpheus/v1/providers?modelId=0xremote1`, { headers: auth });
+  const provs = await provRes.json();
+  ok('providers lists every bid on that model', provs.providers.length === 3);
+  ok('providers exposes the bidId a session is opened against',
+    provs.providers.every((p) => typeof p.bidId === 'string' && p.bidId));
+  // 1e15 wei/s * 3600s * 1e18 / 1e18 / 1e18 = 3.6 MOR
+  const cheap = provs.providers.find((p) => p.bidId === '0xbidCHEAP');
+  ok(`providers prices per HOUR, not per second (got ${cheap.stakeMorPerHour})`,
+    Math.abs(cheap.stakeMorPerHour - 3.6) < 1e-9);
+  const noModel = await fetch(`${base}/morpheus/v1/providers`, { headers: auth });
+  ok('providers without a modelId is refused', noModel.status === 400);
+  const unknown = await (await fetch(
+    `${base}/morpheus/v1/providers?modelId=0xnope`, { headers: auth })).json();
+  ok('a model nobody bids on returns an empty list, not an error',
+    Array.isArray(unknown.providers) && unknown.providers.length === 0);
 
   // --- duration validation REFUSES rather than silently clamping ---
   const tooLong = await post('/morpheus/v1/quote',
@@ -791,224 +809,42 @@ console.log('morpheus: catalog, quote, and the one spending route');
   cfg = { ...cfg, allowAutoOpen: false, maxStakeMor: 1, maxDailyStakeMor: 5 };
 }
 
-// ---- the /start plugin, actually executed --------------------------------
-// The plugin ships as a STRING, so it is the one part of this feature that no
-// compiler ever checks. Write it out, import it for real, and drive the whole
-// flow against the real server: pick model -> provider -> duration -> confirm.
-// A "test" that only asserted the string contains "/start" would prove nothing.
+// ---- the opencode provider plugin ------------------------------------------
+// The /start plugin it used to sit beside is gone: opencode 1.18.10 does not
+// give a directory-loaded plugin the TuiPluginApi its own types declare, so it
+// threw on load and /start never appeared. The provider plugin still works and
+// is what makes app-opened sessions selectable in opencode.
 console.log('');
-console.log('morpheus: the /start plugin');
+console.log('opencode: the provider plugin');
 {
-  // The plugin reads its endpoint from a DESCRIPTOR, because opencode gives
-  // auto-loaded plugins no options. Write a real one and let it read it.
   const descriptorFile = join(tmpdir(), `morpheus-endpoint-${process.pid}.json`);
   writeFileSync(descriptorFile, JSON.stringify({ baseUrl: base, apiKey: TOKEN, models: [] }), 'utf8');
-  const pluginFile = join(tmpdir(), `morpheus-start-${process.pid}.mjs`);
-  writeFileSync(pluginFile, buildStartPlugin(descriptorFile), 'utf8');
-  const mod = await import(pathToFileURL(pluginFile).href);
-  ok('the plugin source parses and exports a tui entrypoint',
-    typeof mod.tui === 'function');
+  const provFile = join(tmpdir(), `morpheus-provider-${process.pid}.mjs`);
+  writeFileSync(provFile, buildProviderPlugin(descriptorFile), 'utf8');
+  const prov = await import(pathToFileURL(provFile).href);
+  ok('the provider plugin parses and exports a server entrypoint', typeof prov.server === 'function');
+  const hooks = await prov.server();
+  ok('it registers a config hook', typeof hooks.config === 'function');
 
-  // A fake TUI api. Dialog components are called as FUNCTIONS by the plugin,
-  // so returning the props verbatim is enough to inspect and drive them.
-  const toasts = [];
-  let rendered = null;
-  let disposed = 0;
-  let modelsDialogOpened = 0;
-  let registered = null;
-  const api = {
-    ui: {
-      toast: (t) => toasts.push(t),
-      DialogSelect: (props) => ({ kind: 'select', ...props }),
-      DialogConfirm: (props) => ({ kind: 'confirm', ...props }),
-      dialog: {
-        replace: (render) => { rendered = render(); },
-        clear: () => { rendered = null; },
-      },
-    },
-    lifecycle: { onDispose: () => { disposed++; } },
-    command: { register: (cb) => { registered = cb; return () => {}; } },
-    client: { tui: { openModels: async () => { modelsDialogOpened++; } } },
-  };
+  const cfg2 = { provider: { theirs: { name: 'Their Provider' } } };
+  await hooks.config(cfg2);
+  ok('it adds the morpheus provider', !!cfg2.provider.morpheus);
+  ok('pointed at the running endpoint', cfg2.provider.morpheus.options.baseURL === base);
+  ok('carrying the key', cfg2.provider.morpheus.options.apiKey === TOKEN);
+  ok('using the generic OpenAI-compatible adapter',
+    cfg2.provider.morpheus.npm === '@ai-sdk/openai-compatible');
+  ok("and it leaves the user's own providers alone", cfg2.provider.theirs?.name === 'Their Provider');
 
-  await mod.tui(api);
-  ok('the plugin registers its command', typeof registered === 'function');
-  const cmds = registered();
-  const startCmd = cmds.find((c) => c.slash && c.slash.name === 'start');
-  ok('it registers the /start slash command', !!startCmd);
-  ok('and it is reachable by its /morpheus alias',
-    startCmd.slash.aliases.includes('morpheus'));
-
-  const settle = async () => { for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 25)); };
-
-  // Drive one step of the dialog flow, failing as an ASSERTION rather than a
-  // crash when the flow stalls. Without this, a mutation that breaks step 2
-  // throws a TypeError deep in the file and the run dies before reporting the
-  // steps that did work — a suite that crashes tells you much less than one
-  // that says which step it could not reach.
-  const advance = async (pred, what) => {
-    const option =
-      rendered && Array.isArray(rendered.options)
-        ? rendered.options.find(pred)
-        : null;
-    if (!option) {
-      ok(`could not select ${what} — flow stalled at ${rendered ? rendered.kind : 'no dialog'}`, false);
-      return false;
-    }
-    rendered.onSelect(option);
-    await settle();
-    return true;
-  };
-
-  // --- with auto-open OFF, /start must stop at the first step ---
-  cfg = { ...cfg, allowAutoOpen: false };
-  toasts.length = 0;
-  rendered = null;
-  const beforeBrowse = sessionOpens.length;
-  startCmd.onSelect();
-  await settle();
-  ok('/start refuses to even browse while auto-open is off', rendered === null);
-  ok('and it says where the switch is',
-    toasts.some((t) => /Settings/i.test(t.message)));
-  ok('nothing was opened', sessionOpens.length === beforeBrowse);
-
-  // --- turn it on and walk the whole flow ---
-  cfg = { ...cfg, allowAutoOpen: true, maxStakeMor: 5, maxDailyStakeMor: 500, maxDailySessions: 50 };
-  toasts.length = 0;
-  rendered = null;
-  startCmd.onSelect();
-  await settle();
-
-  ok('step 1 is a searchable model picker', rendered?.kind === 'select');
-  ok('the model step is filterable', typeof rendered.placeholder === 'string');
-  const modelOpt = rendered.options.find((o) => o.value.id === '0xremote1');
-  ok('it lists the model with live bids', !!modelOpt);
-  ok('and shows what it costs before you commit',
-    /per hour|\/ hour/i.test(modelOpt.description));
-
-  await advance((o) => o.value.id === '0xremote1', 'the model');
-  ok('step 2 is the provider picker', rendered?.kind === 'select');
-  ok('it lists every provider, not just one', rendered.options.length === 3);
-  ok('cheapest provider is offered first',
-    rendered.options[0].value.bidId === '0xbidCHEAP');
-  // Assert the badge sits on the genuinely cheapest BID, not on whatever landed
-  // at index 0. Checking options[0].description said nothing: the label used to
-  // be index-based, so reversing the sort relabelled the dearest provider
-  // "cheapest" and this check still passed.
-  const badge = (bidId) =>
-    /cheapest/i.test(
-      rendered.options.find((o) => o.value.bidId === bidId).description,
-    );
-  ok('the cheapest badge is on the cheap bid', badge('0xbidCHEAP'));
-  ok('and NOT on the expensive one', !badge('0xbidDEAR'));
-  // The discriminating case: a provider TIED at the cheapest price is also
-  // cheapest. An index-based badge marks exactly one option and would fail
-  // here; a price-based one marks both. Without this the two implementations
-  // are indistinguishable whenever the sort happens to be correct.
-  ok('a provider tied at the cheapest price is also badged', badge('0xbidTIE'));
-
-  await advance((o) => o.value.bidId === '0xbidCHEAP', 'the provider');
-  ok('step 3 is the duration picker', rendered?.kind === 'select');
-  ok('durations past the chain cap are not offered',
-    rendered.options.every((o) => o.value <= 604800));
-  ok('durations under the contract floor are not offered',
-    rendered.options.every((o) => o.value >= 305));
-
-  const opensBeforeConfirm = sessionOpens.length;
-  await advance((o) => o.value === 3600, 'the duration');
-  ok('step 4 is a confirmation, not an open', rendered?.kind === 'confirm');
-  ok('NOTHING is staked before the confirm', sessionOpens.length === opensBeforeConfirm);
-  // Read through a default rather than off `rendered` directly: when a mutation
-  // removes the confirm step there IS no dialog, and dereferencing it turns
-  // four clean assertion failures into one stack trace.
-  const confirmText = (rendered && rendered.message) || '';
-  ok('the confirm states the real quoted stake (3.60 MOR)',
-    /3\.60 MOR/.test(confirmText));
-  ok('it names the model, provider and duration',
-    /deepseek-v4/.test(confirmText) &&
-    /0xprovA/.test(confirmText) &&
-    /1 hour/.test(confirmText));
-  ok('it says the stake is collateral, not a fee',
-    /collateral, not a fee/i.test(confirmText));
-  ok('and that it is locked to the end of the day',
-    /end of\s+the day/i.test(confirmText));
-
-  // --- cancelling must not spend ---
-  if (rendered && rendered.kind === 'confirm') rendered.onCancel();
-  await settle();
-  ok('cancelling the confirm opens nothing',
-    sessionOpens.length === opensBeforeConfirm);
-
-  // --- confirming does ---
-  startCmd.onSelect();
-  await settle();
-  await advance((o) => o.value.id === '0xremote1', 'the model');
-  await advance((o) => o.value.bidId === '0xbidCHEAP', 'the provider');
-  await advance((o) => o.value === 3600, 'the duration');
-  toasts.length = 0;
-  if (rendered && rendered.kind === 'confirm') rendered.onConfirm();
-  await settle();
-  ok('confirming opens exactly one session',
-    sessionOpens.length === opensBeforeConfirm + 1);
-  ok('the user is told it worked, with the figure',
-    toasts.some((t) => t.variant === 'success' && /3\.60 MOR/.test(t.message)));
-  ok('and the model picker is opened so the session can be used',
-    modelsDialogOpened === 1);
-
-  // --- a refusal from the app must surface verbatim, not be swallowed ---
-  cfg = { ...cfg, maxStakeMor: 0.001 };
-  startCmd.onSelect();
-  await settle();
-  await advance((o) => o.value.id === '0xremote1', 'the model');
-  await advance((o) => o.value.bidId === '0xbidCHEAP', 'the provider');
-  toasts.length = 0;
-  const beforeRefusal = sessionOpens.length;
-  await advance((o) => o.value === 3600, 'the duration');
-  ok('a capped session never reaches a confirm dialog', rendered === null);
-  ok('the app\'s own refusal is shown to the user',
-    toasts.some((t) => /per-session limit/i.test(t.message)));
-  ok('and nothing was staked', sessionOpens.length === beforeRefusal);
-
-  // --- the companion provider plugin -------------------------------------
-  // /start is useless without it in a terminal the app did not launch: the
-  // session opens and the model cannot be selected, because opencode has never
-  // heard of the provider.
-  {
-    const provFile = join(tmpdir(), `morpheus-provider-${process.pid}.mjs`);
-    writeFileSync(provFile, buildProviderPlugin(descriptorFile), 'utf8');
-    const prov = await import(pathToFileURL(provFile).href);
-    ok('the provider plugin parses and exports a server entrypoint',
-      typeof prov.server === 'function');
-    const hooks = await prov.server();
-    ok('it registers a config hook', typeof hooks.config === 'function');
-
-    const cfg = { provider: { theirs: { name: 'Their Provider' } } };
-    await hooks.config(cfg);
-    ok('it adds the morpheus provider', !!cfg.provider.morpheus);
-    ok('pointed at the running endpoint',
-      cfg.provider.morpheus.options.baseURL === base);
-    ok('carrying the key', cfg.provider.morpheus.options.apiKey === TOKEN);
-    ok('using the generic OpenAI-compatible adapter',
-      cfg.provider.morpheus.npm === '@ai-sdk/openai-compatible');
-    ok("and it leaves the user's own providers alone",
-      cfg.provider.theirs?.name === 'Their Provider');
-
-    // No descriptor -> add NOTHING. A provider pointed at nothing would put
-    // dead models in the picker.
-    const orphan = join(tmpdir(), `morpheus-missing-${process.pid}.json`);
-    const orphanFile = join(tmpdir(), `morpheus-provider-orphan-${process.pid}.mjs`);
-    writeFileSync(orphanFile, buildProviderPlugin(orphan), 'utf8');
-    const orphanMod = await import(pathToFileURL(orphanFile).href);
-    const cfg2 = { provider: { theirs: {} } };
-    await (await orphanMod.server()).config(cfg2);
-    ok('with no descriptor it adds no provider at all', !cfg2.provider.morpheus);
-    rmSync(provFile, { force: true });
-    rmSync(orphanFile, { force: true });
-  }
-
-  rmSync(pluginFile, { force: true });
+  const orphan = join(tmpdir(), `morpheus-missing-${process.pid}.json`);
+  const orphanFile = join(tmpdir(), `morpheus-provider-orphan-${process.pid}.mjs`);
+  writeFileSync(orphanFile, buildProviderPlugin(orphan), 'utf8');
+  const orphanMod = await import(pathToFileURL(orphanFile).href);
+  const cfg3 = { provider: {} };
+  await (await orphanMod.server()).config(cfg3);
+  ok('with no descriptor it adds no provider at all', !cfg3.provider.morpheus);
+  rmSync(provFile, { force: true });
+  rmSync(orphanFile, { force: true });
   rmSync(descriptorFile, { force: true });
-  cfg = { ...cfg, allowAutoOpen: false, maxStakeMor: 1, maxDailyStakeMor: 5 };
 }
 
 await server.stop();
