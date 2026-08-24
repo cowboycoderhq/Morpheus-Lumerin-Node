@@ -68,7 +68,12 @@ export function tomlString(value: string): string {
  * safe set is replaced rather than quoted: a bare key keeps the picker readable.
  */
 export function grokModelKey(id: string): string {
-  const safe = id.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  // NO DOTS. A dot is TOML's table separator, so `[model.morpheus-qwen2.5-1.5b]`
+  // parses as the nested tables morpheus-qwen2 -> 5-1 -> 5b, not as one key —
+  // grok then looked up "morpheus-qwen2", found nothing, and fell through to
+  // xAI's own API with "the model morpheus-qwen2 does not exist". Quoting the
+  // key would also work, but a bare key cannot be mis-parsed by anything.
+  const safe = id.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
   return `morpheus-${safe || 'model'}`;
 }
 
@@ -99,8 +104,19 @@ export function buildGrokModelsToml(input: GrokModelsConfigInput): string {
     return lines.join('\n');
   }
 
+  const used = new Set<string>();
   for (const model of input.models) {
-    lines.push(`[model.${grokModelKey(model.id)}]`);
+    // Ids differing only in punctuation ("a.b" and "a-b") now reduce to the
+    // same key, and a duplicate table is a TOML parse error that would take the
+    // whole file down — not just one model.
+    let key = grokModelKey(model.id);
+    if (used.has(key)) {
+      let n = 2;
+      while (used.has(`${key}-${n}`)) n++;
+      key = `${key}-${n}`;
+    }
+    used.add(key);
+    lines.push(`[model.${key}]`);
     // `model` is what grok sends as the request's model field, so it must be
     // the id the endpoint advertises — not the display label, and not our key.
     lines.push(`model = ${tomlString(model.id)}`);
