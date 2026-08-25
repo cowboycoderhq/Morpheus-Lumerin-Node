@@ -470,6 +470,24 @@ console.log('admission: headers we did not ask for');
     browsery.status === 403);
 }
 
+// ---- a handoff must resolve the CHAIN id to the advertised one -------------
+// Callers inside the app hold the hex32 chain id; every client-facing surface
+// (the /v1/models list, grok's config key, opencode's model key) is built from
+// the ADVERTISED name. Passing the chain id through produced "unknown model id"
+// in grok and "not currently serving 0x…" in opencode — the same mismatch,
+// twice, because the second handoff did not reuse the first one's resolver.
+console.log('');
+console.log('handoff: chain id resolves to the advertised id');
+{
+  const resolved = await server.resolveForHandoff('0xremote1');
+  ok('a hex chain id resolves to the advertised name', resolved.advertised === 'deepseek-v4');
+  const byName = await server.resolveForHandoff('deepseek-v4');
+  ok('and the advertised name resolves to itself', byName.advertised === 'deepseek-v4');
+  const unknown = await server.resolveForHandoff('0xnotserved');
+  ok('a model with no session resolves to nothing, rather than a plausible guess',
+    unknown.advertised === null);
+}
+
 // ---- the credential may arrive in either header ----------------------------
 // grok decides an endpoint is first-party xAI by literal host match on
 // "127.0.0.1", then its disable_api_key_auth kill switch swaps our api_key for
