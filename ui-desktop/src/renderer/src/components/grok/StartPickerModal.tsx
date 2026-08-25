@@ -11,6 +11,7 @@ import {
   IconWorldOff,
 } from '@tabler/icons-react';
 import Modal from '../contracts/modals/Modal';
+import { sendToMainProcess } from '../../client/utils';
 import {
   bodyProps,
   Body,
@@ -139,22 +140,39 @@ const DURATION_PRESETS: DurationPreset[] = [
 type ApiError = { message: string };
 type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
+/**
+ * Talk to our own endpoint — through MAIN, never with fetch from here.
+ *
+ * The endpoint refuses any request carrying an `Origin` header and answers with
+ * no CORS headers, deliberately: a web page must not be able to reach a port
+ * that can spend MOR. This component runs in a browser, so its own fetch was
+ * refused by that rule and blocked before it could read the reason, which is
+ * what "Failed to fetch" was. Main has no Origin and holds the token, so the
+ * rule stays as strict as it was for real pages.
+ *
+ * `baseUrl`/`token` are still taken as props and deliberately ignored — main
+ * reads the live values, so a port or token that moved cannot strand the picker
+ * with a stale pair.
+ */
 async function apiRequest<T>(
-  baseUrl: string,
-  token: string,
+  _baseUrl: string,
+  _token: string,
   path: string,
   init?: RequestInit,
 ): Promise<ApiResult<T>> {
-  let res: Response;
+  let res: { ok: boolean; status: number; data: unknown };
   try {
-    res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
-      ...init,
-      headers: {
-        'content-type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...(init?.headers as Record<string, string> | undefined),
-      },
-    });
+    res = await sendToMainProcess<
+      { path: string; method?: string; body?: unknown },
+      { ok: boolean; status: number; data: unknown }
+    >('morpheus-api-request', {
+      path,
+      method: init?.method ?? 'GET',
+      body:
+        typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body,
+      // A session open waits on a chain transaction; the default would time out
+      // mid-spend and leave the user unable to tell what happened.
+    }, 180000);
   } catch (e) {
     return {
       ok: false,
@@ -167,24 +185,17 @@ async function apiRequest<T>(
     };
   }
 
-  let body: unknown = null;
-  try {
-    body = await res.json();
-  } catch {
-    body = null;
-  }
-
-  if (!res.ok) {
-    const errMessage = (body as { error?: { message?: string } } | null)?.error
-      ?.message;
+  if (!res?.ok) {
+    const errMessage = (res?.data as { error?: { message?: string } } | null)
+      ?.error?.message;
     return {
       ok: false,
       error: {
-        message: errMessage || `Request failed with status ${res.status}.`,
+        message: errMessage || `Request failed with status ${res?.status}.`,
       },
     };
   }
-  return { ok: true, data: body as T };
+  return { ok: true, data: res.data as T };
 }
 
 // Never invent a MOR figure: an unloaded value renders "…", never 0.

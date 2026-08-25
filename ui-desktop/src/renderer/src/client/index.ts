@@ -270,6 +270,10 @@ const createClient = function (createStore) {
     grokPickerDone: utils.forwardToMainProcess('grok-picker-done', 15000),
     // Asked on mount, so an offer raised while the app was locked is not lost.
     getPendingSessionOffer: utils.forwardToMainProcess('get-pending-session-offer'),
+    // The picker's own calls, relayed by main — the renderer is a browser and
+    // the endpoint refuses browsers. Long timeout: opening a session waits on a
+    // chain transaction.
+    morpheusApiRequest: utils.forwardToMainProcess('morpheus-api-request', 180000),
     setOpencodeCwd: utils.forwardToMainProcess('set-opencode-cwd'),
     checkProviderConnectivity: utils.forwardToMainProcess(
       'check-provider-connectivity',

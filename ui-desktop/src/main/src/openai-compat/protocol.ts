@@ -78,6 +78,31 @@ export function mergeStarredModels(
   return merged;
 }
 
+/**
+ * The four routes the app's own picker may ask main to call on its behalf.
+ *
+ * The renderer cannot reach the endpoint directly — it is a browser, and the
+ * endpoint refuses browsers — so main relays. That relay must stay a door to
+ * these four routes and not become a general proxy: it carries the bearer token
+ * and one of these routes SPENDS, so a renderer bug or an injected string must
+ * not be able to point it somewhere else.
+ *
+ * Matching is on the exact path with the query stripped. A prefix match would
+ * accept `/morpheus/v1/catalog/../../anything`; a whole-string match would
+ * reject `/morpheus/v1/providers?model=…`, which is how that route is used.
+ */
+export const PICKER_ROUTES = [
+  '/morpheus/v1/catalog',
+  '/morpheus/v1/providers',
+  '/morpheus/v1/quote',
+  '/morpheus/v1/sessions',
+] as const;
+
+export function isPickerRoute(path: string): boolean {
+  const [routePath] = String(path ?? '').split('?');
+  return (PICKER_ROUTES as readonly string[]).includes(routePath);
+}
+
 export type OpenAiModelEntry = {
   id: string;
   object: 'model';
