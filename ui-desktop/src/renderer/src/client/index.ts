@@ -268,6 +268,8 @@ const createClient = function (createStore) {
     // Enabling spawns the agent and waits for its socket — give it room.
     setGrokEnabled: utils.forwardToMainProcess('set-grok-enabled', 60000),
     grokPickerDone: utils.forwardToMainProcess('grok-picker-done', 15000),
+    // Asked on mount, so an offer raised while the app was locked is not lost.
+    getPendingSessionOffer: utils.forwardToMainProcess('get-pending-session-offer'),
     setOpencodeCwd: utils.forwardToMainProcess('set-opencode-cwd'),
     checkProviderConnectivity: utils.forwardToMainProcess(
       'check-provider-connectivity',

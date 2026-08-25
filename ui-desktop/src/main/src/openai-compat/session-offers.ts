@@ -19,6 +19,42 @@
 // gate is pure and takes its clock, so both rules are testable without waiting.
 // ============================================================================
 
+/** An offer waiting for a renderer able to show it. */
+export type QueuedOffer = { modelId: string; advertised: string; at: number };
+
+/**
+ * Which queued offer should a freshly mounted picker show, and which are dead?
+ *
+ * Pure, because the interesting rules are the boring ones: show the NEWEST (if
+ * a user has refused nothing and asked for two models, the second is what they
+ * are looking at), and treat anything past the window as abandoned rather than
+ * ambushing them with a spend prompt for a request they made twenty minutes ago
+ * and have forgotten.
+ */
+export function claimNewestOffer(
+  offers: Iterable<[number, QueuedOffer]>,
+  now: number,
+  ttlMs: number = OFFER_TTL_MS,
+): {
+  claim: { requestId: number; args: string } | null;
+  expired: { requestId: number; modelId: string }[];
+} {
+  const expired: { requestId: number; modelId: string }[] = [];
+  let claim: { requestId: number; args: string } | null = null;
+  let newestAt = -Infinity;
+  for (const [requestId, offer] of offers) {
+    if (now - offer.at >= ttlMs) {
+      expired.push({ requestId, modelId: offer.modelId });
+      continue;
+    }
+    if (offer.at >= newestAt) {
+      newestAt = offer.at;
+      claim = { requestId, args: offer.advertised };
+    }
+  }
+  return { claim, expired };
+}
+
 /** Why the gate answered as it did — surfaced in logs, never to the caller. */
 export type OfferDecision =
   | { offer: true }
@@ -40,6 +76,15 @@ export type OfferGateOptions = {
   inFlightTtlMs?: number;
 };
 
+/**
+ * How long an offer stays live before it is treated as abandoned.
+ *
+ * Shared with whatever holds the offer for a renderer that is not showing yet —
+ * a locked app queues it until unlock — so the queue and the gate cannot
+ * disagree about whether an offer is still worth showing.
+ */
+export const OFFER_TTL_MS = 10 * 60_000;
+
 type Entry = { inFlightAt?: number; quietUntil?: number };
 
 export class SessionOfferGate {
@@ -51,7 +96,7 @@ export class SessionOfferGate {
   constructor(options: OfferGateOptions = {}) {
     this.now = options.now ?? Date.now;
     this.cooldownMs = options.cooldownMs ?? 5 * 60_000;
-    this.inFlightTtlMs = options.inFlightTtlMs ?? 10 * 60_000;
+    this.inFlightTtlMs = options.inFlightTtlMs ?? OFFER_TTL_MS;
   }
 
   /**

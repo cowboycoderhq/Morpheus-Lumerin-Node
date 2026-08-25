@@ -23,6 +23,7 @@ import {
   type OpenAiApiConfig,
   type ExternalActivity
 } from '../../openai-compat/server'
+import { claimNewestOffer } from '../../openai-compat/session-offers'
 import { getOpenAiApiSetting, setOpenAiApiSetting } from '../settings'
 import {
   buildLaunchScript,
@@ -1104,7 +1105,16 @@ const ensureOpenAiServer = (): OpenAiCompatServer => {
           return
         }
         const requestId = nextOfferRequestId++
-        offerModelByRequestId.set(requestId, model.id)
+        offerModelByRequestId.set(requestId, {
+          modelId: model.id,
+          advertised: model.advertised,
+          at: Date.now()
+        })
+        // Sent AND remembered. The picker host lives inside the signed-in
+        // layout, so when the app is locked this event lands nowhere — the
+        // window comes forward showing the wallet screen and the offer is lost,
+        // while the gate goes on believing one is in flight. Remembering it lets
+        // the host claim it the moment it mounts, which is what unlocking does.
         win.webContents.send('grok-picker-request', {
           requestId,
           args: model.advertised
@@ -1239,7 +1249,10 @@ const grokPicker = new Map<number, (outcome: { opened: boolean; note?: string })
  * reaches, because two live sources numbering from zero would eventually answer
  * each other's dialogs.
  */
-const offerModelByRequestId = new Map<number, string>()
+const offerModelByRequestId = new Map<
+  number,
+  { modelId: string; advertised: string; at: number }
+>()
 let nextOfferRequestId = 1_000_000_000
 
 const ensureGrokSupervisor = (): GrokSupervisor => {
@@ -1414,6 +1427,26 @@ export const setGrokEnabled = async (enabled: boolean) => {
 }
 
 /** The renderer reporting what the user chose. */
+/**
+ * An offer raised while the picker could not be shown.
+ *
+ * The host asks for this when it mounts, which is the moment the app becomes
+ * capable of showing it — including straight after the user unlocks. Offers
+ * older than the gate's own window are dropped rather than surfaced: a dialog
+ * asking you to spend on a request you made twenty minutes ago is worse than
+ * nothing, and the gate has already stopped treating it as in flight.
+ */
+export const getPendingSessionOffer = async () => {
+  const { claim, expired } = claimNewestOffer(offerModelByRequestId.entries(), Date.now())
+  for (const dead of expired) {
+    offerModelByRequestId.delete(dead.requestId)
+    // Settle it, or the gate keeps this model marked in flight and the user is
+    // never offered it again.
+    ensureOpenAiServer().settleOffer(dead.modelId, 'declined')
+  }
+  return claim
+}
+
 export const grokPickerDone = async (payload: {
   requestId: number
   opened: boolean
@@ -1424,10 +1457,10 @@ export const grokPickerDone = async (payload: {
   // An endpoint-raised offer has no waiting turn to resolve — what it needs is
   // the gate updated, so a decline buys quiet and an open drops the cached model
   // list before the agent resends.
-  const offeredModelId = offerModelByRequestId.get(payload.requestId)
-  if (offeredModelId !== undefined) {
+  const offered = offerModelByRequestId.get(payload.requestId)
+  if (offered !== undefined) {
     offerModelByRequestId.delete(payload.requestId)
-    ensureOpenAiServer().settleOffer(offeredModelId, payload.opened ? 'opened' : 'declined')
+    ensureOpenAiServer().settleOffer(offered.modelId, payload.opened ? 'opened' : 'declined')
     if (payload.opened) {
       // Publish immediately: the model just stopped being "no session", and the
       // agent is about to be told to try again.
