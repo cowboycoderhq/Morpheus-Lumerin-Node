@@ -39,6 +39,7 @@ import {
   buildGrokLaunchScript,
   buildGrokModelsToml,
   managedConfigPath,
+  selectGrokModels,
   writeGrokModelsConfig
 } from '../../grok/models-config'
 import { buildProviderPlugin } from '../../opencode/start-plugin'
@@ -1243,6 +1244,17 @@ const ensureGrokSupervisor = (): GrokSupervisor => {
  * a model in the picker whose session has expired fails inside grok, where the
  * user has no way to see why.
  */
+const knownGrokModelsPath = () => path.join(opencodeDir(), 'grok-known-models.json')
+
+const readKnownGrokModels = (): { id: string; label: string }[] => {
+  try {
+    const raw = JSON.parse(fs.readFileSync(knownGrokModelsPath(), 'utf8'))
+    return Array.isArray(raw) ? raw.filter((m) => m && typeof m.id === 'string') : []
+  } catch {
+    return []
+  }
+}
+
 export const refreshGrokModels = async () => {
   const api = readOpenAiConfig()
   if (!api.enabled || !ensureOpenAiServer().isRunning()) {
@@ -1258,16 +1270,30 @@ export const refreshGrokModels = async () => {
     // Forced: this runs right after a session opens, and a cached list would
     // not contain it.
     .advertisedModels(true)
-    .catch(() => [] as { id: string; label: string }[])
+    .catch(() => [] as { id: string; label: string; isLocal: boolean }[])
+
+  // Drops local models and merges into the sticky set — both decisions live in
+  // one tested function rather than here, where nothing could check them.
+  const models = selectGrokModels(readKnownGrokModels(), advertised)
+  try {
+    fs.mkdirSync(path.dirname(knownGrokModelsPath()), { recursive: true })
+    fs.writeFileSync(knownGrokModelsPath(), JSON.stringify(models, null, 2), {
+      encoding: 'utf8',
+      mode: 0o600
+    })
+  } catch (e) {
+    log.warn(`grok models: could not remember the model list — ${String(e)}`)
+  }
+
   writeGrokModelsConfig(
     managedConfigPath(),
     buildGrokModelsToml({
       baseUrl: `http://127.0.0.1:${api.port}/v1`,
       apiKey: api.token,
-      models: advertised
+      models
     })
   )
-  return { models: advertised.length }
+  return { models: models.length }
 }
 
 let grokModelsTimer: NodeJS.Timeout | null = null

@@ -303,7 +303,7 @@ export class OpenAiCompatServer {
    */
   async resolveForHandoff(requested: string): Promise<{
     advertised: string | null;
-    models: { id: string; label: string }[];
+    models: { id: string; label: string; isLocal: boolean }[];
   }> {
     // Forced: this runs immediately after a session opens, so a cached list
     // from before that would not contain it.
@@ -317,15 +317,21 @@ export class OpenAiCompatServer {
     };
   }
 
-  private labelled(models: UsableModel[]): { id: string; label: string }[] {
+  private labelled(
+    models: UsableModel[],
+  ): { id: string; label: string; isLocal: boolean }[] {
     return toModelList(models, Math.floor(Date.now() / 1000)).data.map(
-      (entry) => ({
-        id: entry.id,
-        label:
-          entry.owned_by === 'morpheus-local'
-            ? `${entry.id} (local)`
-            : `${entry.id} (session)`,
-      }),
+      (entry) => {
+        const isLocal = entry.owned_by === 'morpheus-local';
+        return {
+          id: entry.id,
+          label: isLocal ? `${entry.id} (local)` : `${entry.id} (session)`,
+          // Callers that publish to a CODING agent need this: a local model
+          // cannot serve tools and streaming together, which such an agent
+          // always asks for, so listing it is offering a guaranteed failure.
+          isLocal,
+        };
+      },
     );
   }
 
@@ -428,7 +434,9 @@ export class OpenAiCompatServer {
    * config naming models the endpoint would reject is worse than no config,
    * because the failure surfaces inside the other tool.
    */
-  async advertisedModels(force = false): Promise<{ id: string; label: string }[]> {
+  async advertisedModels(
+    force = false,
+  ): Promise<{ id: string; label: string; isLocal: boolean }[]> {
     // `force` exists for the caller that runs immediately after a session
     // opens: the 30s cache would otherwise hand back a list that predates it,
     // and the new model would not appear until the next poll.
@@ -1038,6 +1046,17 @@ export class OpenAiCompatServer {
     // caller holding a bare "HTTP 400" and no way to learn why. Say what the
     // router objected to — this is our own upstream's error text, not user
     // content, and without it the failure is undiagnosable from a terminal.
+    if (upstream.ok) {
+      // Log successes too, not only refusals. "Did this actually route through
+      // Morpheus?" was unanswerable from the log — it had to be inferred from a
+      // Settings field — which is a poor way to learn where your money went.
+      // The model and status only; never the prompt or the completion.
+      this.deps.log?.(
+        `openai-compat: served ${resolution.model.id} (${
+          resolution.model.sessionId ? 'session' : 'local'
+        }) -> ${upstream.status}`,
+      );
+    }
     if (!upstream.ok) {
       const peek = await upstream
         .clone()
