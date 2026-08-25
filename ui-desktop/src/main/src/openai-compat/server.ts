@@ -137,6 +137,27 @@ export const defaultConfig = (): OpenAiApiConfig => ({
   offerSessionOnUse: false,
 });
 
+/**
+ * The status for "you named a starred model with no session".
+ *
+ * Chosen by MEASUREMENT, not by semantics — the honest code would be 402
+ * Payment Required, and 402 is the one that fails. Each candidate was sent to
+ * the real grok TUI and a real opencode run:
+ *
+ *   402  grok replaces the body with its own "You hit your weekly limit —
+ *        upgrade tier / buy more credits" screen. Our sentence never appears,
+ *        and the user is invited to buy xAI credits for a Morpheus problem.
+ *   409  grok shows it, but opencode treats it as transient and reissued the
+ *        request 5 times before timing out at 45s.
+ *   400  both clients print our message verbatim, send exactly ONE request,
+ *        and exit non-zero.  <- this
+ *   403, 424 behave like 400; 400 is the least exotic for third-party clients.
+ *
+ * The status is therefore only a transport detail. The meaning travels in the
+ * `session_required` code and the message, which is what a human reads.
+ */
+export const SESSION_REQUIRED_STATUS = 400;
+
 // A prompt body is small; anything large is either a mistake or an attempt to
 // exhaust memory on a process that also holds a wallet.
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -1118,7 +1139,7 @@ export class OpenAiCompatServer {
         );
         sendJson(
           res,
-          402,
+          SESSION_REQUIRED_STATUS,
           errorBody(sessionRequiredMessage(advertised), 'session_required'),
         );
         return;
