@@ -145,3 +145,31 @@ export function writeGrokModelsConfig(filePath: string, contents: string): void 
   // would leave the token readable if the file predates this.
   chmodSync(filePath, 0o600);
 }
+
+/**
+ * The shell line that opens grok on a given Morpheus model.
+ *
+ * `-m` takes the CONFIG KEY, not the model id, because that is what grok
+ * resolves against its model map — the same key `buildGrokModelsToml` writes.
+ * Control characters are refused rather than quoted: model names come from the
+ * chain, and a newline would produce a `.command` file spanning lines that
+ * cannot be reviewed by eye.
+ */
+export function buildGrokLaunchScript(input: {
+  grokPath: string;
+  modelId: string;
+  cwd: string;
+}): string {
+  for (const [field, value] of Object.entries(input)) {
+    if (/[\u0000-\u001f\u007f]/.test(String(value))) {
+      throw new Error(`Refusing to build a launch command: ${field} contains a control character.`);
+    }
+  }
+  const q = (v: string): string => `'${String(v).replace(/'/g, `'\\''`)}'`;
+  return [
+    '#!/bin/bash',
+    `cd ${q(input.cwd)} || exit 1`,
+    `exec ${q(input.grokPath)} -m ${q(grokModelKey(input.modelId))}`,
+    '',
+  ].join('\n');
+}
