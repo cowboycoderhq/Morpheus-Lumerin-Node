@@ -205,12 +205,16 @@ let cfg = {
   maxDailySessions: 10,
 };
 const activity = [];
+const offers = [];
+const starred = [];
 const server = new OpenAiCompatServer({
   routerUrl: () => `http://127.0.0.1:${routerPort}`,
   authHeaders: async () => ({ Authorization: 'Basic ZmFrZTpmYWtl' }),
   walletAddress: () => '0xuser',
   config: () => cfg,
   onActivity: (a) => activity.push(a),
+  onSessionRequired: (m) => offers.push(m),
+  onSessionSeen: (id) => starred.push(id),
   log: () => {},
 });
 await server.sync();
@@ -914,6 +918,102 @@ console.log('opencode: the provider plugin');
   rmSync(provFile, { force: true });
   rmSync(orphanFile, { force: true });
   rmSync(descriptorFile, { force: true });
+}
+
+// ---- starred models, and what happens when one is used with no session ------
+//
+// Everything here was learned by pointing the REAL grok and opencode at a stand
+// in endpoint and watching the wire. Both print a 402 verbatim and neither
+// retries it, which is why refusing is safe. What is NOT safe is answering a
+// streaming request with a 200 carrying a non-SSE body: grok reissued that 8
+// times in 2 minutes, and on this endpoint every reissue is billed.
+console.log('');
+console.log('openai endpoint: starred models with no session');
+{
+  cfg = { ...cfg, starredModelIds: ['0xstarved'], offerSessionOnUse: false };
+  // Same call the app makes when Settings change: it is what drops the cached
+  // model list, and this check exists partly to prove it does.
+  await server.sync();
+  offers.length = 0;
+
+  const listed = await (await fetch(`${base}/v1/models`, { headers: auth })).json();
+  const ids = listed.data.map((m) => m.id);
+  ok('a starred model is advertised with no session open', ids.includes('0xstarved'));
+  ok('and the models that could already serve are still there',
+    ids.includes('deepseek-v4') || ids.includes('0xremote1'));
+
+  // Completions only. The refusal path deliberately re-reads the model list
+  // first, and those router calls are not a forwarded prompt.
+  const chatCalls = () => upstreamCalls.filter((c) => c.url === '/v1/chat/completions').length;
+  const before = chatCalls();
+  const r = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: '0xstarved', stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  const body = await r.json();
+  ok('using it is refused with 402, not served', r.status === 402);
+  ok('the code is machine-readable', body.error?.code === 'session_required');
+  ok('the message names the model', body.error?.message.includes('0xstarved'));
+  // The mis-routing guarantee, at the wire: absent session_id means "local" to
+  // the router, so forwarding this would have answered from the wrong model.
+  ok('nothing was forwarded upstream', chatCalls() === before);
+  // A 200 with a JSON body is the shape that made grok retry 8 times. Refusals
+  // must carry an error status so the client stops.
+  ok('a streaming request is refused with an error status, never a 200',
+    r.status !== 200);
+  ok('no offer is raised while offering is turned off', offers.length === 0);
+}
+
+console.log('');
+console.log('openai endpoint: offering to open one');
+{
+  cfg = { ...cfg, offerSessionOnUse: true };
+  await server.sync();
+  offers.length = 0;
+
+  const ask = () =>
+    fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: '0xstarved', messages: [{ role: 'user', content: 'hi' }] }),
+    });
+
+  const first = await ask();
+  ok('the refusal still comes back', first.status === 402);
+  ok('and the app is asked to offer a session', offers.length === 1);
+  ok('the offer carries the id the picker needs', offers[0].id === '0xstarved');
+
+  // grok sends a hidden title-generation call beside the real turn. Two dialogs
+  // for one intent is a user paying twice.
+  await Promise.all([ask(), ask()]);
+  ok('concurrent requests raise no further offers', offers.length === 1);
+
+  server.settleOffer('0xstarved', 'declined');
+  await ask();
+  ok('after a decline the retries stay quiet', offers.length === 1);
+}
+
+console.log('');
+console.log('openai endpoint: an unknown model is refused, never defaulted');
+{
+  // grok issues a session-title request hardcoded to `grok-4.5` against
+  // whatever base URL the selected model uses. If this endpoint ever resolved
+  // an unknown id to some default, that hidden call would open and bill a
+  // second completion on every single grok session.
+  const chatsBefore = upstreamCalls.filter((c) => c.url === '/v1/chat/completions').length;
+  const r = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'grok-4.5', messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  ok('an unknown model is refused', r.status === 404);
+  const body = await r.json();
+  ok('and the refusal lists what it could have asked for',
+    body.error?.code === 'model_not_found');
+  ok('nothing was forwarded for it',
+    upstreamCalls.filter((c) => c.url === '/v1/chat/completions').length === chatsBefore);
+  ok('and it raised no offer to spend', offers.length === 1);
 }
 
 await server.stop();

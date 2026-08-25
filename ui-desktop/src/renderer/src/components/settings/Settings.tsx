@@ -282,6 +282,50 @@ const Common = (props: CommonProps) => {
                 ? 'A tool holding the key above can open paid sessions without asking the app. The limits below are what bound it.'
                 : 'While this is off, nothing reaching the endpoint can cause a blockchain transaction — it can only use sessions you already opened.'}
             </SettingsCallout>
+
+            {/* Distinct from the switch above, and deliberately so: that one
+                lets a tool spend on its own, this one only lets a tool make the
+                app ASK. Every session it leads to is still opened by hand,
+                here, in this window. */}
+            <SectionDescription style={{ marginTop: '1.6rem' }}>
+              Offering a session when a terminal asks for one
+            </SectionDescription>
+            <FieldRow>
+              <ToggleRow htmlFor="openai-api-offer-session">
+                <ToggleInput
+                  id="openai-api-offer-session"
+                  checked={Boolean(apiCfg?.offerSessionOnUse)}
+                  onChange={async (e) => {
+                    setApiCfg(
+                      await props.client.setOpenAiApiConfig({
+                        offerSessionOnUse: Boolean(e.target.checked),
+                      }),
+                    );
+                  }}
+                />
+                <ToggleLabel>
+                  Bring this window forward when a terminal picks a model with no
+                  session
+                </ToggleLabel>
+              </ToggleRow>
+            </FieldRow>
+            {/* The picker opens its session through the same gated endpoint as
+                everything else, so with the switch above off it would appear,
+                take four decisions from the user, and then be refused. Say so
+                here rather than letting them find out at the confirm step. */}
+            <SettingsCallout
+              tone={
+                apiCfg?.offerSessionOnUse && !apiCfg?.allowAutoOpen
+                  ? 'warning'
+                  : 'info'
+              }
+            >
+              {apiCfg?.offerSessionOnUse && !apiCfg?.allowAutoOpen
+                ? 'The offer will appear, but opening it needs the switch above turned on as well — without it the app refuses its own request at the last step.'
+                : apiCfg?.offerSessionOnUse
+                  ? 'Your models stay listed in grok and opencode whether or not a session is open. Using one without a session is refused, and this window comes forward so you can open it — one offer at a time, and cancelling one buys quiet for a few minutes.'
+                  : 'Using a model with no open session is refused with a message telling you to open one in the app. Turn this on and the app will offer to open it for you instead.'}
+            </SettingsCallout>
             {apiCfg?.allowAutoOpen && (
               <Flex.Row gap="0.8rem">
                 {(

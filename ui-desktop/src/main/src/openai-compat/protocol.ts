@@ -35,6 +35,49 @@ export type UsableModel = {
   sessionId?: string;
 };
 
+/**
+ * A marketplace model that is advertised but cannot serve yet.
+ *
+ * The endpoint deliberately advertises models the user has starred even with no
+ * open session, so the list a terminal agent reads at startup stops changing
+ * every time a session opens or closes — that churn is what forced agents to be
+ * restarted. Such a model must be REFUSED at use and never forwarded: see
+ * `routingHeaders`, which treats "no session id" as "route to the local
+ * runtime", so forwarding one would silently answer from a different model.
+ */
+export function needsSession(model: UsableModel): boolean {
+  return !model.isLocal && !model.sessionId;
+}
+
+/**
+ * Add the user's starred marketplace models to what is already servable.
+ *
+ * This is the change that stops the advertised list from moving. Previously it
+ * held exactly what could answer right now, so it grew and shrank as sessions
+ * opened and expired — and since every terminal agent reads its model list once
+ * at startup, each change stranded the user with a stale picker and no way to
+ * refresh but a restart. Starred models are a set the USER controls, so the list
+ * changes only when they say so.
+ *
+ * A starred model that already has an open session keeps its session entry:
+ * `already` wins, so nothing here can downgrade a usable model into one that
+ * gets refused.
+ */
+export function mergeStarredModels(
+  already: UsableModel[],
+  starredIds: readonly string[],
+  nameById?: Map<string, string>,
+): UsableModel[] {
+  const have = new Set(already.map((m) => m.id.toLowerCase()));
+  const merged = [...already];
+  for (const id of starredIds) {
+    if (!id || have.has(id.toLowerCase())) continue;
+    have.add(id.toLowerCase());
+    merged.push({ id, name: nameById?.get(id) || id, isLocal: false });
+  }
+  return merged;
+}
+
 export type OpenAiModelEntry = {
   id: string;
   object: 'model';
@@ -268,11 +311,37 @@ export function resolveModel(
  * translation exists.
  */
 export function routingHeaders(model: UsableModel): Record<string, string> {
+  // Refuse rather than mis-route. Absent `session_id` means "local model" to the
+  // router, so a starred marketplace model with no session would be answered by
+  // the local runtime under the remote model's name — a wrong answer that looks
+  // like a right one. The caller is expected to have refused it already; this is
+  // the backstop that makes forgetting impossible rather than merely unlikely.
+  if (needsSession(model)) {
+    throw new Error(
+      `refusing to route ${model.name}: it has no open session, and routing it ` +
+        `without one would answer from the local model instead`,
+    );
+  }
   const headers: Record<string, string> = { model_id: model.id };
   if (model.sessionId) {
     headers.session_id = model.sessionId;
   }
   return headers;
+}
+
+/**
+ * What a client is told when it names a starred model with no session.
+ *
+ * 402 rather than 404: the model exists and the user chose it, they just have
+ * not paid for it yet. Measured against the real clients — grok and opencode
+ * both print this message verbatim and neither retries, so the human sees the
+ * sentence and the agent does not spend anything reacting to it.
+ */
+export function sessionRequiredMessage(advertised: string): string {
+  return (
+    `No open session for "${advertised}". The Morpheus app can open one for ` +
+    `this model — approve it there, then send your request again.`
+  );
 }
 
 /** OpenAI's error envelope, so clients surface the message instead of "500". */
