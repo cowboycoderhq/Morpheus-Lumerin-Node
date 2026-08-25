@@ -428,8 +428,11 @@ export class OpenAiCompatServer {
    * config naming models the endpoint would reject is worse than no config,
    * because the failure surfaces inside the other tool.
    */
-  async advertisedModels(): Promise<{ id: string; label: string }[]> {
-    return this.labelled(await this.usableModels());
+  async advertisedModels(force = false): Promise<{ id: string; label: string }[]> {
+    // `force` exists for the caller that runs immediately after a session
+    // opens: the 30s cache would otherwise hand back a list that predates it,
+    // and the new model would not appear until the next poll.
+    return this.labelled(await this.usableModels(force));
   }
 
   private async serveModels(res: ServerResponse): Promise<void> {
