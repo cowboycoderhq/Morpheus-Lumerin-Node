@@ -1,4 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { sendToMainProcess } from '../../../client/utils';
+import {
+  isStarredModel,
+  toggleStarredModel,
+} from '../../../utils/starred-models';
 import styled, { keyframes, useTheme } from 'styled-components';
 
 const spin = keyframes`
@@ -421,6 +426,10 @@ const ModelSelectionModal = ({
 }: any) => {
   const theme = useTheme();
   const [search, setSearch] = useState('');
+  // Which models are published to grok and opencode. Read when the dialog opens
+  // rather than held in a store: it changes from Settings and from the session
+  // picker too, and a stale copy here would silently un-star on the next write.
+  const [starredIds, setStarredIds] = useState<string[]>([]);
   const [filter, setFilter] = useState<FilterId>('all');
   const [showTeeInfo, setShowTeeInfo] = useState(false);
   const [priceMode, setPriceMode] = useState<'perSec' | 'stake6m'>('perSec');
@@ -533,11 +542,42 @@ const ModelSelectionModal = ({
   }, [enriched, search, filter, sortMode, priceMin, priceMax, priceMode, meta]);
 
   // Bail out *after* all hooks have run.
+  useEffect(() => {
+    if (!isActive) return;
+    void (async () => {
+      try {
+        const cfg: any = await sendToMainProcess('get-openai-api-config');
+        setStarredIds(
+          Array.isArray(cfg?.starredModelIds) ? cfg.starredModelIds : [],
+        );
+      } catch {
+        setStarredIds([]);
+      }
+    })();
+  }, [isActive]);
+
   if (!isActive) return null;
 
   const handlePick = (data: any) => {
     onChangeModel(data);
     handleClose();
+  };
+
+  const handleToggleStar = async (modelId: string) => {
+    const next = toggleStarredModel(starredIds, modelId);
+    // Optimistic, then corrected by main's answer: the click should feel
+    // instant, and main is the store of record.
+    setStarredIds(next);
+    try {
+      const saved: any = await sendToMainProcess('set-openai-api-config', {
+        starredModelIds: next,
+      });
+      if (Array.isArray(saved?.starredModelIds)) {
+        setStarredIds(saved.starredModelIds);
+      }
+    } catch {
+      /* the local state stands until the dialog is reopened */
+    }
   };
 
   // One place for the row props so the sectioned and flat views cannot drift.
@@ -549,6 +589,8 @@ const ModelSelectionModal = ({
       priceMode={metaReady ? priceMode : 'perSec'}
       meta={meta}
       onChangeModel={handlePick}
+      starred={isStarredModel(starredIds, m.Id)}
+      onToggleStar={(id: string) => void handleToggleStar(id)}
     />
   );
 

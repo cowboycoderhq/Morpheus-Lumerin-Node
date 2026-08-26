@@ -1334,24 +1334,66 @@ export const refreshGrokModels = async () => {
   // second list remembered on the side.
   const models = selectGrokModels(advertised)
 
-  writeGrokModelsConfig(
-    managedConfigPath(),
-    buildGrokModelsToml({
-      baseUrl: `http://127.0.0.1:${api.port}/v1`,
-      apiKey: api.token,
-      models
-    })
-  )
+  lastPublishedToml = buildGrokModelsToml({
+    baseUrl: `http://127.0.0.1:${api.port}/v1`,
+    apiKey: api.token,
+    models
+  })
+  writeGrokModelsConfig(managedConfigPath(), lastPublishedToml)
   return { models: models.length }
 }
 
 let grokModelsTimer: NodeJS.Timeout | null = null
+let lastPublishedToml: string | null = null
+let grokDirWatcher: fs.FSWatcher | null = null
+
+/**
+ * Put our model list back the moment grok deletes it.
+ *
+ * grok owns `managed_config.toml`: a background sync asks xAI what managed
+ * config this account should have, is told "none", and removes the artifact it
+ * no longer serves — measured at roughly every two minutes, with our own file as
+ * the casualty. A 60-second rewrite loop therefore leaves a window of up to a
+ * minute in which a freshly started grok finds no Morpheus models at all, which
+ * is exactly how a working integration looks broken.
+ *
+ * Watching costs nothing and closes the window to milliseconds. It also reacts
+ * to the actual event rather than polling faster and hoping, which is the
+ * difference between a fix and a shorter race.
+ *
+ * Only ABSENCE triggers a rewrite, so our own writes cannot feed themselves.
+ */
+const watchGrokConfig = (): void => {
+  if (grokDirWatcher) return
+  const target = managedConfigPath()
+  const dir = path.dirname(target)
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+    grokDirWatcher = fs.watch(dir, (_event, filename) => {
+      if (filename && filename !== path.basename(target)) return
+      if (!lastPublishedToml) return
+      if (fs.existsSync(target)) return
+      try {
+        writeGrokModelsConfig(target, lastPublishedToml)
+        log.info('grok models: managed config was removed by grok — restored')
+      } catch (e) {
+        log.warn(`grok models: could not restore the managed config — ${String(e)}`)
+      }
+    })
+    grokDirWatcher.unref?.()
+  } catch (e) {
+    // Not fatal: the timer below still republishes, just more slowly.
+    log.warn(`grok models: cannot watch ${dir} — ${String(e)}`)
+  }
+}
+
 const startGrokModelsRefresh = (): void => {
   if (grokModelsTimer) return
   const tick = () => {
     refreshGrokModels().catch((e) => log.warn(`grok models: ${String(e)}`))
   }
   tick()
+  watchGrokConfig()
   grokModelsTimer = setInterval(tick, 60_000)
   grokModelsTimer.unref?.()
 }

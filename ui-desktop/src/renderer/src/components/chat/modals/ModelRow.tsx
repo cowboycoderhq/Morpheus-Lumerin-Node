@@ -12,6 +12,8 @@ import {
   IconChevronRight,
   IconHome,
   IconShieldLock,
+  IconPin,
+  IconPinFilled,
 } from '@tabler/icons-react';
 import { formatSmallNumber, SECURE_TAG, SECURE_BADGE_TOOLTIP } from '../utils';
 import { modelPriceDisplay } from '../../../utils/marketplace';
@@ -185,6 +187,41 @@ const PriceUnit = styled.div`
   margin-top: 1px;
 `;
 
+/* The "available in my terminal" control — a PIN.
+   A terminal glyph was tried first and read as decoration: at row scale it is a
+   small square that says nothing about state, and a user scanning the list did
+   not see it. A pin carries the meaning on its own (this one stays), and it has
+   a filled form, so on/off is a shape difference rather than only an opacity
+   difference — which is what makes it visible at a glance and legible to anyone
+   who cannot rely on the colour. */
+const TerminalPin = styled.span<{ $on: boolean }>`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 0.4rem;
+  border-radius: ${(p) => p.theme.radii.sm};
+  cursor: pointer;
+  color: ${(p) =>
+    p.$on ? p.theme.colors.morMain : p.theme.colors.textSecondary};
+  opacity: ${(p) => (p.$on ? 1 : 0.6)};
+  background: ${(p) => (p.$on ? p.theme.colors.brandTint(0.14) : 'transparent')};
+  transition:
+    opacity 0.12s ease,
+    background 0.12s ease;
+
+  &:hover {
+    opacity: 1;
+    background: ${(p) => p.theme.colors.brandTint(0.18)};
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.6)};
+    outline-offset: 2px;
+  }
+`;
+
 const LocalBadge = styled.div`
   display: inline-flex;
   align-items: center;
@@ -263,6 +300,9 @@ function ModelRow(props: {
   priceMode?: 'perSec' | 'stake6m';
   meta?: { supply?: string | number; budget?: string | number };
   onChangeModel: (data: { modelId: string; bidId?: string; isLocal?: boolean }) => void;
+  /** Marketplace models only: is this one published to your terminal agents? */
+  starred?: boolean;
+  onToggleStar?: (modelId: string) => void;
 }) {
   const model = props.model || {};
   const modelId = model.Id || '';
@@ -310,6 +350,11 @@ function ModelRow(props: {
   return (
     <RowContainer
       type="button"
+      data-testid="model-row"
+      // Lets a check scope to ONE row. Without it a locator that matched "the
+      // element containing this model's name" also matched every ancestor, and
+      // therefore every other row's controls too.
+      data-model-local={isLocal ? 'true' : 'false'}
       $online={isOnline}
       disabled={!isOnline}
       onClick={handleSelect}
@@ -366,6 +411,46 @@ function ModelRow(props: {
             <IconHome size={13} stroke={2} />
             Local
           </LocalBadge>
+        )}
+        {/* Marketplace only. A local model is already served and is deliberately
+            withheld from grok — it refuses tools+stream, which a coding agent
+            always sends — so a star there would promise what cannot happen. */}
+        {!isLocal && props.onToggleStar && (
+          <TerminalPin
+            data-testid="pin-model"
+            role="button"
+            tabIndex={0}
+            aria-label={
+              props.starred
+                ? 'Unpin from your terminal'
+                : 'Pin to your terminal'
+            }
+            title={
+              props.starred
+                ? 'Pinned — listed in grok and opencode. Click to unpin.'
+                : 'Pin to grok and opencode, so you can pick it there without opening a session first.'
+            }
+            $on={!!props.starred}
+            onClick={(e: React.MouseEvent) => {
+              // Starring is not choosing: without this the click also selects
+              // the model and closes the dialog.
+              e.stopPropagation();
+              props.onToggleStar?.(modelId);
+            }}
+            onKeyDown={(e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                e.stopPropagation();
+                props.onToggleStar?.(modelId);
+              }
+            }}
+          >
+            {props.starred ? (
+              <IconPinFilled size={17} />
+            ) : (
+              <IconPin size={17} stroke={2} />
+            )}
+          </TerminalPin>
         )}
         {price.kind === 'offline' && <OfflineBadge>Unavailable</OfflineBadge>}
         {price.kind === 'single' && (
