@@ -433,6 +433,15 @@ export const FailureRaw = styled.pre`
   overflow-y: auto;
 `;
 
+/* The two launch buttons on the success panel. Wraps rather than squashing:
+   the labels are words, not icons, and a cramped one reads as disabled. */
+export const LaunchRow = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-top: 1.2rem;
+`;
+
 export const Footer = styled.div`
   display: flex;
   align-items: center;

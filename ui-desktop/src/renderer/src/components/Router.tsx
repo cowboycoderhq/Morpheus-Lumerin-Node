@@ -225,8 +225,20 @@ const GrokStartHost = withClient(({ client }: any) => {
       args={request.args ?? ''}
       baseUrl={api?.port ? `http://127.0.0.1:${api.port}` : ''}
       token={api?.token ?? ''}
+      // Reported the moment the session opens, so the offer is released and the
+      // model list republished while the dialog is still up — a terminal that
+      // was refused can succeed on its next send instead of after a dismissal.
+      onOpened={(outcome) => {
+        void client.grokPickerDone({
+          requestId: request.requestId,
+          opened: true,
+          ...outcome,
+        });
+      }}
       onDone={(outcome) => {
         // ALWAYS report back — the terminal is holding a turn open until we do.
+        // Harmless if onOpened already did: main forgets the request after the
+        // first report, so the second settles nothing twice.
         void client.grokPickerDone({ requestId: request.requestId, ...outcome });
         setRequest(null);
       }}
