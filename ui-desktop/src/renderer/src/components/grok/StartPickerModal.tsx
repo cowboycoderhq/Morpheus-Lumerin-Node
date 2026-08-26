@@ -12,6 +12,7 @@ import {
 } from '@tabler/icons-react';
 import Modal from '../contracts/modals/Modal';
 import { sendToMainProcess } from '../../client/utils';
+import { explainSessionOpenFailure } from '../../utils/session-errors';
 import {
   bodyProps,
   Body,
@@ -52,6 +53,10 @@ import {
   SummaryValue,
   Title,
   WarningCallout,
+  FailureHeadline,
+  FailureAdvice,
+  FailureDetails,
+  FailureRaw,
 } from './StartPickerModal.styles';
 
 // ============================================================================
@@ -137,7 +142,7 @@ const DURATION_PRESETS: DurationPreset[] = [
   { label: '7 days', seconds: 604800 },
 ];
 
-type ApiError = { message: string };
+type ApiError = { message: string; code?: string };
 type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
 /**
@@ -186,12 +191,16 @@ async function apiRequest<T>(
   }
 
   if (!res?.ok) {
-    const errMessage = (res?.data as { error?: { message?: string } } | null)
-      ?.error?.message;
+    const err = (res?.data as {
+      error?: { message?: string; code?: string };
+    } | null)?.error;
     return {
       ok: false,
       error: {
-        message: errMessage || `Request failed with status ${res?.status}.`,
+        message: err?.message || `Request failed with status ${res?.status}.`,
+        // Carried so the failure can be EXPLAINED rather than just displayed:
+        // our own refusals each know their own remedy, and the code is how.
+        code: err?.code,
       },
     };
   }
@@ -250,7 +259,7 @@ function StartPickerModal({ open, args, baseUrl, token, onDone }: Props) {
   const [quoteError, setQuoteError] = useState<string | null>(null);
 
   const [opening, setOpening] = useState(false);
-  const [openError, setOpenError] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<ApiError | null>(null);
 
   const loadCatalog = async () => {
     setCatalogLoading(true);
@@ -437,9 +446,9 @@ function StartPickerModal({ open, args, baseUrl, token, onDone }: Props) {
     );
     setOpening(false);
     if (!res.ok) {
-      // Shown verbatim (below) — these messages name the exact spend cap that
-      // fired and what to do. `onDone` fires only once the user dismisses it.
-      setOpenError(res.error.message);
+      // Kept whole. The raw text is what makes a fault diagnosable; the plain
+      // explanation is rendered above it, not instead of it.
+      setOpenError(res.error);
       return;
     }
     finish({
@@ -842,7 +851,32 @@ function StartPickerModal({ open, args, baseUrl, token, onDone }: Props) {
                       {!opening && openError && (
                         <ErrorCallout style={{ marginTop: '1.2rem' }}>
                           <IconAlertTriangle size={20} stroke={2} />
-                          <CalloutText>{openError}</CalloutText>
+                          <CalloutText>
+                            {(() => {
+                              const why = explainSessionOpenFailure(
+                                openError.message,
+                                openError.code,
+                              );
+                              return (
+                                <>
+                                  <FailureHeadline>{why.headline}</FailureHeadline>
+                                  <FailureAdvice>{why.whatToDo}</FailureAdvice>
+                                  <FailureAdvice>
+                                    {why.charged === 'no'
+                                      ? 'No MOR was staked.'
+                                      : 'It is not certain whether MOR was staked — the Sessions tab will show one if it opened.'}
+                                  </FailureAdvice>
+                                  {/* The raw text stays, one click away: it names
+                                      the provider and the exact refusal, which is
+                                      what makes a fault diagnosable at all. */}
+                                  <FailureDetails>
+                                    <summary>Technical details</summary>
+                                    <FailureRaw>{openError.message}</FailureRaw>
+                                  </FailureDetails>
+                                </>
+                              );
+                            })()}
+                          </CalloutText>
                         </ErrorCallout>
                       )}
                     </>
@@ -866,7 +900,20 @@ function StartPickerModal({ open, args, baseUrl, token, onDone }: Props) {
             {step === 'confirm' && quote && !quote.allowed ? (
               <GhostBtn onClick={handleCancel}>Close</GhostBtn>
             ) : step === 'confirm' && quote && quote.allowed && openError ? (
-              <GhostBtn onClick={handleCancel}>Close</GhostBtn>
+              <>
+                <GhostBtn onClick={handleCancel}>Close</GhostBtn>
+                {explainSessionOpenFailure(openError.message, openError.code)
+                  .offerAnotherProvider && (
+                  <PrimaryBtn
+                    onClick={() => {
+                      setOpenError(null);
+                      setStep('provider');
+                    }}
+                  >
+                    Choose another provider
+                  </PrimaryBtn>
+                )}
+              </>
             ) : (
               <GhostBtn onClick={handleCancel} disabled={opening}>
                 Cancel

@@ -394,6 +394,45 @@ export const CalloutText = styled.div`
   min-width: 0;
 `;
 
+/* The plain-language failure block. The headline carries the weight; the raw
+   text is deliberately quieter and folded away, because it is for whoever is
+   diagnosing rather than for whoever is stuck. */
+export const FailureHeadline = styled.div`
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+`;
+
+export const FailureAdvice = styled.div`
+  opacity: 0.9;
+  margin-bottom: 0.4rem;
+`;
+
+export const FailureDetails = styled.details`
+  margin-top: 0.6rem;
+
+  summary {
+    cursor: pointer;
+    opacity: 0.65;
+    font-size: 1.2rem;
+    user-select: none;
+  }
+`;
+
+export const FailureRaw = styled.pre`
+  margin: 0.6rem 0 0;
+  padding: 0.8rem;
+  border-radius: 0.6rem;
+  background: ${(p) => p.theme.colors.dangerTint(0.14)};
+  font-size: 1.1rem;
+  line-height: 1.4;
+  /* Long router errors are one unbroken line; without this the dialog grows a
+     horizontal scrollbar and the message becomes unreadable. */
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 14rem;
+  overflow-y: auto;
+`;
+
 export const Footer = styled.div`
   display: flex;
   align-items: center;
