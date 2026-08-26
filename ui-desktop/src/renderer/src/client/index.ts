@@ -274,6 +274,9 @@ const createClient = function (createStore) {
     // the endpoint refuses browsers. Long timeout: opening a session waits on a
     // chain transaction.
     morpheusApiRequest: utils.forwardToMainProcess('morpheus-api-request', 180000),
+    // Which providers the user marked up or down, so a dead one sinks next time.
+    getProviderPrefs: utils.forwardToMainProcess('get-provider-prefs'),
+    setProviderPref: utils.forwardToMainProcess('set-provider-pref'),
     setOpencodeCwd: utils.forwardToMainProcess('set-opencode-cwd'),
     checkProviderConnectivity: utils.forwardToMainProcess(
       'check-provider-connectivity',

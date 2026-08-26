@@ -442,6 +442,46 @@ export const LaunchRow = styled.div`
   margin-top: 1.2rem;
 `;
 
+/* The mark-up / mark-down controls on a provider row. Rendered as spans with a
+   button role: a <button> inside the row's own <button> is invalid HTML and
+   Safari swallows the inner click entirely. */
+export const MarkGroup = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: 0.8rem;
+`;
+
+export const MarkBtn = styled.span<{ $on?: boolean; $bad?: boolean }>`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: ${(p) => p.theme.radii.sm};
+  cursor: pointer;
+  color: ${(p) =>
+    p.$on
+      ? p.$bad
+        ? p.theme.colors.danger
+        : p.theme.colors.morMain
+      : p.theme.colors.textSecondary};
+  opacity: ${(p) => (p.$on ? 1 : 0.55)};
+  transition:
+    opacity 0.12s ease,
+    background 0.12s ease;
+
+  &:hover {
+    opacity: 1;
+    background: ${(p) => p.theme.colors.brandTint(0.1)};
+  }
+
+  &:focus-visible {
+    outline: 2px solid ${(p) => p.theme.colors.brandTint(0.6)};
+    outline-offset: 2px;
+  }
+`;
+
 export const Footer = styled.div`
   display: flex;
   align-items: center;
