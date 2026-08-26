@@ -118,6 +118,28 @@ export const SearchWrapper = styled.div`
     padding-right: 0;
   }
 
+  /* THE TYPED TEXT ITSELF. Only the placeholder and the icon were styled here,
+     so what the user typed fell through to Bootstrap's default — near-black, on
+     a near-black field. The search worked; it was simply invisible while you
+     used it. Focus needs its own rule because .form-control:focus re-asserts
+     both colour and background. */
+  .form-control,
+  input {
+    background: transparent;
+    color: ${(p) => p.theme.colors.textPrimary};
+    caret-color: ${(p) => p.theme.colors.morMain};
+    border: none;
+    box-shadow: none;
+  }
+
+  .form-control:focus,
+  input:focus {
+    background: transparent;
+    color: ${(p) => p.theme.colors.textPrimary};
+    border: none;
+    box-shadow: none;
+  }
+
   .form-control::placeholder,
   input::placeholder {
     color: ${(p) => p.theme.colors.textSecondary} !important;
