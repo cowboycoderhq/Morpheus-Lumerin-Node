@@ -26,6 +26,7 @@ import {
 import { claimNewestOffer } from '../../openai-compat/session-offers'
 import { forCodingAgents, isPickerRoute } from '../../openai-compat/protocol'
 import { patchGrokUserConfig } from '../../grok/user-config'
+import { toggleStarredModel as applyStarToggle } from '../../../../shared/starred-models'
 import { getOpenAiApiSetting, setOpenAiApiSetting } from '../settings'
 import {
   buildLaunchScript,
@@ -1585,14 +1586,11 @@ export const getPendingSessionOffer = async () => {
  * to happen; the delta belongs where the data lives.
  */
 export const toggleStarredModel = async ({ modelId }: { modelId: string }) => {
-  const id = String(modelId ?? '')
   const cfg = readOpenAiConfig()
-  const current = cfg.starredModelIds ?? []
-  if (!id) return { starredModelIds: current }
-  const has = current.some((x) => x.toLowerCase() === id.toLowerCase())
-  const starredModelIds = has
-    ? current.filter((x) => x.toLowerCase() !== id.toLowerCase())
-    : [...current, id]
+  // The SAME toggle the renderer shows with, rather than a second copy of the
+  // rule that happens to agree today. Two implementations of one rule is what
+  // let opencode keep receiving local models for weeks.
+  const starredModelIds = applyStarToggle(cfg.starredModelIds ?? [], modelId)
   setOpenAiApiSetting({ ...cfg, starredModelIds })
   // Publish immediately: the point of pinning is that a terminal can see it.
   await refreshGrokModels().catch((e) => log.warn(`grok models: ${String(e)}`))

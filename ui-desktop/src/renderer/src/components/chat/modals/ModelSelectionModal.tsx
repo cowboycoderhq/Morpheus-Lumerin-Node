@@ -3,7 +3,7 @@ import { sendToMainProcess } from '../../../client/utils';
 import {
   isStarredModel,
   toggleStarredModel,
-} from '../../../utils/starred-models';
+} from '../../../../../shared/starred-models';
 import styled, { keyframes, useTheme } from 'styled-components';
 
 const spin = keyframes`
