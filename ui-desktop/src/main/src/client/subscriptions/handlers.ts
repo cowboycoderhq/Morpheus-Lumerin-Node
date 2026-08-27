@@ -24,7 +24,7 @@ import {
   type ExternalActivity
 } from '../../openai-compat/server'
 import { claimNewestOffer } from '../../openai-compat/session-offers'
-import { isPickerRoute } from '../../openai-compat/protocol'
+import { forCodingAgents, isPickerRoute } from '../../openai-compat/protocol'
 import { getOpenAiApiSetting, setOpenAiApiSetting } from '../settings'
 import {
   buildLaunchScript,
@@ -1197,9 +1197,14 @@ const provisionOpencodePlugins = async (api: OpenAiApiConfig) => {
   writeEndpointDescriptor(descriptor, {
     baseUrl: `http://127.0.0.1:${api.port}`,
     apiKey: api.token,
-    models: await ensureOpenAiServer()
-      .advertisedModels()
-      .catch(() => [])
+    // Local models are withheld from opencode for the same reason they are
+    // withheld from grok: it always sends tools and stream together, and the
+    // local runtime always refuses that pair. One rule, one definition.
+    models: forCodingAgents(
+      await ensureOpenAiServer()
+        .advertisedModels()
+        .catch(() => [])
+    )
   })
   const dir = globalPluginDir()
   writeStartPlugin(path.join(dir, 'morpheus-provider.js'), buildProviderPlugin(descriptor))
