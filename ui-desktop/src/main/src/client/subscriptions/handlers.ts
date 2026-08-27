@@ -1523,6 +1523,30 @@ export const getPendingSessionOffer = async () => {
  * this is a judgement about a counterparty, not a setting for the API, and it
  * outlives any particular model or session.
  */
+/**
+ * Flip one model's pin, deciding from the CURRENT stored list.
+ *
+ * The renderer used to compute the whole new array from the copy it read when
+ * the dialog opened and send that — so anything starred in between (a session
+ * opening stars its model automatically) was silently dropped on the next
+ * click. A read-modify-write across a process boundary is a lost update waiting
+ * to happen; the delta belongs where the data lives.
+ */
+export const toggleStarredModel = async ({ modelId }: { modelId: string }) => {
+  const id = String(modelId ?? '')
+  const cfg = readOpenAiConfig()
+  const current = cfg.starredModelIds ?? []
+  if (!id) return { starredModelIds: current }
+  const has = current.some((x) => x.toLowerCase() === id.toLowerCase())
+  const starredModelIds = has
+    ? current.filter((x) => x.toLowerCase() !== id.toLowerCase())
+    : [...current, id]
+  setOpenAiApiSetting({ ...cfg, starredModelIds })
+  // Publish immediately: the point of pinning is that a terminal can see it.
+  await refreshGrokModels().catch((e) => log.warn(`grok models: ${String(e)}`))
+  return { starredModelIds }
+}
+
 export const getProviderPrefs = async () => (await getKey('providerPrefs')) || {}
 
 export const setProviderPref = async ({

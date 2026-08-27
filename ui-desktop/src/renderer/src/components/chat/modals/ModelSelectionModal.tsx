@@ -564,13 +564,15 @@ const ModelSelectionModal = ({
   };
 
   const handleToggleStar = async (modelId: string) => {
-    const next = toggleStarredModel(starredIds, modelId);
-    // Optimistic, then corrected by main's answer: the click should feel
-    // instant, and main is the store of record.
-    setStarredIds(next);
+    // Optimistic locally so the click feels instant...
+    setStarredIds(toggleStarredModel(starredIds, modelId));
     try {
-      const saved: any = await sendToMainProcess('set-openai-api-config', {
-        starredModelIds: next,
+      // ...but the WRITE is a delta applied to whatever is stored now. Sending
+      // the whole list from this component's snapshot dropped anything pinned
+      // since the dialog opened — a session opening stars its own model, so
+      // that was a real way to lose one silently.
+      const saved: any = await sendToMainProcess('toggle-starred-model', {
+        modelId,
       });
       if (Array.isArray(saved?.starredModelIds)) {
         setStarredIds(saved.starredModelIds);
