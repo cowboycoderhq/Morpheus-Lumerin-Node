@@ -87,7 +87,7 @@ and the final day's locked slice after `releaseAt`
 (`SessionRouter.sol:305-316`). What a pool-mode session costs you is
 the time your stake is locked, not tokens spent.
 
-The full stake is escrowed at open. On close, the remainder returns immediately (**that remainder is the part you did not consume** — the day-lock is sized from the seconds actually consumed, so closing at 10% of the scheduled duration returns roughly 90% of the stake, and the return approaches zero only as consumption approaches the full scheduled duration: a session left to run to `endsAt` inside one UTC day returns approximately nothing); the final UTC day's consumed slice day-locks until the next UTC day (`withdrawUserStakes`). Plan consumer float for gross daily stake — used MOR is not reusable the same UTC day. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
+The full stake is escrowed at open. On close, the remainder returns immediately (**that remainder is the part you did not consume** — the day-lock is sized from the seconds actually consumed, so closing at 10% of the scheduled duration returns roughly 90% of the stake, and the return approaches zero only as consumption approaches the full scheduled duration: a session left to run to `endsAt` inside one UTC day returns approximately nothing); the final UTC day's consumed slice day-locks until the next UTC day, after which the proxy-router's StakeClaimer sweeps it back automatically (a manual `withdrawUserStakes` is not required). Plan consumer float for gross daily stake — used MOR is not reusable the same UTC day. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
 
 ## Two reward systems (do not conflate)
 
