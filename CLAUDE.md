@@ -101,7 +101,10 @@ real profile so the boot wizard health-checks instead of re-downloading ~2GB.
 ## Open items (next session starts here)
 1. **`VerifyMnemonicStep` has no isolate case.** It is the highest-risk flow in the
    app (the ledger's words) and is now materially new code (tap-a-word). Do this first.
-2. **MOR on hold is shown in the app and claimed automatically by the proxy-router's StakeClaimer.** The proxy-router includes a StakeClaimer that automatically claims matured on-hold MOR and returns it to the wallet every 10 minutes. The Diamond has
+2. **MOR on hold is shown in the app and claimed automatically by the proxy-router's StakeClaimer.** The proxy-router includes a StakeClaimer that automatically claims matured on-hold MOR and returns it to the wallet every 10 minutes — but only while that node is
+   running, and only for the wallet it holds (`proxyctl.go:237-240` starts the
+   claimer inside `Proxy.Run`; `service.go:1118-1124` withdraws for
+   `GetMyAddress` alone). The Diamond has
    `getUserStakesOnHold` + `withdrawUserStakes`; these are accessible through the
    proxy-router, and the app DOES display them (`Dashboard.jsx:658-666`, with a
    per-tranche release schedule at `:527-553`). Closing a session day-locks the
@@ -113,7 +116,10 @@ real profile so the boot wizard health-checks instead of re-downloading ~2GB.
    day 4 — skips it, leaves `userStakeToLock_` at its initialiser of 0 (`:302`) and
    transfers the entire remaining stake at once (`:314-315`), locking nothing. Do
    not state the day-lock unconditionally.
-   The proxy-router's StakeClaimer ensures it returns to the wallet automatically.
+   The proxy-router's StakeClaimer returns it to the wallet automatically while
+   that node is running; with the node off, or for sessions opened from a
+   different wallet, nothing sweeps and `withdrawUserStakes` has to be called by
+   hand.
    Diamond `0x6aBE1d282f72B474E54527D93b979A4f64d3030a` (Base, chainId 8453).
 3. **Settings tabs unmount on switch** → a typed-but-unsaved ETH node URL is
    discarded and `getConfig()` re-fires. react-bootstrap defaulted to keeping both

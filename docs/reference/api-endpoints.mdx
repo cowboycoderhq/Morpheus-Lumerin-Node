@@ -202,7 +202,7 @@ Variant for IDs only: `GET /blockchain/sessions/user/ids?user=0x…`. Fetch one:
 
 ## Claim day-locked on-hold balance (no node HTTP route)
 
-The proxy-router automatically claims matured on-hold stakes via its internal StakeClaimer (see `proxy-router/internal/blockchainapi/stake_claimer.go`). While there is no dedicated HTTP endpoint, manual claiming via `cast send` or wallet UI is an alternative for direct contract interaction.
+A running proxy-router claims matured on-hold stakes automatically via its internal StakeClaimer (see `proxy-router/internal/blockchainapi/stake_claimer.go`). That is bounded twice: the claimer is started only inside `Proxy.Run` (`internal/proxyctl/proxyctl.go:237-240`), and it withdraws only for the node's own `GetMyAddress` (`internal/blockchainapi/service.go:1118-1124`). With the node stopped, or for stakes belonging to a different wallet, nothing is claimed. There is no dedicated HTTP endpoint, so manual claiming via `cast send` or a wallet UI is the alternative for direct contract interaction — and the only route in those two cases.
 
 ```bash
 cast send 0x6aBE1d282f72B474E54527D93b979A4f64d3030a \
