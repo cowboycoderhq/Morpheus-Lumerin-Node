@@ -17,7 +17,7 @@ stateDiagram-v2
   Open --> Closed: closeSession (early or closedAt >= endsAt)
   Open --> StuckPastEndsAt: endsAt passed but no closeSession yet
   StuckPastEndsAt --> Closed: closeSession finally succeeds
-  Closed --> [*]: remainder (if any) safeTransferred; if close before releaseAt, the day-locked slice is held in userStakesOnHold
+  Closed --> [*]: remainder (if any) safeTransferred — if close before releaseAt, the day-locked slice is held in userStakesOnHold
   Closed --> OnHold: day-locked slice of used stipend (final UTC day) → userStakesOnHold if close before releaseAt
 OnHold --> [*]: StakeClaimer auto-sweep after releaseAt
 ```
