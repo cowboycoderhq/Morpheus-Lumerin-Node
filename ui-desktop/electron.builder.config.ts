@@ -35,7 +35,22 @@ const config: Configuration = {
         "Application requests access to the user's Downloads folder."
     },
     target: ['dmg'],
-    notarize: false,
+    // NOTARIZED, so the DMG opens on a machine that has never seen it.
+    //
+    // Without this the app is merely signed: Gatekeeper on any other Mac shows
+    // "cannot be opened because Apple cannot check it for malicious software"
+    // and the only way in is right-click -> Open, which is not a test of the
+    // thing you meant to test.
+    //
+    // Needs three environment variables at build time — APPLE_ID,
+    // APPLE_APP_SPECIFIC_PASSWORD (an app-specific password, NOT the Apple
+    // account password) and APPLE_TEAM_ID. electron-builder passes them to
+    // notarytool. Left as an env lookup rather than hard-coded so a build
+    // machine without credentials fails loudly at the notarize step instead of
+    // silently producing an unnotarized DMG that looks identical.
+    notarize: process.env.APPLE_TEAM_ID
+      ? { teamId: process.env.APPLE_TEAM_ID }
+      : false,
     artifactName: '${os}-${arch}-${name}-${version}.${ext}'
   },
   linux: {
