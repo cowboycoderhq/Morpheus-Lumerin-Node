@@ -7,7 +7,7 @@ last_verified: "v7.0.0"
 source: "docs/models-config.json.md"
 ---
 
-`models-config.json` tells the proxy-router how to translate on-chain `modelId` values into actual backend HTTP calls. The schema is enforced by [`proxy-router/internal/config/models-config-schema.json`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/internal/config/models-config-schema.json).
+`models-config.json` tells the proxy-router how to translate on-chain `modelId` values into actual backend HTTP calls. The config loader does not enforce the JSON schema; it only checks on-chain existence and connectivity. See [`proxy-router/internal/config/models-config-schema.json`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/internal/config/models-config-schema.json) for the intended schema.
 
 ## Per-model fields
 
@@ -15,18 +15,20 @@ source: "docs/models-config.json.md"
 |-------|----------|-------|
 | `modelId` | yes | The on-chain model id (32-byte hex) |
 | `modelName` | yes | Human-readable name |
-| `apiType` | yes | One of `openai`, `claudeai`, `prodia-sd`, `prodia-sdxl`, `prodia-v2`, `hyperbolic-sd`, etc. |
+| `apiType` | yes | Exactly one of `openai`, `claudeai`, `prodia-sd`, `prodia-sdxl`, `prodia-v2`, `hyperbolic-sd` (`aiengine/factory.go:14-28`). Note `models-config-schema.json` lists only four of these in its `enum` — `prodia-sd` and `prodia-sdxl` are accepted by the code but rejected by the schema. |
 | `apiUrl` | yes | Full backend URL including the endpoint path |
 | `apiKey` | optional | Backend API key (resale providers usually need this) |
-| `concurrentSlots` | optional | Distinct concurrent chats your backend can handle for **this** model |
+| `concurrentSlots` | optional — but **omitting it means unlimited, not zero** | Distinct concurrent chats your backend can handle for **this** model. An absent field is `0`, and `0` short-circuits the admission check: both capacity managers return `HasCapacity = true` without counting anything (`proxy-router/internal/proxyapi/capacity_manager.go:29-32` and `:72-77`). Set it explicitly on every model you post a bid for |
 | `capacityPolicy` | optional | `idle_timeout` or `simple` |
-
-<Note>
-**`concurrentSlots` is per-model, not global.** The proxy-router will accept up to `sum(concurrentSlots)` across all configured models concurrently. There is no built-in global cap. If your hardware can serve only one of N models at a time, configure all N in `models-config.json` but **only post a bid for the one currently active**, and rotate the bid when you want to switch. Prefer bidding on existing marketplace `modelId`s rather than minting duplicates — see [Register on chain](/providers/full/register-onchain). See also [Pausing or temporarily disabling a model offering](/providers/full/register-onchain#pausing-or-temporarily-disabling-a-model-offering).
-</Note>
 | `parameters` | optional | Per-`apiType` extra parameters (e.g. SD `cfg_scale`, `steps`) |
 
+<Note>
+**`concurrentSlots` is per-model, not global — and only the models that set it are capped at all.** The proxy-router will accept up to `sum(concurrentSlots)` concurrently across the models that declare one, but a model that omits the field contributes an **unbounded** term rather than a zero one (`proxy-router/internal/proxyapi/capacity_manager.go:29-32`, `:72-77`), so with any model unset that sum is not a cap. Leaving the field out because it is marked optional gives you no admission control on that model, which is the opposite of what this note is for. There is no built-in global cap either way. If your hardware can serve only one of N models at a time, configure all N in `models-config.json` but **only post a bid for the one currently active**, and rotate the bid when you want to switch. Prefer bidding on existing marketplace `modelId`s rather than minting duplicates — see [Register on chain](/providers/full/register-onchain). See also [Pausing or temporarily disabling a model offering](/providers/full/register-onchain#pausing-or-temporarily-disabling-a-model-offering).
+</Note>
+
 For the canonical per-`apiType` schema, see the JSON schema file linked above.
+
+The examples below omit `concurrentSlots` and `capacityPolicy` throughout, so copied as-is they apply **no** admission control to any of those models — add `concurrentSlots` per model before serving traffic.
 
 ## Examples
 
@@ -67,16 +69,16 @@ For the canonical per-`apiType` schema, see the JSON schema file linked above.
     },
     {
       "modelId": "0x0000000000000000000000000000000000000000000000000000000000000004",
-      "modelName": "gpt-4o-mini",
-      "apiType": "openai",
-      "apiUrl": "https://api.openai.com/v1/chat/completions",
+      "modelName": "inference.sd15.txt2img.v1",
+      "apiType": "prodia-v2",
+      "apiUrl": "https://inference.prodia.com/v2/job",
       "apiKey": "FILL_ME_IN"
     },
     {
       "modelId": "0x0000000000000000000000000000000000000000000000000000000000000005",
-      "modelName": "text-embedding-bge-m3",
+      "modelName": "gpt-4o-mini",
       "apiType": "openai",
-      "apiUrl": "https://api.venice.ai/api/v1/embeddings",
+      "apiUrl": "https://api.openai.com/v1/chat/completions",
       "apiKey": "FILL_ME_IN"
     },
     {
@@ -99,4 +101,4 @@ For the canonical per-`apiType` schema, see the JSON schema file linked above.
 
 ## Inline content (for TEE / Akash)
 
-For deployments where mounting a JSON file is impractical, set `MODELS_CONFIG_CONTENT` to a **single-line JSON string** with the exact same shape as above. The proxy-router reads it instead of `MODELS_CONFIG_PATH`. This is the standard approach in [TEE](/providers/full/secretvm-quickstart) and [Akash](/providers/full/proxy-router-akash) deployments.
+For deployments where mounting a JSON file is impractical, set `MODELS_CONFIG_CONTENT` to a **single-line JSON string** with the exact same shape as above. `MODELS_CONFIG_CONTENT` does **not** replace `MODELS_CONFIG_PATH` — it is a one-shot seeder for the file at that path. `ModelConfigLoader.Init` resolves the path first, and only writes the content when no file exists there; it then reads the file in every case (`proxy-router/internal/config/models_config.go:72-89`). So if `models-config.json` already exists, editing `MODELS_CONFIG_CONTENT` changes nothing — the old file keeps being served, silently. To change models on a node that has already started once, edit the JSON file and restart, or delete the file so the content can seed it again. Supplying the model config inline through `MODELS_CONFIG_CONTENT` is the standard approach in [TEE](/providers/full/secretvm-quickstart) and [Akash](/providers/full/proxy-router-akash) deployments.

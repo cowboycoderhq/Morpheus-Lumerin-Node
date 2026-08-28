@@ -14,16 +14,16 @@ The single biggest source of confusion in Morpheus: **the local demo model is no
 |---|---|---|
 | Where it runs | Your machine, started automatically by the MorpheusUI desktop app | Some provider's host on the network |
 | Cost | Free (your CPU/GPU) | MOR per second |
-| Quality | Tiny demo (`tinyllama`) | Whatever the provider hosts (often production-grade) |
+| Quality | Small demo (`Qwen2.5-1.5B-Instruct`, 1.5B) | Whatever the provider hosts (often production-grade) |
 | Wallet needed | Optional | Required (MOR + ETH on BASE) |
 | Session needed | No | Yes — `openSession` against a bid |
-| Visible in MorpheusUI as | "Local model" | "Change Model → Remote model dropdown" |
+| Visible in MorpheusUI as | the **Local** section of **New chat** | the **Marketplace** section of **New chat** |
 
 ## How to know which one you're using
 
 ### In MorpheusUI
 
-Look at the model selector at the top of the **Chat** screen. If it says **"Local Model"** you are talking to the bundled `llama.cpp` server on `localhost:8080`. If it says a real model name like `LMR-OpenAI-GPT-4o`, you are spending MOR.
+Open **New chat** and note which section the model came from. A model under **Local** is the bundled `llama.cpp` server on `localhost:3434` (`SERVICE_AI_API_PORT`, `ui-desktop/env.schema.ts:43`). A model under **Marketplace**, such as `LMR-OpenAI-GPT-4o`, means you are spending MOR.
 
 ### Via the API
 
@@ -38,7 +38,7 @@ curl http://localhost:8082/v1/chat/completions \
 
 ## Why the local model exists
 
-It exists **only to prove the stack works end-to-end without spending money**. The bundled `tinyllama` is a 1B-parameter demonstration model — it will hallucinate, fail simple tasks, and produce inconsistent output. Comparing its quality to a real Morpheus provider is not a fair comparison.
+It exists **only to prove the stack works end-to-end without spending money**. The bundled `Qwen2.5-1.5B-Instruct` is a **1.5B-parameter** demonstration model, picked to be small enough to download on first launch rather than to be capable. Comparing its quality to a real Morpheus provider is not a fair comparison.
 
 ## When to use what
 

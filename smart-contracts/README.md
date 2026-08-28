@@ -1,6 +1,6 @@
 # Sample Hardhat Project
 
-This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, and a Hardhat Ignition module that deploys that contract.
+The project does not include a Hardhat Ignition module; the hardhat.config.ts and package.json lack the necessary plugin and dependency, so deployment via Ignition is not configured.
 
 Try running some of the following tasks:
 

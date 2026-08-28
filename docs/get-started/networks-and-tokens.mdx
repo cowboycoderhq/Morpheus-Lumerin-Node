@@ -40,7 +40,7 @@ Used by the `test` branch and `*-test` releases.
 
 <Steps>
   <Step title="Pick a wallet">
-    Use a top-level (non-derived) ERC-20 wallet. The MorpheusUI's mnemonic recover flow does **not** support secondary/derived addresses.
+    Any ERC-20 wallet works. On mnemonic import MorpheusUI offers 10 derived accounts — select the one holding your funds.
   </Step>
   <Step title="Get ETH on BASE">
     Bridge ETH to BASE Mainnet (or use a BASE Sepolia faucet for testnet). ETH pays gas.
@@ -56,11 +56,11 @@ These are enforced by the Diamond contract and may change with governance:
 
 | Action | Minimum |
 |--------|---------|
-| Provider stake | `0.2` MOR |
-| Subnet provider stake | `10000` MOR |
+| Provider stake | `0.2` MOR (Base mainnet, live on-chain) · `0.2` MOR (Base Sepolia) |
+| Subnet provider stake | *(no such tier — a single `providerMinimumStake` applies to all providers)* |
 | Model stake | `0.1` MOR |
-| Marketplace bid fee | `0.3` MOR |
-| Consumer session open | `5` MOR |
-| Bid price floor | `0.00000001` MOR / second |
+| Marketplace bid fee | `0.3` MOR (Base mainnet, live on-chain) · `0` (Base Sepolia — bids are free) — owner-settable via `setMarketplaceBidFee` |
+| Consumer session open | *(no MOR minimum — the only floor is `MIN_SESSION_DURATION`, 5 **minutes**, `SessionStorage.sol:34`, enforced at `SessionRouter.sol:147`)* |
+| Bid price floor | `10000000000` wei/sec on Base mainnet = `0.00000001` MOR/sec · Base Sepolia: read `getMinMaxBidPricePerSecond()`, `121052630917` wei/sec as of 2026-08-27 · owner-settable via `setMinMaxBidPricePerSecond` |
 
 See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover) for what these mean and when they unlock.

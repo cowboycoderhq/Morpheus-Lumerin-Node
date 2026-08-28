@@ -12,7 +12,7 @@ This page documents the **structural** picture: which process runs where, which 
 
 <CardGroup cols={2}>
   <Card title="Provider AI Model" icon="brain">
-    Any OpenAI-compatible HTTP endpoint (your llama.cpp, vLLM, hosted Venice/OpenAI/Anthropic, etc.). Reachable privately by the provider's proxy-router.
+    Any HTTP endpoint compatible with the configured `apiType` (OpenAI, claudeai, prodia-v2, hyperbolic-sd, etc.). Reachable privately by the provider's proxy-router.
   </Card>
   <Card title="Provider proxy-router" icon="route">
     Listens on `:3333` (TCP, public) for consumer connections; `:8082` (HTTP, private/admin) for the API and Swagger. Uses [`models-config.json`](/reference/models-config) to map on-chain `modelId` → backend `apiUrl`.
@@ -46,7 +46,7 @@ sequenceDiagram
   Chain-->>CRouter: sessionId
   UI->>CRouter: prompt
   CRouter->>PRouter: TCP :3333 forward
-  PRouter->>Model: POST /v1/chat/completions
+  PRouter->>Model: Forwarded request (format per apiType)
   Model-->>PRouter: stream response
   PRouter-->>CRouter: stream response
   CRouter-->>UI: stream response
@@ -61,7 +61,7 @@ sequenceDiagram
 | `3333` (TCP) | Provider proxy-router | **Public** | Consumer-to-provider session and inference traffic |
 | `8082` (HTTP) | Provider proxy-router | Private/admin | Swagger, blockchain admin, BasicAuth-protected |
 | `8082` (HTTP) | Consumer proxy-router | Loopback | Local API for MorpheusUI / CLI / agents |
-| `29343` (HTTPS) | TEE-only — SecretVM | Public | TDX attestation (`/cpu`, `/gpu`, `/docker-compose`) |
+| `21434` (HTTPS, host-net Caddy) and `29343` (HTTPS, attest-rest) | TEE-only — SecretVM | Public | TDX attestation (`/cpu`, `/gpu`, `/docker-compose`) |
 
 ## What lives on chain vs off chain
 

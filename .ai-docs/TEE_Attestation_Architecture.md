@@ -5,8 +5,8 @@
 
 > **Shipping summary (as of v7.x with SEV-SNP):**
 > - **Phase 1a (CI/CD supply-chain hardening)** — DONE (v6.0.0)
-> - **Phase 1b (RTMR3 computation + automated deployment + post-deploy attestation)** — DONE (v6.0.0); **SecretVM release pin updated to `v0.0.27`** (GitHub latest stable Production release, 2026-05-23)
-> - **Phase 1c (proxy-router code: consumer verifies P-Node)** — DONE (v6.0.0, refined through v6.2.x); SEV-SNP path verifies via the dedicated `quote-parse-sev` portal endpoint and a per-template golden table (PR #718)
+> - **Phase 1b (RTMR3 computation + automated deployment + post-deploy attestation)** — DONE (v6.0.0); **SecretVM release pin updated to `v0.0.27`** (GitHub latest stable Production release, 2026-05-23) — **since moved to `v0.0.31`; read `.github/tee/secretvm.env:22` for the live pin**
+> - **Phase 1c (proxy-router code: consumer verifies P-Node)** — DONE (v6.0.0, refined through v6.2.x); SEV-SNP path verifies the attestation against the golden values in the manifest (using cosign) via the dedicated `quote-parse-sev` portal endpoint (PR #718). The **per-template** golden table is published in the manifest but is **not** consumed by the consumer: `verifier.go:473-475` compares only the legacy single `golden.Measurement`, and `GoldenValues.MatchSEVMeasurement` (`attestation/golden.go:107`) has no callers — see the AMD SEV-SNP difference note in §6.3
 > - **Phase 2a (P-Node verifies backend LLM: CPU quote, TLS pinning, RTMR3 replay for TDX *and* GCTX launch-digest replay for SEV, CPU-GPU binding, NRAS)** — DONE (v7.0.0; SEV branch added by PR #718, VMType fix in PR #720)
 > - **CI/CD SEV measurement signing** — DONE (this PR — SEV launch digest computed for all 5 portal templates and attached to the cosign-signed manifest, alongside baked log-level fields in `baked_env`)
 > - **Phase 2b (verifiable per-message signing, local quote verification, co-located CPU+GPU TDX VM)** — still future work
@@ -21,7 +21,7 @@ A consumer node should be able to **cryptographically verify**, before sending a
 
 1. Running on genuine TEE hardware (Intel TDX or AMD SEV-SNP)
 2. Running an unmodified, known-good version of the proxy-router
-3. Configured such that PII/chat logging is disabled and cannot be re-enabled at runtime
+3. Running an image *built* with PII/chat logging disabled — met only that far: the manifest records the build, while the measured compose points at an unmeasured `env_file` (`proxy-router/docker-compose.tee.yml:15-16`), so a deployment can re-enable logging without moving RTMR3
 4. Not subject to MITM between the consumer and the TEE enclave
 
 ---
@@ -42,7 +42,7 @@ A consumer node should be able to **cryptographically verify**, before sending a
 
 **Proxy-router code (consumer verifies P-Node):**
 - `IsTeeModel()` helper for on-chain tag detection — **DONE** (`blockchainapi/model_tags.go`)
-- Consumer-side attestation verification before session creation (fetches quote from SecretVM host endpoint at `:29343`, verifies via SecretAI portal, compares to manifest) — **DONE** (`attestation/verifier.go`, called from `blockchainapi/service.go` and `proxyapi/proxy_sender.go`)
+- Consumer-side attestation verification before session creation (fetches the provider's attestation, verifies it against the golden values published in the TEE image's attestation manifest (using cosign), checks TLS binding, compares RTMR3, and re-checks on every prompt) — **DONE** (`attestation/verifier.go`, called from `blockchainapi/service.go` and `proxyapi/proxy_sender.go`)
 - Per-prompt `VerifyProviderQuick` fast-path re-check — **DONE** (hash + TLS fingerprint compare)
 - Consumer UI: TEE badge and verification status — **DONE**
 
@@ -52,15 +52,15 @@ A consumer node should be able to **cryptographically verify**, before sending a
 
 - `BackendVerifier.AttestBackend` at startup — **DONE**
   - Fetch backend CPU quote from `:21434/cpu`; verify via SecretAI portal
-  - TLS binding: compare TLS cert SHA-256 with CPU quote `reportData[0:32]`
+  - TLS binding: compare SHA-256 of the peer certificate's **SPKI** (SubjectPublicKeyInfo DER) with CPU quote `reportData[0:32]`; the full-certificate digest is accepted only as a legacy fallback (`attestation/verifier.go:352-357`)
   - Workload verification: parse TDX quote, look up MRTD + RTMR0-2 in the published SecretVM TDX artifact registry CSV, replay RTMR3 using SHA-384 extend chain over `SHA-256(docker-compose)` + rootfs data
   - GPU attestation: fetch from `:21434/gpu`, verify CPU-GPU binding via `reportData[32:64] == GPU nonce`
-  - NVIDIA NRAS v4 API: submit GPU evidence for independent hardware validation (non-fatal if unreachable)
+  - NVIDIA NRAS v4 API: submit GPU evidence for independent hardware validation. **Fatal if unreachable** — any NRAS error or `OverallResult == false` stores a failure snapshot and aborts (`attestation/backend_verifier.go:243-261`)
 - `BackendVerifier.FastVerifyBackend` on every prompt — **DONE**
   - Always re-fetches CPU quote (~50 ms), compares hash + TLS fingerprint against cached snapshot
   - Mismatch on hash → trigger full re-attestation
-  - Mismatch on TLS fingerprint → immediate hard fail (MITM signal)
-- Pinned-cert HTTP client for onward inference traffic (`PinnedHTTPClient`) — **DONE**
+  - Mismatch on the full TLS fingerprint → **re-attest** when the SPKI digest still matches (certificate rotation over a TEE-resident key); hard fail only when the SPKI digest also differs (`backend_verifier.go:367-375`)
+- Pinned-cert HTTP client for onward inference traffic (`PinnedHTTPClient`) — **NOT WIRED**: the method exists at `internal/attestation/backend_verifier.go:418` and is covered by tests, but no production code calls it. Onward inference uses the default client built at `internal/aiengine/openai.go:38-40`.
   - Custom `VerifyPeerCertificate` refuses any TLS cert whose SHA-256 doesn't match the attested fingerprint
 - Artifact registry auto-refresh (`ArtifactRegistry`) — **DONE** (configurable via `ARTIFACT_REGISTRY_URL`, `ARTIFACT_REGISTRY_REFRESH_INTERVAL`)
 - Health endpoint `GET /v1/models/attestation` — **DONE**
@@ -103,10 +103,10 @@ We intentionally couple to SCRT Labs' infrastructure because they control the TE
 | **Attestation portal** | `https://secretai.scrtlabs.com/attestation` | Web-based quick verification (paste compose + quote). Useful for manual spot-checks. |
 | **`reproduce-mr` tool** | [github.com/scrtlabs/reproduce-mr](https://github.com/scrtlabs/reproduce-mr) | Compute expected RTMR values (Intel TDX) from VM artifacts + docker-compose. CI uses our standalone Python port (`compute-rtmr3.py`) for the RTMR3-only subset. |
 | **SecretVM SEV verifier** | [github.com/scrtlabs/secretvm-verify](https://github.com/scrtlabs/secretvm-verify) | TypeScript reference verifier; the Go port lives at `proxy-router/internal/attestation/sev_*.go` (PR #718). The pipeline ports the GCTX algorithm to Python in `compute-sev-measurement.go`+`compute-sev-measurement.py` (kept in lockstep with the runtime Go via `sev_python_parity_test.go`). |
-| **SecretVM SEV artifact registry** | `https://raw.githubusercontent.com/scrtlabs/secretvm-verify/main/artifacts_registry/sev.json` | Per-release JSON listing kernel/initrd/ovmf hashes + OVMF section table for SEV measurement compute. The pipeline pulls the entry whose `(vm_type, artifacts_ver)` matches our `secretvm.env`. |
-| **SecretVM TDX artifact registry** | `https://raw.githubusercontent.com/scrtlabs/secretvm-verify/main/artifacts_registry/tdx.csv` | Per-release CSV used by the runtime BackendVerifier to look up MRTD + RTMR0-2 (which we don't recompute). |
+| **SecretVM SEV artifact registry** | `https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/sev.json` | Per-release JSON listing kernel/initrd/ovmf hashes + OVMF section table for SEV measurement compute. The pipeline pulls the entry whose `(vm_type, artifacts_ver)` matches our `secretvm.env`. |
+| **SecretVM TDX artifact registry** | `https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/tdx.csv` | Per-release CSV used by the runtime BackendVerifier to look up MRTD + RTMR0-2 (which we don't recompute). This exact string is `DefaultRegistryURL` (`attestation/artifacts_registry.go:20`) and matches the `SECRETVM_TDX_REGISTRY_URL` pin in `.github/tee/secretvm.env:28`; override with `ARTIFACT_REGISTRY_URL`. The npm version is **pinned** (`@0.13.0`) so registry contents stay reproducible — an unpinned `.../secretvm-verify/main/...` URL is a different, moving artifact and is not what the runtime fetches. |
 | **SecretVM build artifacts** | [github.com/scrtlabs/secret-vm-build/releases](https://github.com/scrtlabs/secret-vm-build/releases) | Firmware (ovmf.fd), kernel (bzImage), initramfs, rootfs — needed by `reproduce-mr` and SEV measurement compute. |
-| **Host attestation service** | `https://<vm-domain>:29343/cpu.html` | Returns the live attestation quote from a running SecretVM instance. Queried directly by the consumer — served by the TEE host, outside the application container. |
+| **Host attestation service** | `https://<vm-domain>:29343/cpu` | Returns the live attestation quote from a running SecretVM instance. Queried directly by the consumer — served by the TEE host, outside the application container. |
 | **Verifiable signing service** | `http://172.17.0.1:49153/sign` (internal only) | Signs messages with a TEE-bound key whose public key is embedded in attestation `reportdata`. Phase 2 feature. |
 | **SecretVM CLI** | `npm install --global secretvm-cli` / [CLI docs](https://docs.scrt.network/secret-network-documentation/secretvm-confidential-virtual-machines/secretvm-cli) | CLI tool for provisioning, managing, and monitoring SecretVM instances. Alternative to the web portal. |
 | **SecretAI dev portal** | `https://secretai.scrtlabs.com/secret-vms/create` | Web UI for creating and managing SecretVM instances. |
@@ -170,9 +170,9 @@ AMD SEV-SNP produces a **single cumulative `measurement`** hash (SHA-384) over t
 | Inputs we control | `sha256(compose) + sha256(rootfs)` | Same compose + rootfs hashes appear inside the kernel cmdline (`docker_compose_hash=… rootfs_hash=…`), which is hashed into the SEV kernel-hashes table |
 | Template (vCPU count) sensitivity | **No** — RTMR3 is identical for small/medium/large | **Yes** — VMSA pages depend on vCPU count, so each portal size produces a different launch digest |
 | What we publish in the manifest | one `intel_tdx.rtmr3` value | a `amd_sev_snp.per_template` map: `{small, medium, large, 2xlarge, 4xlarge}` plus the inputs (kernel/initrd/ovmf/rootfs hashes, exact cmdline, registry URL+sha256) |
-| What the consumer compares against the live quote | RTMR3 byte-for-byte | the entry whose template matches the quote's `family_id` (encoded as `<vmType>-<template>-sev`); helper `attestation.GoldenValues.MatchSEVMeasurement` does this lookup |
+| What the consumer compares against the live quote | RTMR3 byte-for-byte | the legacy single `Measurement` field; per-template matching is not yet wired in the consumer (see CI/CD Supply Chain Hardening document) |
 
-The runtime BackendVerifier (Phase 2) does NOT need the manifest to verify the backend's workload — it brute-forces the public SEV registry just like for TDX. The per-template manifest values exist for **Phase 1** (the consumer's pre-session check), where the consumer wants a CI/CD-signed golden to compare the freshly-attested provider against.
+The runtime BackendVerifier (Phase 2) does NOT need the manifest to verify the backend's workload — it brute-forces the public SEV registry just like for TDX. The per-template manifest values are not yet wired in the consumer code; currently the live consumer path compares only the legacy single `golden.Measurement` (`verifier.go:473‑475`), and `MatchSEVMeasurement` has no callers, as documented in the CI/CD Supply Chain Hardening document.
 
 ---
 
@@ -193,7 +193,7 @@ Consumer                          GHCR (signed manifest)            Provider (TE
    │    baked_env, rootfs_sha256 }    │                                  │
    │<──────────────────────────────────│                                  │
    │                                  │                                  │
-   │  3. GET :29343/cpu.html          │                                  │
+   │  3. GET :29343/cpu               │                                  │
    │─────────────────────────────────────────────────────────────────────>│
    │  (raw TDX quote from TEE host)   │  (served by VM host, NOT the    │
    │<─────────────────────────────────────── proxy-router container)     │
@@ -209,9 +209,17 @@ Consumer                          GHCR (signed manifest)            Provider (TE
    │     If FAIL → hard error         │  (port 3333: inference traffic)  │
 ```
 
-### Why the RTMR3 is NOT self-attested
+### Why the Phase 1 RTMR3 is NOT self-attested
 
-The provider never reports its own expected RTMR3. The trust chain is:
+**This section is about Phase 1 only** — the consumer verifying the provider's
+P-Node. There the provider never reports its own expected RTMR3; it comes from a
+signed CI manifest. **Phase 2 is different**: the P-Node verifying a backend LLM
+recomputes the expected RTMR3 from the compose the backend itself serves, because
+no per-model golden value is published (`NoopGoldenSource`,
+`proxy-router/cmd/main.go:342`). Do not carry this section's conclusion across to
+Phase 2 — see "What Phase 2 proves end-to-end" below.
+
+The Phase 1 trust chain is:
 
 1. **Expected RTMR3** comes from the **GHCR attestation manifest** — signed by CI/CD's OIDC key (Sigstore), cryptographically verifiable, P-Node cannot modify it
 2. **Actual RTMR3** comes from **Intel/AMD hardware attestation** — signed by the CPU's attestation key, independently verifiable against Intel/AMD root certificates
@@ -225,7 +233,7 @@ The compose file used for RTMR3 computation references the image by **immutable 
 - The compose content is deterministic once the image is built
 - RTMR3 = f(compose_bytes, rootfs_bytes) — both are immutable for a given version
 - Any change to the image produces a different digest → different compose → different RTMR3
-- **Critical: exact byte content.** RTMR3 is computed from the raw bytes of the compose file. The compose must end with a single newline (`\n`) after `proxy_data: null` — standard POSIX line ending, **no trailing blank line**. An earlier assumption that SecretVM appends a trailing newline was incorrect; live testing confirmed that the file on the VM's disk matches what the user pastes (single `\n`). The `docker-compose.tee.yml` template is 19 lines ending with `null\n`. Verified via the VM's `/docker-compose` endpoint (2026-03-11).
+- **Critical: exact byte content.** RTMR3 is computed from the raw bytes of the compose file. The compose must end with a single newline (`\n`) after `proxy_data: null` — standard POSIX line ending, **no trailing blank line**. An earlier assumption that SecretVM appends a trailing newline was incorrect; live testing confirmed that the file on the VM's disk matches what the user pastes (single `\n`). **Superseded 2026-08-21:** the template was 19 lines ending `proxy_data: null\n` when this was verified via the VM's `/docker-compose` endpoint (2026-03-11), but commit `b16aa7b6` ("add Traefik TLS sidecar to TEE compose template", #659, 2026-03-11) took it to **63 lines** (`wc -l`; the file ends with a single `\n` and no trailing blank line — two independent reviewers read it as 64 by counting the empty string after the final newline), now ending `keyFile: /certs/secret_vm_private.pem\n`. `proxy_data: null` is line 48, no longer the last line. The single-trailing-newline requirement still holds and the file still satisfies it — only the line count and final line changed.
 - **Portal normalization.** The SecretVM portal strips trailing blank lines — even if you paste extra blank lines at the end, the portal normalizes to a single trailing `\n`. This is safe; our template already matches this behavior.
 - **Advanced settings that affect RTMR3.** Only two portal settings change RTMR3: (1) **Additional Files** — uploading a `.tar` archive adds a third `sha256(dockerFiles)` entry to the RTMR3 chain; must be left empty for our use case. (2) **Platform** — Intel TDX vs AMD SEV uses different rootfs ISOs. All other advanced settings (persistence, upgrades, hide runtime info, zkVerify, app cert) do not affect RTMR3.
 
@@ -293,7 +301,7 @@ cosign tree ghcr.io/morpheusais/morpheus-lumerin-node-tee:v5.14.7-tee-supply-cha
 | PR #648 — Compose canonical format fix | https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/pull/648 |
 | PR #650 — User-facing TEE setup & verification docs | https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/pull/650 |
 | Supply-chain hardening deep-dive doc | `.ai-docs/TEE_CICD_Supply_Chain_Hardening.md` in Morpheus-Lumerin-Node |
-| Provider setup & consumer verification guide | `docs/02.3-proxy-router-tee.md` in Morpheus-Lumerin-Node |
+| Provider setup & consumer verification guide | `docs/providers/full/tee-reference.mdx` in Morpheus-Lumerin-Node (was `docs/02.3-proxy-router-tee.md` before the Mintlify migration) |
 
 ### Attestation manifest example (real output from verified run)
 
@@ -425,7 +433,7 @@ This is a **release cadence** concern, not a clock-based TTL. A version doesn't 
          "ovmf_hash":     "<sha384 of ovmf-...-sev.fd, registry value>",
          "kernel_cmdline": "console=ttyS0 loglevel=7 docker_compose_hash=<...> rootfs_hash=<...>",
          "artifact_registry": {
-           "url": "https://raw.githubusercontent.com/scrtlabs/secretvm-verify/main/artifacts_registry/sev.json",
+           "url": "https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/sev.json",
            "sha256": "<sha256 of the registry file at build time>"
          },
          "per_template": {
@@ -440,7 +448,7 @@ This is a **release cadence** concern, not a clock-based TTL. A version doesn't 
    }
    ```
 
-   The `baked_env.LOG_LEVEL_*` fields are extracted from `proxy-router/Dockerfile.tee` at manifest-generation time. The pipeline hard-fails the build if any of `LOG_LEVEL_APP`/`LOG_LEVEL_TCP`/`LOG_LEVEL_ETH_RPC`/`LOG_LEVEL_STORAGE` is missing or if `LOG_LEVEL_APP=debug` (privacy gate — prevents debug-level prompt/request payload logging in a TEE-published image). Consumers verifying the cosign-signed manifest can compare these against the proxy-router runtime config to confirm the running TEE image is not silently elevating verbosity.
+   The `baked_env.LOG_LEVEL_*` fields are extracted from `proxy-router/Dockerfile.tee` at manifest-generation time. The pipeline hard-fails the build if any of `LOG_LEVEL_APP`/`LOG_LEVEL_TCP`/`LOG_LEVEL_ETH_RPC`/`LOG_LEVEL_STORAGE` is missing or if `LOG_LEVEL_APP=debug` (privacy gate — prevents debug-level prompt/request payload logging in a TEE-published image). This binds the published manifest to the Dockerfile, not to the running container: `BakedEnv` is parsed into a `json.RawMessage` that no code reads (`proxy-router/internal/attestation/golden.go:48`), a provider's own `/config` is behind `CheckAuth` so a consumer cannot read the live values (`proxy-router/internal/system/controller.go:69`), and the measured compose points at an unmeasured `env_file` from which the level can be raised.
 
 **Why RTMR3 only (not RTMR0-3):**
 - RTMR3 measures rootfs + docker-compose.yaml — the only registers **our software** controls
@@ -525,7 +533,7 @@ The job downloads the deployed compose artifact from the build job, then calls `
 # Create env file with the 5 runtime secrets
 cat > secrets.env <<EOF
 WALLET_PRIVATE_KEY=0x...
-ETH_NODE_ADDRESS=wss://base-mainnet.g.alchemy.com/v2/YOUR_KEY
+ETH_NODE_ADDRESS=https://base-mainnet.g.alchemy.com/v2/YOUR_KEY
 MODELS_CONFIG_CONTENT={"models":[...]}
 WEB_PUBLIC_URL=https://your-domain:8082
 COOKIE_CONTENT=admin:yourpassword
@@ -594,9 +602,9 @@ These are changes to the proxy-router Go code and UI. They consume the CI/CD art
 
 ### ~~7.2 Add `/attestation/quote` proxy endpoint~~ — DROPPED
 
-**Reason:** Not required. The SecretVM host already exposes the attestation quote at `https://{vm-domain}:29343/cpu.html` (raw TDX quote hex). The consumer can fetch it directly from the provider's VM domain — no need for the proxy-router to re-serve it. The VM domain is discoverable from the provider's public URL.
+**Reason:** Not required. The SecretVM host already exposes the attestation quote at `https://{vm-domain}:29343/cpu` (raw TDX quote hex). The consumer can fetch it directly from the provider's VM domain — no need for the proxy-router to re-serve it. The VM domain is discoverable from the provider's public URL.
 
-Example: `https://<your-vm-name>.vm.scrtlabs.com:29343/cpu.html`
+Example: `https://<your-vm-name>.vm.scrtlabs.com:29343/cpu`
 
 The `secretvm-cli vm attestation <uuid>` command also returns the same data (used in our CI/CD verification step).
 
@@ -647,13 +655,13 @@ if IsTeeSession && attestationVerifier != nil:
           (cosign Go library, GitHub-Actions OIDC identity pattern,
            type https://morpheusais.github.io/tee-attestation/v1)
        b. Extract expected RTMR3 + baked_env from manifest predicate
-       c. Confirm baked_env.PROXY_STORE_CHAT_CONTEXT == "false",
-          ENVIRONMENT == "production", correct ETH_NODE_CHAIN_ID for network
+       c. (No baked_env comparison happens — BakedEnv is parsed and never read
+          (`proxy-router/internal/attestation/golden.go:48`); RTMR3 and the TLS binding are the checks)
        d. GET https://{vm-domain}:29343/cpu → raw TDX quote hex
        e. POST quote to TEE_PORTAL_URL (SecretAI quote-parse) — confirms genuine TDX
        f. Extract RTMR3 from quote at byte offset 520 (48 bytes), compare to manifest
        g. Extract reportData[0:32], compare to SHA-256 of the connection's
-          peer TLS certificate — anti-MITM
+          peer TLS certificate's SPKI (full-cert digest is legacy) — anti-MITM
        h. Cache snapshot (quote hash, TLS fingerprint, expiry-free)
     3. If pass → InitiateSession / continue
        If fail → skip this provider, try next bid; all fail → hard error
@@ -665,7 +673,7 @@ if IsTeeSession && attestationVerifier != nil:
 2. Re-fetch :29343/cpu, compute SHA-256 of the quote
 3. If quote hash == cached hash AND TLS fingerprint == cached fingerprint → pass
 4. If quote hash changed → trigger full re-attestation
-5. If TLS fingerprint changed → hard fail (MITM signal), refuse to forward
+5. If the TLS fingerprint changed → re-run full verification when the SPKI digest matches; hard fail and refuse to forward only when the SPKI differs (`verifier.go:416-423`)
 ```
 
 **Dependencies (resolved):**
@@ -708,15 +716,15 @@ This is the Phase 2 capability that makes v7 the "full TEE" release. It closes t
 - `backend_verifier.go` — `BackendVerifier.AttestBackend` (full) and `FastVerifyBackend` (per-prompt fast path)
 - `workload_verifier.go` — registry lookup + RTMR3 recalculation for the backend
 - `artifacts_registry.go` — downloads and caches the SecretVM TDX artifact registry CSV on a configurable interval (`ARTIFACT_REGISTRY_URL`, `ARTIFACT_REGISTRY_REFRESH_INTERVAL`)
-- `nras_verifier.go` — NVIDIA NRAS v4 API integration; validates the returned JWT Entity Attestation Token
+- `nras_verifier.go` — NVIDIA NRAS v4 API integration; decodes the returned JWT Entity Attestation Token and checks its `x-nvidia-overall-att-result` and `eat_nonce` claims. It does **not** verify the JWT signature — trust comes from the TLS-authenticated connection to NRAS (`nras_verifier.go:166-168`)
 - `tdx_quote.go` — parses raw TDX quotes to extract MRTD + RTMR0-3 + reportData
 - `rtmr.go` — SHA-384 extend chain implementation used to replay expected RTMR3
 
 **Integration points:**
 - `proxy-router/cmd/main.go` — wires `BackendVerifier` into startup; calls `AttestBackend` once per `tee`-tagged model
 - `proxy-router/internal/proxyapi/proxy_receiver.go` — calls `FastVerifyBackend` in `SessionPrompt` before forwarding any inference for `tee`-tagged model sessions (hot path)
-- `proxy-router/internal/aiengine/ai_engine.go` — returns a `PinnedHTTPClient` for TEE models; the client's `VerifyPeerCertificate` callback refuses any onward TLS cert whose SHA-256 doesn't match the attested fingerprint
-- `proxy-router/internal/proxyapi/controller_http.go` — `GET /v1/models/attestation` returns per-model attestation state (verified / pending / failed + workload-match / last-success timestamp / error detail)
+- `proxy-router/internal/aiengine/ai_engine.go` — **does not** return a `PinnedHTTPClient`: it passes `nil` as the HTTP client (`ai_engine.go:64`), so `openai.go:38-40` constructs a plain `&http.Client{}` on system roots. The `VerifyPeerCertificate` callback exists on `PinnedHTTPClient` but is never reached in production.
+- `proxy-router/internal/proxyapi/controller_http.go` — `GET /v1/models/attestation` marshals the cached snapshots verbatim (`:320-325`): per-model `status` (only `passed` and `failed` are ever assigned — `backend_verifier.go:296`, `:551`; the declared `unknown` at `:41` has no assignment site), TLS binding kind, TEE type, `verifiedAt`, error detail, and `workloadStatus` only when attestation passed
 
 **Backend attestation endpoints (derived from each TEE model's `apiUrl` host + port 21434):**
 - `:21434/cpu` — raw TDX CPU quote hex
@@ -731,32 +739,82 @@ Phase 1 P-Node host attestation remains on `:29343`.
 2. POST quote to TEE_PORTAL_URL (quote-parse) → portal verification
 3. Extract reportData[0:32]   → compare with SHA-256 of live TLS cert
                                    → TLS binding proven
-4. if ArtifactRegistry loaded:
+4. Workload verification — mandatory, there is no skip path:
      GET :21434/docker-compose
+     if the fetch fails → fail (backend_verifier.go:196-199)
      Parse TDX quote: MRTD + RTMR0-3 + reportData
      Lookup (MRTD, RTMR0, RTMR1, RTMR2) in registry CSV → rootfs_data + secretvm_release
      Replay RTMR3 = SHA-384-extend-chain( SHA-256(docker-compose) + rootfs_data )
      if replayed RTMR3 != quote RTMR3 → fail (workload mismatch)
+     if the registry is nil or was never loaded → status artifact_registry_not_available
+                                                → fail (backend_verifier.go:211-213)
+     (the SEV branch is symmetric: a non-TDX quote with no loaded SEV registry
+      returns the same status — workload_verifier.go:96-113)
 5. GET :21434/gpu             → {nonce, arch, evidence_list}
 6. Extract reportData[32:64]  → compare with GPU nonce
                                    → CPU-GPU binding proven
-7. if NRAS configured:
-     POST evidence to NVIDIA NRAS /v2/attest/gpu
-     Validate returned JWT EAT signature + claims
-     (non-fatal on network failure — NRAS outage does not block inference,
-      but CPU-GPU binding is still enforced)
-8. Cache snapshot: {quote_hash, tls_fingerprint, workload_status,
-                    last_verified_ts, compose_sha256}
+7. NRAS — always on; there is no config toggle. NewNRASVerifier(log) is
+   constructed unconditionally (backend_verifier.go:94) and no NRAS setting
+   exists in internal/config/ or cmd/:
+     POST evidence to NVIDIA NRAS /v4/attest/gpu over TLS
+     Decode the returned JWT EAT payload for its claims (parseEATClaims).
+     The JWT *signature* is NOT verified — trust rests on the authenticated TLS
+     connection to nras.attestation.nvidia.com (nras_verifier.go:166-168)
+     require x-nvidia-overall-att-result == true
+     require eat_nonce == the CPU-bound GPU nonce from step 6
+     any NRAS error (a network failure included), a false overall result, or a
+     nonce mismatch → store a failure snapshot and fail
+     (backend_verifier.go:243-261; fatal since b3e0c386 — a warning before it)
+8. Cache snapshot: {quote_hash, gpu_quote_hash, tls_fingerprint + binding kind,
+                    tee_type, workload_status, vm_template, artifacts_version,
+                    last_verified_ts}
+   NOTE: no compose hash is cached. DockerComposeHash is declared on the
+   snapshot struct (backend_verifier.go:61) but has no assignment site
+   anywhere in the tree, so it never reaches a response.
 ```
+
+**Failure semantics — this is about availability, not about proof strength.** Every
+failure branch above calls `storeFailure`, which caches a `StatusFailed` snapshot
+(`backend_verifier.go:544-555`); startup only logs a warning and the node still boots
+(`cmd/main.go:363-365`). On the next prompt `FastVerifyBackend` sees a non-`passed`
+snapshot and re-runs full attestation (`backend_verifier.go:349-352`), which fails again
+while the cause persists, so the request is refused at `proxyapi/proxy_receiver.go:424`
+(prompt path) and `:491` (session path). Net effect: an NRAS outage or 403, or an artifact
+registry that never loaded, takes **all** TEE inference for that model offline until the
+cause clears — and it clears by itself, with no restart. Two things can trigger the
+re-attestation and only one of them always fires: the first prompt after recovery re-runs
+the full flow (`backend_verifier.go:349-352`), but a model reporting `tee_unverified` is
+skipped by consumers at session open (`blockchainapi/service.go:1698`), so a provider with
+no in-flight sessions may get no prompt at all. The model-health sweep is the trigger that
+cannot stall — it calls `ReattestBackend` on every sweep after the first regardless of the
+current snapshot status (`modelhealth/checker.go:369-384`).
+
+The registry failure is asymmetric in a way worth knowing before paging someone.
+`ArtifactRegistry.Start` only *warns* when the initial CDN fetch fails
+(`artifacts_registry.go:63-65`) and `IsLoaded()` is just `!lastFetched.IsZero()`
+(`:243-247`) — so a CDN or DNS failure **at startup** leaves the registry unloaded and
+every TEE model fails. A *later* refresh failure is harmless: `:76` keeps the stale cache.
+
+Failing closed narrows what gets served; it does not widen what attestation establishes.
+The properties proven are unchanged by any of this — in particular the compose is still
+checked only against the backend's own quote, so which models it *ought* to declare
+remains unproven (see the "what is actually proven today" table in
+`docs/providers/full/tee-backend-verification.mdx`, whose three "No" rows still stand).
 
 **Per-prompt fast verify (`FastVerifyBackend`):**
 - No TTL. Runs unconditionally on every inference prompt for a `tee`-tagged model (inside `proxy_receiver.SessionPrompt`, on the hot path).
-- Always re-fetches `:21434/cpu` (~50 ms TLS handshake).
+- Always re-fetches the attestation endpoint's `/cpu` (~50 ms TLS handshake). The port is resolved by probing `21434` then falling back to `29343` (`backend_verifier.go:109-133`).
 - `SHA-256(new_quote) == cached_quote_hash` AND `live_tls_fp == cached_tls_fp` → pass.
 - Quote-hash change → run full `AttestBackend` again (backend restart / redeploy).
-- TLS-fingerprint change → immediate hard fail, prompt refused (MITM signal).
-- No cache → reject ("model not attested").
-- Cached status `failed` → reject ("attestation failed").
+- TLS-fingerprint change → re-attest when the SPKI digest still matches; hard fail and refuse the prompt only when the SPKI differs too (`backend_verifier.go:367-376`).
+- No cache → reject ("no attestation snapshot for model ...") (`backend_verifier.go:345-347`).
+- Cached status not `passed` → **re-run full `AttestBackend`**, not a plain reject
+  (`backend_verifier.go:349-352`). The prompt is refused only if that re-attestation
+  also fails, which is why a transient NRAS or registry outage self-heals without a
+  restart once a prompt arrives — and the model-health sweep re-attests even when no
+  prompt does (see the failure-semantics note above). Matches the "Fast verify logic"
+  step list under "Per-prompt fast verify" in
+  `docs/providers/full/tee-backend-verification.mdx`.
 
 **Measurement-register semantics (recap):**
 
@@ -777,8 +835,8 @@ Phase 1 P-Node host attestation remains on `:29343`.
 
 **What Phase 2 proves end-to-end:**
 - The backend is genuine Intel TDX hardware running a known SecretVM firmware/kernel/initramfs build.
-- The exact set of loaded models (the `MODELS=...` line in `docker-compose.yaml`) is what the operator declared — swapping any model, port, or env var changes RTMR3 and fails verification.
-- The TLS endpoint serving inference terminates inside the attested enclave (no CDN/reverse-proxy MITM can sit between the P-Node and the backend).
+- The `docker-compose.yaml` measured into RTMR3 is the one the backend is actually running: it cannot report one file and run another, and any byte change alters RTMR3. What is **not** anchored is which models that file ought to declare — the expected RTMR3 is recomputed from the compose the backend itself serves (`workload_verifier.go:68-85`), and the per-model golden source is a placeholder returning nil (`NoopGoldenSource`, `proxy-router/cmd/main.go:342`). An operator who swaps a model and redeploys produces a new compose and a matching new quote, and verification passes.
+- The TLS endpoint **probed during attestation** terminates inside the attested enclave. This does **not** currently extend to the inference connection: `aiengine/ai_engine.go:64` passes a nil HTTP client, so `openai.go:38-40` builds a default `http.Client` with no pinning. A TLS-terminating CDN in front of the backend would not be detected on the inference path.
 - The GPU evidence is genuine NVIDIA hardware (per NRAS), and cryptographically bound to the same CPU quote (per `reportData[32:64]`).
 - The backend identity hasn't changed since initial attestation, on a per-prompt basis.
 
@@ -797,8 +855,8 @@ See also: [TEE backend verification](https://nodedocs.mor.org/providers/full/tee
 2. **~~SecretVM release pinning~~** — **RESOLVED.** Pinned in `.github/tee/secretvm.env`. Attestation manifest includes `secretvm_release` and `rootfs_sha256`. Providers must deploy on the matching release for RTMR3 to match.
 
 3. **~~Anti-MITM in practice~~** — **RESOLVED in Phase 2.** The approach is now enforced on both hops:
-   - *Consumer → P-Node (Phase 1):* The consumer extracts the peer TLS cert during the `:29343/cpu` fetch and compares its SHA-256 to `reportData[0:32]` of the quote. Mismatch = session refused.
-   - *P-Node → Backend (Phase 2):* Same check at `AttestBackend`, **plus** the `PinnedHTTPClient` used for all onward inference refuses any TLS certificate whose SHA-256 doesn't match the attested fingerprint (in `VerifyPeerCertificate`). This means a TLS-terminating CDN/reverse-proxy in front of the backend *cannot* be used for `tee`-tagged models — the inference connection will refuse to establish. Operators are documented to expose SecretVM's port 443 (Traefik sidecar with SecretVM certs) directly for `tee`-tagged deployments.
+   - *Consumer → P-Node (Phase 1):* The consumer extracts the peer TLS cert during the `:29343/cpu` fetch and compares its SHA-256 to `reportData[0:32]` of the quote. Mismatch = session refused. **This binds the attestation probe connection only.** Prompts never travel over it: the consumer dials the provider's morrpc port over plain TCP with no TLS at all (`proxyapi/proxy_sender.go:571`, `:822`; the provider listens with `net.Listen("tcp", ...)` at `repositories/transport/tcp_server.go:39`), and the request payload is signed but not encrypted (`morrpcmessage/mor_rpc.go:471-497`, whose `providerPubKey` argument is unused; the receiver consumes `[]byte(req.Message)` at `proxyapi/controller_morrpc.go:194`). Only the provider's *response* is ECIES-encrypted to the consumer's public key (`proxyapi/proxy_receiver.go:335`, error path `:255`). So an on-path observer between consumer and P-Node cannot forge a request undetected or read a completion, but can read the prompt.
+   - *P-Node → Backend (Phase 2):* Same check at `AttestBackend`. **The onward-inference pinning is NOT currently in effect** — `PinnedHTTPClient` has no production caller, so a TLS-terminating CDN/reverse-proxy in front of the backend would **not** be detected on the inference connection itself; only the separate `/cpu` probe connection is checked. Exposing SecretVM's port 443 (Traefik sidecar with SecretVM certs) directly for `tee`-tagged deployments is therefore a deployment convention, not an enforced control.
 
 4. **~~Cosign verification in Go~~** — **RESOLVED.** `github.com/sigstore/cosign/v2/pkg/cosign` is compiled into the proxy-router binary (Go 1.25.x). Binary-size impact accepted. Used both for consumer-side Phase 1 attestation manifest verification and for any in-process cosign verification needs.
 
@@ -834,7 +892,7 @@ See also: [TEE backend verification](https://nodedocs.mor.org/providers/full/tee
 | 1.13b | Add compose SHA-256 + RTMR3 debug output to CI/CD step summary | S | **DONE** | Aids future troubleshooting of measurement mismatches |
 | 1.13c | Variablize rootfs config — no hardcoded filenames in pipeline | S | **DONE** | `SECRETVM_ROOTFS_VARIANT` flows to cache key, download, RTMR3 compute, attestation manifest |
 | 1.13d | Switch rootfs from `dev` to `prod` variant (v0.0.25) | S | **DONE** | SecretVM runs "environment prod"; `dev` rootfs produces wrong RTMR3 |
-| 1.13e | Document upgrade procedure for SecretVM releases | S | **DONE** | `docs/02.3-proxy-router-tee.md` § "Upgrading SecretVM Artifacts" |
+| 1.13e | Document upgrade procedure for SecretVM releases | S | **DONE** | `docs/providers/full/tee-reference.mdx` § "Upgrading SecretVM Artifacts" |
 | 1.13f | Pin SecretVM release `v0.0.27` (TDX + SEV rootfs) | S | **DONE** | GitHub stable prod release; SHA-256s pinned in `secretvm.env` |
 | 1.13g | SEV-SNP measurement in CI: `compute-sev-measurement.py` + per-template publish | M | **DONE** | This PR; parity-tested against Go `sev_gctx.go`. See §6.3 |
 | 1.13h | Bake `LOG_LEVEL_*` into `Dockerfile.tee` and surface them in `baked_env` | S | **DONE** | This PR; pipeline hard-fails if `LOG_LEVEL_APP=debug` |
@@ -868,8 +926,8 @@ See also: [TEE backend verification](https://nodedocs.mor.org/providers/full/tee
 | 2a.2 | `FastVerifyBackend` per-prompt hot-path check | M | **DONE** | Hooked from `proxy_receiver.SessionPrompt`; PR #699 |
 | 2a.3 | `WorkloadVerifier` — MRTD + RTMR0-2 registry lookup, RTMR3 replay | M | **DONE** | `attestation/workload_verifier.go`, `rtmr.go`, `tdx_quote.go` |
 | 2a.4 | `ArtifactRegistry` — download + cache SecretVM TDX artifact CSV | S | **DONE** | `attestation/artifacts_registry.go`; configurable interval |
-| 2a.5 | `NrasVerifier` — NVIDIA NRAS v4 evidence submission + JWT EAT validation | M | **DONE** | `attestation/nras_verifier.go` |
-| 2a.6 | `PinnedHTTPClient` — refuse onward TLS certs whose fingerprint doesn't match attested value | S | **DONE** | `aiengine/` — custom `VerifyPeerCertificate` |
+| 2a.5 | `NrasVerifier` — NVIDIA NRAS v4 evidence submission + JWT EAT **claim** checks (not signature verification) | M | **DONE** | `attestation/nras_verifier.go` |
+| 2a.6 | `PinnedHTTPClient` — refuse onward TLS certs whose fingerprint doesn't match attested value | S | **NOT WIRED** | Defined at `attestation/backend_verifier.go:418`, tests only; `aiengine` passes `nil` and gets a default client |
 | 2a.7 | Health endpoint `GET /v1/models/attestation` | S | **DONE** | `proxyapi/controller_http.go` |
 | 2a.8 | New env config: `TEE_PORTAL_URL`, `TEE_IMAGE_REPO`, `ARTIFACT_REGISTRY_URL`, `ARTIFACT_REGISTRY_REFRESH_INTERVAL` | S | **DONE** | `config/config.go` (§7.7) |
 | 2a.9 | Consolidate `tee` on-chain tag as sole TEE switch (remove `isTee` field from models config schema) | S | **DONE** | PR #708 / #709 |
@@ -909,7 +967,7 @@ See also: [TEE backend verification](https://nodedocs.mor.org/providers/full/tee
 |---|---|
 | **Delivered artifacts** | |
 | Supply-chain hardening doc (in LMN) | `Morpheus-Lumerin-Node/.ai-docs/TEE_CICD_Supply_Chain_Hardening.md` |
-| Provider/consumer TEE guide (in LMN) | `Morpheus-Lumerin-Node/docs/02.3-proxy-router-tee.md` |
+| Provider/consumer TEE guide (in LMN) | `Morpheus-Lumerin-Node/docs/providers/full/tee-reference.mdx` |
 | SecretVM provider quick-start (in LMN) | `Morpheus-Lumerin-Node/docs/02.4-proxy-router-secretvm-quickstart.md` |
 | **Phase 2 developer reference (in LMN)** | `Morpheus-Lumerin-Node/docs/providers/full/tee-backend-verification.mdx` (published at https://nodedocs.mor.org/providers/full/tee-backend-verification) |
 | PR #644 — TEE image + BASE migration | https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/pull/644 |
@@ -957,9 +1015,9 @@ See also: [TEE backend verification](https://nodedocs.mor.org/providers/full/tee
 | **Phase 2 workload verifier (TDX RTMR3 replay)** | `proxy-router/internal/attestation/workload_verifier.go`, `rtmr.go`, `tdx_quote.go` |
 | **Phase 2 SEV launch-digest replay (PR #718)** | `proxy-router/internal/attestation/sev_gctx.go`, `sev_workload.go`, `sev_registry.go` |
 | **Phase 2 TDX artifact registry** | `proxy-router/internal/attestation/artifacts_registry.go` |
-| **Phase 2 SEV artifact registry** | `proxy-router/internal/attestation/sev_registry.go` (default URL `https://raw.githubusercontent.com/scrtlabs/secretvm-verify/main/artifacts_registry/sev.json`) |
+| **Phase 2 SEV artifact registry** | `proxy-router/internal/attestation/sev_registry.go` (default URL `https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/sev.json`) |
 | **Phase 2 NVIDIA NRAS client** | `proxy-router/internal/attestation/nras_verifier.go` |
-| **Phase 2 pinned TLS client** | `proxy-router/internal/aiengine/ai_engine.go` (returns `PinnedHTTPClient` for TEE models) |
+| **Phase 2 pinned TLS client** | `proxy-router/internal/attestation/backend_verifier.go:418` (`PinnedHTTPClient`) — **defined but NOT WIRED**: `ai_engine.go:64` passes `nil` as the httpClient argument, so onward inference uses a plain client. See §7.7 and row 2a.6. |
 | **Phase 2 health endpoint** | `proxy-router/internal/proxyapi/controller_http.go` (`GET /v1/models/attestation`) |
 | **Phase 1 cosign manifest parser (TDX + SEV per-template)** | `proxy-router/internal/attestation/golden.go` — `TEEMeasurements`, `SEVMeasurements`, `GoldenValues.MatchSEVMeasurement` |
 | **Pipeline SEV measurement compute** | `proxy-router/scripts/compute-sev-measurement.py` (parity-tested in `internal/attestation/sev_python_parity_test.go`) |

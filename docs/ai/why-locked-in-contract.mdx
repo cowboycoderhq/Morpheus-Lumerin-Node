@@ -12,24 +12,24 @@ If you see your MOR sitting in the Inference Contract instead of your wallet, yo
 
 You opened a session. The **entire stake** sits in the Inference Contract while `closedAt == 0`.
 
-- Resolution: wait for natural expiration (your consumer node submits `closeSession` ~1 minute after `endsAt`), or close early via `POST /blockchain/sessions/<id>/close`. After close, unused stake returns immediately; the used stipend may day-lock (Cause 2). See [Session states](/ai/session-states-open-close-recover).
+- Resolution: wait for natural expiration (your consumer node submits `closeSession` ~1 minute after `endsAt`), or close early via `POST /blockchain/sessions/<id>/close`. After close, the final UTC day's **consumed** slice day-locks (Cause 2) and the **unconsumed** remainder returns immediately — roughly 90% of the stake if you close at 10% of the scheduled duration, and approximately nothing only if the session ran to `endsAt` inside one UTC day. See [Session states](/ai/session-states-open-close-recover).
 
 ## Cause 2: Used-stipend day-lock (`userStakesOnHold`)
 
-You closed a session (early **or** same-day natural/late close). The contract pushed the **used stipend** to `userStakesOnHold[you]` with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day` (≈ "after the end of the UTC day the session ended on"). Unused stake was already `safeTransfer`'d to your wallet inside the close transaction.
+You closed a session (early **or** same-day natural/late close). The contract locks the stake-equivalent of the final UTC day's consumption (or the entire remaining stake if less) in `userStakesOnHold[you]` with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day` (≈ "after the end of the UTC day the session ended on"). Only the remainder is transferred immediately — that is the part you did not consume. The lock scales with consumed seconds, so it equals the entire remaining stake, returning nothing at close, only when the session was fully consumed inside one UTC day; an early close returns most of the stake in the close transaction.
 
-- Resolution: after `releaseAt`, call `withdrawUserStakes(yourAddress, iterations)` on the Diamond contract. **No HTTP route on the proxy-router** — use `cast send` or MetaMask "Interact with contract" directly. See [Where is my MOR? → Bucket 2](/ai/where-is-my-mor#bucket-2-on-hold-queue-used-stipend-day-lock).
+- Resolution: after `releaseAt` the proxy-router sweeps it automatically every 10 minutes (`stake_claimer.go`). You may also call `withdrawUserStakes(yourAddress, iterations)` on the Diamond contract. **No HTTP route on the proxy-router** — use `cast send` or MetaMask "Interact with contract" directly. See [Where is my MOR? → Bucket 2](/ai/where-is-my-mor#bucket-2-on-hold-queue-used-stipend-day-lock).
 
-## Cause 3: Stuck close — funding account or gas
+## Cause 3: Stuck close — pool-mode funding account or gas
 
-`closeSession` is one transaction that pays the provider from the protocol's separate **`fundingAccount`**, not from your stake. If that funding account is empty or its allowance to the Inference Contract is too low, **every close fails** — yours included. Sessions then sit "active" past `endsAt`.
+`closeSession` is one transaction that pays the provider from your escrowed stake for direct-pay sessions, or from the protocol's separate **`fundingAccount`** for pool-mode sessions. If that funding account is empty or its allowance to the Inference Contract is too low, **closeSession for non-direct-pay sessions fails** — yours included. Direct-pay sessions pay providers directly from the contract's token balance via `safeTransfer` and do not use the funding account. Sessions then sit "active" past `endsAt`.
 
 - Resolution (operator): top up / re-approve the funding account.
 - Resolution (you): make sure your consumer node is online and has Base ETH for gas. If the close still fails, check its logs.
 
 ## Cause 4: Provider stake (active provider)
 
-If you registered as a provider, your provider stake (`0.2` MOR for normal, `10000` MOR for subnet) is held in the contract for as long as the provider record is active.
+If you registered as a provider, your provider stake (`0.2` MOR on Base mainnet — live on-chain, `0.2` on Sepolia; no subnet tier) is held in the contract for as long as the provider record is active.
 
 - Resolution: deregister your provider to recover the stake. Mind the cooldown rules and any open obligations (running sessions, posted bids).
 
@@ -56,9 +56,9 @@ Each registered model carries a `0.1` MOR refundable stake.
 ```mermaid
 flowchart TD
   Start[MOR appears 'locked'] --> Q1{Active session?}
-  Q1 -->|Yes| A1[Wait for endsAt or close manually — unused returns on close; used may day-lock]
+  Q1 -->|Yes| A1[Wait for endsAt or close manually — consumed final-day slice day-locks; unconsumed remainder returns now, near 0 only if fully consumed]
   Q1 -->|No| Q2{Closed in last ~24-48h?}
-  Q2 -->|Yes| A2[Used stipend likely in userStakesOnHold; call withdrawUserStakes after releaseAt]
+  Q2 -->|Yes| A2[Consumed slice likely in userStakesOnHold; StakeClaimer auto-sweeps after releaseAt, manual withdrawUserStakes optional]
   Q2 -->|No| Q3{Session past endsAt but still active?}
   Q3 -->|Yes| A3[Stuck close — funding account or your node's gas]
   Q3 -->|No| Q4{Active provider/model stake?}

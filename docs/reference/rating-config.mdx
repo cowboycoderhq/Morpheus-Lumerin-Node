@@ -7,9 +7,15 @@ last_verified: "v7.0.0"
 source: "docs/rating-config.json.md"
 ---
 
-`rating-config.json` configures the **rating system** the consumer proxy-router uses when picking which provider to route a session to. It lives in the project root by default; override path via `RATING_CONFIG_PATH`, or supply the JSON inline via the `RATING_CONFIG_CONTENT` environment variable (useful for containers where mounting a file is inconvenient — same pattern as `MODELS_CONFIG_CONTENT`).
+`rating-config.json` configures the **rating system** the consumer proxy-router uses when picking which provider to route a session to. It lives in the project root by default; override path via `RATING_CONFIG_PATH`, or supply the JSON inline via the `RATING_CONFIG_CONTENT` environment variable (used as a fallback when the file at `RATING_CONFIG_PATH` cannot be read; it does **not** create or modify the file).
 
-Load order: the file at `RATING_CONFIG_PATH` (or `./rating-config.json`) wins if it exists; otherwise `RATING_CONFIG_CONTENT` is used; otherwise built-in defaults (empty allowlist, `default` algorithm).
+Load order: the file at `RATING_CONFIG_PATH` (or `./rating-config.json`) wins if it **reads and parses as JSON** — existing is not enough, see the next paragraph; otherwise `RATING_CONFIG_CONTENT` is used; otherwise built-in defaults (empty allowlist, no denylist, `default` algorithm). A **missing** rating config is therefore not an error at all — it is replaced by the defaults (`proxy-router/internal/config/rating_config.go:36-47`). Not *silently*, though, and the difference matters when you are trying to find out what happened: the fallback-to-defaults branch logs `failed to load rating config file, using defaults` at **warn** (`proxy-router/internal/config/rating_config.go:42`), which is visible at the compiled `LOG_LEVEL_APP` default of `debug`. The failure is discoverable — grep the startup log for that line rather than assuming a node that came up read your file.
+
+A **malformed** one is *not* the opposite. `lib.ReadJSONFile` validates the bytes as JSON before it returns them, so a file with a stray comma fails to *read* (`invalid JSON: …`, `proxy-router/internal/lib/json.go:46-50`) and lands in exactly the same fallback branch as a file that does not exist (`proxy-router/internal/config/rating_config.go:37-44`). **The router starts.** It starts on `RATING_CONFIG_CONTENT` if that is set, and otherwise on `RatingConfigDefault`, which carries an empty `providerAllowlist` and **no denylist at all** (`proxy-router/internal/config/rating_config.go:10-25`) — that is, allow-all.
+
+This is the expensive direction of the mistake. If you used `providerDenylist` to stop paying particular providers, a typo does not stop the node and does not surface as an error; it deletes your filter and routes to the excluded providers at full price, with a healthy-looking process. Two log lines settle it, and neither is the exit code: `failed to load rating config file, using defaults` (warn) says the file was not used, and the loader then prints exactly one of `provider filtering is enabled, allowList:`/`denyList:` (warn) or `provider filtering is disabled` (info) — the second means your lists did not survive (`proxy-router/internal/rating/rating_factory.go:69-86`).
+
+Three things in this area do genuinely exit non-zero, all of them *after* the load order has already settled on some text, which is then parsed by `rating.NewRatingFromConfig`: a `RATING_CONFIG_CONTENT` that is itself malformed and got used because the file was unreadable; a config whose `algorithm` is present but unrecognised; and a config with **no** `algorithm` key. In each case `proxy-router/cmd/main.go:277-280` returns the error and the process exits non-zero. Note what this is *not* symmetric with: for `models-config.json` and `agents-config.json` an unreadable or malformed file is logged at warn and the router runs with an empty set — see [Env: proxy-router](/reference/env-proxy-router). Do not generalise from one to the other; the deciding line is the call site in `proxy-router/cmd/main.go`, not the loader.
 
 ## Fields
 
@@ -57,9 +63,21 @@ To only allow the local default model:
 
 ```json
 {
-  "providerAllowlist": ["0x0000000000000000000000000000000000000000"]
+  "algorithm": "default",
+  "providerAllowlist": ["0x0000000000000000000000000000000000000000"],
+  "params": {
+    "weights": {
+      "tps": 0.24,
+      "ttft": 0.08,
+      "duration": 0.24,
+      "success": 0.32,
+      "stake": 0.12
+    }
+  }
 }
 ```
+
+Both of the keys around the allowlist are load-bearing, not decoration, and an allowlist-only object is the one config on this page guaranteed **not** to start. `algorithm` has no default: an absent key reaches `factory("")`, which matches no `case`, so the scorer comes back nil and the router exits with `unknown rating algorithm:` — nothing after the colon, which points nowhere near the missing key (`proxy-router/internal/rating/rating_factory.go:100-117`). Adding `"algorithm": "default"` alone is still not enough: the default scorer unmarshals `params` and rejects weights that do not sum to `1`, so an absent `params` fails with `invalid algorithm params: algorithm default, error: unexpected end of JSON input` and a bare `"params": {}` fails with `weights must sum to 1` (`proxy-router/internal/rating/scorer_default_config.go:24-33`). Start from the complete object in [Default algorithm weights](#default-algorithm-weights) and edit the lists; do not write one from the allowlist outward.
 
 To prefer a curated set, list their on-chain addresses (lower-case `0x...`). An empty array allows all.
 

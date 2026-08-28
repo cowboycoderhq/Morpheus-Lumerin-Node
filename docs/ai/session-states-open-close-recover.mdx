@@ -1,6 +1,6 @@
 ---
 title: "Session states (open, close, claim)"
-description: "Deterministic, agent-citable reference for the Morpheus session state machine. Close returns unused stake immediately; the used stipend day-locks until the next UTC day and is claimed via withdrawUserStakes."
+description: "Deterministic, agent-citable reference for the Morpheus session state machine. If close before releaseAt, the stake-equivalent of the final UTC day's consumption locks in userStakesOnHold; only the remainder (if any) returns immediately. If close after releaseAt, no lock occurs. Any locked amount is automatically swept by the proxy-router's StakeClaimer after the next UTC day; manual calling of withdrawUserStakes is not required."
 audience: ["developer", "consumer", "provider-full", "provider-resale"]
 product: ["proxy-router"]
 last_verified: "v7.9.0"
@@ -17,9 +17,9 @@ stateDiagram-v2
   Open --> Closed: closeSession (early or closedAt >= endsAt)
   Open --> StuckPastEndsAt: endsAt passed but no closeSession yet
   StuckPastEndsAt --> Closed: closeSession finally succeeds
-  Closed --> [*]: unused stake safeTransferred in the same txn
-  Closed --> OnHold: used stipend → userStakesOnHold if close before releaseAt
-  OnHold --> [*]: withdrawUserStakes after releaseAt
+  Closed --> [*]: remainder (if any) safeTransferred; if close before releaseAt, the day-locked slice is held in userStakesOnHold
+  Closed --> OnHold: day-locked slice of used stipend (final UTC day) → userStakesOnHold if close before releaseAt
+OnHold --> [*]: StakeClaimer auto-sweep after releaseAt
 ```
 
 ## Transitions and side effects
@@ -28,31 +28,31 @@ stateDiagram-v2
 |------|----|---------|-----------------|----------------|
 | `[*]` | `Opening` | Consumer calls `openSession` | Tx submitted | Pending |
 | `Opening` | `Open` | Tx mined | `transferFrom(you, InferenceContract, stake)` | Wallet `−stake` |
-| `Open` | `Closed` | `closeSession` mined | `_rewardUserAfterClose` returns unused stake; may park used stipend; `_rewardProviderAfterClose` pays provider from `fundingAccount` | Wallet `+unused` |
-| `Closed` | `OnHold` | (within close txn) close before `releaseAt` | `releaseAt = startOfDay(min(closedAt, endsAt)) + 1 day` | None until claim |
-| `OnHold` | `[*]` | `withdrawUserStakes(you, iterations)` after `releaseAt` | Releasable rows `safeTransfer`'d to your wallet | Wallet `+held part` |
+| `Open` | `Closed` | `closeSession` mined | `_rewardUserAfterClose` if close before `releaseAt`, locks the stake-equivalent of the final UTC day's consumption in `userStakesOnHold`; returns remainder (if any); if close after `releaseAt`, no lock. `_rewardProviderAfterClose` pays provider from `fundingAccount` for non-direct-pay sessions, or from contract's token balance via `safeTransfer` for direct-pay sessions | Wallet `+remainder` (the unconsumed part; near 0 only if fully consumed) |
+| `Closed` | `OnHold` | (within close txn) close before `releaseAt` | `releaseAt_ = startOfTheDay(min(closedAt, endsAt)) + 1 days` | None until claim |
+| `OnHold` | `[*]` | StakeClaimer auto-sweep after `releaseAt` | Releasable rows `safeTransfer`'d to your wallet | Wallet `+held part` |
 | `Open` | `StuckPastEndsAt` | Time passes without successful `closeSession` | None — session record unchanged | None |
-| `StuckPastEndsAt` | `Closed` | `closeSession` finally mined | Same as `Open → Closed` | Wallet `+unused` (+ hold if still before `releaseAt`) |
+| `StuckPastEndsAt` | `Closed` | `closeSession` finally mined | Same as `Open → Closed` | Wallet `+remainder` (the unconsumed part, near 0 only if fully consumed; + hold if still before `releaseAt`) |
 
 ## Definitions
 
 - **`sessionEnd`** — `min(closedAt, endsAt)`. Anchor for the day-lock (when the session stopped consuming compute).
 - **`releaseAt`** — `startOfTheDay(sessionEnd) + 1 day` (UTC). In practice ≈ "after the end of the UTC day the session ended on."
-- **Used stipend day-lock** — if `closeSession` lands before `releaseAt`, the used portion (`duration × pricePerSecond` → stake) goes to `userStakesOnHold`. Applies to **early close and same-day natural/late close**.
-- **Unused stake** — returns inside the same `closeSession` transaction.
-- **`userStakesOnHold`** — array on the Inference Contract. `getUserStakesOnHold(addr, iter)` returns `(hold_, available_)`.
-- **`fundingAccount`** — separate protocol wallet. Pays providers via `transferFrom` inside `closeSession`. If empty or under-approved, **every** `closeSession` fails.
+- **Used stipend day-lock** — if `closeSession` lands before `releaseAt`, the stake-equivalent of the final UTC day's consumed seconds is parked in `userStakesOnHold`. Applies to **early close and same-day natural/late close**.
+- **Returned remainder** — `remaining stake − day-locked slice`, transferred inside the same `closeSession` transaction. It is the **unconsumed** portion: the lock scales with the seconds consumed, so a close at 10% of the scheduled duration returns roughly **90%** of the stake, and the remainder is **zero** only when the session was fully consumed — e.g. run to `endsAt` — inside one UTC day.
+- **`userStakesOnHold`** — array on the Inference Contract. `getUserStakesOnHold(addr, iter)` returns `(available_, hold_)` where `available_` is matured stakes ready for withdrawal, `hold_` is still locked.
+- **`fundingAccount`** — separate protocol wallet. Pays providers via `transferFrom` inside `closeSession` for non-direct-pay sessions. If empty or under-approved, those closeSessions fail. In direct-pay sessions, the provider is paid directly from the contract's token balance via `safeTransfer`; the funding account is not used.
 - **Stuck session** — `closedAt == 0` past `endsAt`. The close transaction has not succeeded yet.
 
 ## Common LLM mistakes (prevent these)
 
 - ❌ "Open a session, then call `recover` to get MOR back." → No `recover` function exists. The two distinct calls are `closeSession` and `withdrawUserStakes`.
 - ❌ "MOR returns automatically on session expiry." → **Only after a successful `closeSession` transaction.** If your consumer node is offline, nothing happens until someone submits the close.
-- ❌ "Natural expiration returns the full stake with no hold." → **Wrong after the day-lock fix.** Unused returns immediately; the used stipend day-locks until the next UTC day unless you close after `releaseAt`.
+- ❌ "Natural expiration returns the full stake with no hold." → **Wrong after the day-lock fix.** The final UTC day's consumed slice day-locks until the next UTC day unless you close after `releaseAt`; for a session that ran inside one UTC day that is typically the **entire** stake, so nothing returns at close.
 - ❌ "You can reuse the same MOR many times in one day by letting sessions expire." → **No.** Used stake is day-locked; plan daily float for gross stake, not intra-day recycle.
-- ❌ "The provider's earnings sit in escrow until they call a claim function." → Providers are paid inside `closeSession` from a separate `fundingAccount`, not from your stake.
+- ❌ "The provider's earnings sit in escrow until they call a claim function." → **Wrong as a blanket claim — name the payment mode.** In pool mode the provider is paid inside `closeSession` from the separate `fundingAccount` via `transferFrom`; in **direct-pay** (`directPayment: true`) the provider is paid inside `closeSession` from the contract's escrowed balance — that is, *from your stake* — via `safeTransfer` (`SessionRouter.sol:394-401`). Both skip any claim step. But on an **early close with a dispute**, `_rewardProviderAfterClose` withholds `providerOnHoldAmount` (`SessionRouter.sol:283-288`) and the provider does have to call `claimForProvider(sessionId)` (`SessionRouter.sol:358`) to release it.
 - ❌ "Closing MorpheusUI closes my sessions." → No. Close explicitly via API or wait for `endsAt` + consumer node auto-close.
-- ❌ "I closed, I should see all my MOR back instantly." → Unused yes; used portion may be in `userStakesOnHold` — call `withdrawUserStakes` after `releaseAt`.
+- ❌ "I closed, I should see all my MOR back instantly." → **Only the remainder returns at close** — `remaining stake − the final UTC day's day-locked slice` — which is the part you did not consume: roughly **90%** of the stake for a close at 10% of the scheduled duration, and **zero** only for a fully consumed session such as one run to `endsAt` inside one UTC day. The split is **not** "unused vs used" because the lock is windowed to the **final UTC day**: `userDuration_` starts at `max(openedAt, startOfTheDay(sessionEnd))` (`SessionRouter.sol:306`), so on a multi-day session the earlier days' *consumed* stake comes back at close too. The rest arrives after `releaseAt`, swept automatically by the proxy-router.
 
 ## Concrete API calls (consumer side, via proxy-router)
 
@@ -63,7 +63,7 @@ stateDiagram-v2
 | List session IDs only | `GET /blockchain/sessions/user/ids?user=0x…` |
 | Fetch one session | `GET /blockchain/sessions/0x…` |
 | Close | `POST /blockchain/sessions/:id/close` body: `{}` |
-| **Claim day-locked on-hold balance** | **No HTTP route.** Send `withdrawUserStakes(addr, iterations)` to the Diamond contract via `cast send` or wallet UI. |
+| **Claim day-locked on-hold balance** | The proxy-router automatically claims matured on-hold stakes via its internal StakeClaimer (see `proxy-router/internal/blockchainapi/stake_claimer.go`). While there is no dedicated HTTP endpoint, manual claiming via `cast send` or wallet UI is an alternative for direct contract interaction. |
 
 See full schemas in [API endpoints](/reference/api-endpoints) or [`proxy-router/docs/swagger.yaml`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/docs/swagger.yaml).
 
@@ -86,6 +86,6 @@ cast send 0x6aBE1d282f72B474E54527D93b979A4f64d3030a \
 
 ## On-chain minimums
 
-- Consumer session-open stake floor: **5 MOR**.
-- Provider stake (refundable): **0.2 MOR** (or **10000 MOR** for subnet).
-- Bid price floor: **`10000000000` wei/sec** (`0.00000001` MOR/sec).
+- Consumer session-open stake floor: **none**. There is no MOR-denominated minimum; the only floor is `MIN_SESSION_DURATION`, **5 minutes** (`smart-contracts/contracts/diamond/storages/SessionStorage.sol:34`).
+- Provider stake: **0.2 MOR** on Base mainnet (live on-chain via `getProviderMinimumStake()`; `config_base_mainnet.json` now sets `0.2` to match, as of `cef943ef`); Base Sepolia deploys `0.2`. **No subnet tier exists.** Refundable on deregistration, but capped at `stake − limitPeriodEarned` while the 365-day period is open (`ProviderRegistry.sol:99-105`).
+- Bid price floor: **`10000000000` wei/sec** on Base mainnet (`0.00000001` MOR/sec); on Base Sepolia read `getMinMaxBidPricePerSecond()` for the live floor — `121052630917` wei/sec as of 2026-08-27. Owner-settable via `setMinMaxBidPricePerSecond`.

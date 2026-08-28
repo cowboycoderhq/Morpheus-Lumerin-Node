@@ -18,10 +18,10 @@ For the shortest path to deploying on SecretVM, jump to [SecretVM quickstart](/p
 
 The `-tee` Docker image (`ghcr.io/morpheusais/morpheus-lumerin-node-tee`) is a hardened version of the standard proxy-router image with all non-secret configuration **baked in at build time**:
 
-- Blockchain config (contract addresses, chain ID, blockscout URL) is frozen and cannot be changed at runtime.
+- Blockchain config (contract addresses, chain ID, blockscout URL) is pinned to the target network (`proxy-router/Dockerfile.tee:13-16`, surfaced in the signed manifest's `baked_env`).
 - Chat context storage is disabled (`PROXY_STORE_CHAT_CONTEXT=false`).
-- Logging is set to production mode (JSON, no color, minimal verbosity).
-- Environment is locked to `production`.
+- Logging is set to production mode: `LOG_JSON=true`, `LOG_COLOR=false`, `LOG_IS_PROD=true`, with the levels pinned at `LOG_LEVEL_APP=info` and `LOG_LEVEL_TCP`/`LOG_LEVEL_ETH_RPC`/`LOG_LEVEL_STORAGE=warn` (`proxy-router/Dockerfile.tee:30-36`, surfaced in the signed manifest's `baked_env`). That is quieter than the compiled `debug` app default, not the quietest level — the publish job refuses to ship a manifest if `LOG_LEVEL_APP=debug` is baked in (`.github/workflows/build.yml:820-821`).
+- Environment is pinned to `production` (`proxy-router/Dockerfile.tee:19`, surfaced in the signed manifest's `baked_env`).
 
 Two network variants are produced by CI/CD:
 
@@ -32,17 +32,17 @@ Two network variants are produced by CI/CD:
 
 Both share identical hardened settings; only the baked-in network's contracts and chain ID differ. The attestation manifest's `baked_env.network` field identifies which variant an image is.
 
-Only **5 variables** are configurable at runtime — the per-provider secrets:
+The deployment injects 5 per-provider secrets, and the signed manifest names exactly these in `runtime_secrets_only` (`.github/workflows/build.yml:944-950`). That field is a **declaration, not an enforced boundary** — see **What the attestation actually pins** below:
 
 | Variable | Description |
 |---|---|
 | `WALLET_PRIVATE_KEY` | Provider's wallet private key |
 | `ETH_NODE_ADDRESS` | RPC endpoint for BASE Mainnet (e.g., Alchemy, Infura) |
 | `MODELS_CONFIG_CONTENT` | JSON model configuration (model IDs, backend URLs, slots) |
-| `WEB_PUBLIC_URL` | Public-facing URL for the API (default: `http://localhost:8082`) |
+| `WEB_PUBLIC_URL` | Public-facing URL for the API (default: `https://localhost`) |
 | `COOKIE_CONTENT` | API auth credentials (default: `admin:admin`) |
 
-Because configuration is frozen in the image, when run inside a TEE (Intel TDX or AMD SEV-SNP) the hardware can measure and attest that the software has not been modified.
+**What the attestation actually pins.** RTMR3 is the replay of two inputs — the compose bytes and the rootfs digest — and nothing else (`proxy-router/internal/attestation/rtmr.go:12`), over a compose that names the image by immutable digest. So editing the compose, including adding an `environment:` entry, changes the measurement and the consumer's replay fails. It does **not** pin the running container's environment. The compose declares `env_file: - usr/.env` (`proxy-router/docker-compose.tee.yml:15-16`), the file SecretVM fills from your encrypted-secrets input; the reference is inside the measured bytes, the file's contents are not, and Docker precedence puts `env_file` above the image's `ENV`. Any baked value the compose does not also name in `environment:` — chat-context storage, every `LOG_*`, `ENVIRONMENT`, the blockchain settings — can be set from that file with RTMR3 unchanged. Nothing downstream re-forces it: the loader reads every `env:`-tagged field straight from the process environment with no allowlist (`proxy-router/internal/config/loader.go:54-61`), the entrypoint is a bare `proxy-router` (`proxy-router/Dockerfile.tee:45`), and `baked_env` is parsed into a `json.RawMessage` no code reads (`proxy-router/internal/attestation/golden.go:48`). Read `baked_env` as what the image was **built** with, not as what the container is **running**.
 
 ---
 
@@ -51,7 +51,7 @@ Because configuration is frozen in the image, when run inside a TEE (Intel TDX o
 ### Prerequisites
 
 - Funded wallet (MOR + ETH) on the target network and access to its private key.
-- An RPC endpoint for the target network (e.g. `wss://base-mainnet.g.alchemy.com/v2/<your_key>`).
+- An RPC endpoint for the target network (e.g. `https://base-mainnet.g.alchemy.com/v2/<your_key>`).
 - Your AI model backend reachable on a private endpoint.
 - A `models-config.json` content (see [models-config schema](/reference/models-config)).
 - Access to a Confidential VM provider supporting Intel TDX or AMD SEV-SNP (e.g., [SecretVM](https://secretai.scrtlabs.com/secret-vms/create)).
@@ -139,7 +139,7 @@ The **only line that changes between versions** is the proxy-router image digest
 <Warning>
 **Why digest, not tag?** Tags are mutable. The digest (`@sha256:...`) is an immutable content hash. Using the digest in the compose file guarantees RTMR3 is cryptographically bound to one specific image binary.
 
-**Exact byte content matters.** The compose file must end with exactly one newline after `proxy_data: null`. RTMR3 is computed from the exact byte content — a single extra or missing byte changes the hash. The SecretVM portal normalizes trailing whitespace down to one newline, so pasting as-is is safe.
+**Exact byte content matters.** The compose file must contain the full content as shown in the example, including the `networks:` and `configs:` sections, because RTMR3 is computed from the entire file. RTMR3 is computed from the exact byte content — a single extra or missing byte changes the hash. The compose file includes the `networks:` and `configs:` sections after `proxy_data: null`, so the entire file content is used for RTMR3 computation.
 </Warning>
 
 Published images and digests: [GHCR packages](https://github.com/orgs/MorpheusAIs/packages?repo_name=Morpheus-Lumerin-Node).
@@ -150,9 +150,9 @@ Set 5 values in your TEE platform's encrypted secrets section:
 
 ```
 WALLET_PRIVATE_KEY=<your_private_key>
-ETH_NODE_ADDRESS=wss://base-mainnet.g.alchemy.com/v2/<your_alchemy_key>
+ETH_NODE_ADDRESS=https://base-mainnet.g.alchemy.com/v2/<your_alchemy_key>
 MODELS_CONFIG_CONTENT=<your_models_json_single_line>
-WEB_PUBLIC_URL=https://your-public-domain.com:8082
+WEB_PUBLIC_URL=https://your-public-domain.com
 COOKIE_CONTENT=admin:<your_secure_password>
 ```
 
@@ -195,7 +195,7 @@ After deployment, SecretVM exposes attestation endpoints on `:29343`. Verify you
 
 ## Part 2: Consumer — Verifying a TEE provider image
 
-As a consumer you can independently verify a provider before using it. Verification will eventually be built into the C-Node automatically for `tee`-tagged models, but you can do it manually today.
+As a consumer you can independently verify a provider before using it. Automatic verification is already built into the C-Node (v6.0.0+): the consumer's proxy-router fetches the provider's attestation, verifies it against the golden values published in the TEE image's attestation manifest (using cosign), checks TLS binding, compares RTMR3, and re-checks on every prompt.
 
 ### Install cosign
 
@@ -251,7 +251,7 @@ Key fields:
 | `baked_env.ETH_NODE_CHAIN_ID` | `8453` or `84532` |
 | `baked_env.DIAMOND_CONTRACT_ADDRESS` | Diamond proxy for the target network |
 | `baked_env.MOR_TOKEN_ADDRESS` | MOR token for the target network |
-| `runtime_secrets_only` | The 5 variables that can differ per provider |
+| `runtime_secrets_only` | The 5 per-provider secrets the deployment is expected to inject — a declaration, not an enforced boundary |
 
 ### Step 3: View all supply-chain artifacts
 
@@ -279,11 +279,11 @@ The expected RTMR3 is published in the signed manifest at `measurements.intel_td
 ```bash
 # Check the pinned version and rootfs variant
 cat .github/tee/secretvm.env
-# → SECRETVM_RELEASE=v0.0.25
-# → SECRETVM_ROOTFS_VARIANT=rootfs-prod-tdx
+# → SECRETVM_RELEASE=v0.0.31
+# → SECRETVM_ROOTFS_VARIANT=rootfs-prod
 
 # Download the same rootfs used by CI/CD
-curl -L -o rootfs-prod-tdx.iso \
+curl -L -o rootfs-prod.iso \
   "$(grep SECRETVM_ROOTFS_TDX_URL .github/tee/secretvm.env | cut -d= -f2-)"
 
 # Compute RTMR3 from the deployed compose + rootfs

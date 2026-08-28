@@ -3,12 +3,12 @@ title: "Verify your provider setup"
 description: "Self-check your provider end-to-end after setup: healthcheck, on-chain registration, network discovery, and a real prompt against your bid."
 audience: ["provider-full", "provider-resale"]
 product: ["proxy-router"]
-last_verified: "v7.0.0"
+last_verified: "v7.9.0"
 ---
 
 After [registering](/providers/full/register-onchain) your provider and bid (and a new model only if you had to mint one), you want to know **before any consumer hits you** that everything works. There is no built-in setup wizard yet. This page walks the same five checks the support team uses to verify a provider when someone posts in Discord asking "can you check if my setup is OK?".
 
-If you used [MyProvider](/providers/full/myprovider-gui), confirm **Model Configuration Sync** already wrote the on-chain `modelId` into `models-config.json` / `MODELS_CONFIG_CONTENT` before Step 1.
+If you used [MyProvider](/providers/full/myprovider-gui), confirm the on-chain `modelId` is in `models-config.json` (edit the file directly if needed) before Step 1.
 
 ## Step 1 — Local health
 
@@ -21,10 +21,10 @@ curl http://localhost:8082/healthcheck
 Expected:
 
 ```json
-{ "status": "healthy", "version": "v7.0.0", "uptime": "..." }
+{ "status": "healthy", "version": "<current-version>", "uptime": "..." }
 ```
 
-On provider nodes the response also includes a `models` array — the periodic model health self-report covering your **whole ecosystem of configured models and active bids**. For every model in `models-config.json` that has an active bid from your wallet, the proxy-router sends a small test prompt on a schedule (default hourly, see `MODEL_HEALTH_CHECK_INTERVAL` in [env-proxy-router](/reference/env-proxy-router)) and caches the result. Probes are paced a few seconds apart (`MODEL_HEALTH_CHECK_PROBE_DELAY`, default `2s`) so a provider with many models doesn't burst its own backend into a rate limit. Active bids whose model is *missing* from `models-config.json` are also listed, so a bid you're selling but cannot serve doesn't go unnoticed:
+On provider nodes running **v7.4.0 or later** the response also includes a `models` array — the periodic model health self-report covering your **whole ecosystem of configured models and active bids**. The body shown above is the short shape: a node predating v7.4.0 returns no `models` key at all, and its absence there is not a fault. For every model in `models-config.json` that has an active bid from your wallet, the proxy-router sends a small test prompt on a schedule (default hourly, see `MODEL_HEALTH_CHECK_INTERVAL` in [env-proxy-router](/reference/env-proxy-router)) and caches the result. Probe pacing (`MODEL_HEALTH_CHECK_PROBE_DELAY`, default `2s`, so a provider with many models doesn't burst its own backend into a rate limit) arrived in the release **after** v7.4.0 — on a v7.4.0 node you get the report without it. Active bids whose model is *missing* from `models-config.json` are also listed, so a bid you're selling but cannot serve doesn't go unnoticed. [Model health](/providers/full/model-health) is the full reference for this array:
 
 ```json
 {
@@ -62,19 +62,25 @@ On provider nodes the response also includes a `models` array — the periodic m
 |--------|---------|--------|
 | `healthy` | Probe succeeded (LLM answer graded via `promptCorrect`) | — |
 | `unhealthy` | Probe failed — see `errorKind` and `httpStatus` below | Fix the backend; consumers opening a session hit the same failure |
+| `degraded` | Probe hit a rate limit — backend is throttled | Review rate-limit settings; consumers may get 429 errors |
 | `no_bid` | Configured model has no active bid; not probed | Post a bid if you want to sell it |
 | `no_model_configured` | **Active bid exists but the model is missing from `models-config.json`** | Add the model entry or delete the bid — consumers can open sessions against this bid and get errors |
 | `skipped` | Model type other than LLM/embedding; not probed | — |
+| `tee_unverified` | `tee`-tagged model whose backend TEE attestation failed or never succeeded; **not probed**, and session requests for it are rejected | Fix the backend attestation — consumers cannot open a session against this model while it reports `tee_unverified` |
+
+<Note>
+Version floors inside this report: `modelName` and `httpStatus`, the `rate_limited` error kind, and `MODEL_HEALTH_CHECK_PROBE_DELAY` arrived in **v7.5.0**; the `degraded` status arrived in **v7.9.0** (`proxy-router/internal/system/structs.go`). A v7.4.0 node carries neither `modelName` nor `httpStatus`, and a v7.5.0–v7.8.x node reports a rate-limited backend as `unhealthy` with `errorKind: rate_limited` rather than `degraded`.
+</Note>
 
 The self-report has its own operational reference — schedule, tuning, backend impact, and diagnosis recipes — at [Model health self-report](/providers/full/model-health).
 
-For `unhealthy` models, `errorKind` narrows the failure and, when the backend answered with an HTTP error, `httpStatus` carries the exact upstream status code:
+For `unhealthy` models, `errorKind` narrows the failure (except `rate_limited`, which results in a `degraded` status) and, when the backend answered with an HTTP error, `httpStatus` carries the exact upstream status code:
 
 | errorKind | Meaning | Typical `httpStatus` |
 |-----------|---------|----------------------|
 | `timeout` | Probe hit the per-model timeout | — |
 | `connection` | Could not reach the backend `apiUrl` at all | — |
-| `rate_limited` | Backend is up and configured, but throttled the probe | `429` |
+| `rate_limited` | Backend is up and configured, but throttled the probe (results in `degraded` status) | `429` |
 | `bad_response` | Backend answered with an error or empty completion | `402` (billing), `400`/`404` (bad model config), `5xx` |
 
 Logs should show:
@@ -121,8 +127,9 @@ curl -sS -u 'admin:admin' 'http://localhost:8082/blockchain/models' \
 And your bid:
 
 ```bash
-curl -sS -u 'admin:admin' 'http://localhost:8082/blockchain/bids' \
-  | jq '.bids[] | select(.Provider=="0xYOUR_PROVIDER")'
+curl -sS -u 'admin:admin' \
+  'http://localhost:8082/blockchain/providers/0xYOUR_PROVIDER/bids/active' \
+  | jq '.bids'
 ```
 
 If any of these doesn't return your record, the on-chain transaction either failed or is still pending. Check the explorer with your provider wallet address ([base.blockscout.com](https://base.blockscout.com)).
@@ -157,10 +164,10 @@ The dashboards refresh on a schedule (a few minutes); give it time before conclu
 The hosted [Morpheus Inference API](/inference-api/overview) serves as the easiest end-to-end consumer. If a real prompt against your model name returns text, you've proven the full chain (consumer → API Gateway → discovery → your P-Node → your backend → response).
 
 1. Sign in at [app.mor.org](https://app.mor.org), grab an API key.
-2. In the dashboard's **API Test** page (or any OpenAI-compatible client) pick your model name from the dropdown.
+2. The dashboard's **API Test** page dropdown only contains the bootstrap set; independently registered models will not appear there. Instead, test via a self-hosted proxy-router or direct API calls (see [API direct](/reference/api-direct)).
 3. Send any short prompt.
 
-If it streams back a response — **you're done**. If the model isn't in the dropdown, go back to Step 4. If it's there but errors out, check your proxy-router logs for the incoming request and your backend's logs for the forwarded request.
+If it streams back a response — **you're done**. The dropdown only contains the bootstrap set; independently registered models will not appear there. Providers should test via a self-hosted proxy-router or direct API calls instead.
 
 You can also do this directly from a separate consumer-side proxy-router; see [API direct](/reference/api-direct).
 
@@ -181,4 +188,4 @@ The first thing support does is exactly the above checks; arriving with the answ
 | Provider on chain but missing from `active_bids.json` | Public `:3333` not reachable | Open firewall / security group; verify with `nc -vz` from outside |
 | `:3333` reachable, model still missing from `active_models.json` | The verifier couldn't ping the model's `apiUrl` | Confirm `models-config.json` `apiUrl` is reachable **from inside the proxy-router host** |
 | Healthcheck fails with `connection refused` to BASE | Default round-robin RPC rate-limited / unavailable | Set your own `ETH_NODE_ADDRESS` (Alchemy / Infura) — see [env-proxy-router](/reference/env-proxy-router) |
-| Lost ~MOR during setup | Each `postModelBid` charges a non-refundable `marketplaceBidFee` (`0.3 MOR`); reposting bids during configuration adds up | See [Pricing](/providers/full/pricing) and the "What can cost you MOR during setup" section in [Quickstart](/providers/full/quickstart) |
+| Lost ~MOR during setup | Each `postModelBid` charges a non-refundable `marketplaceBidFee` (`0.3` MOR on Base mainnet — live on-chain; `0` on Base Sepolia, where bids are free); reposting bids during configuration adds up | See [Pricing](/providers/full/pricing) and the "What can cost you MOR during setup" section in [Quickstart](/providers/full/quickstart) |

@@ -21,7 +21,7 @@ Both platforms share the same high-level attestation pipeline (CPU quote fetch, 
 | Measurement model | RTMR extend chain (SHA-384) | GCTX launch digest (SHA-384 page hashing) |
 | What is measured | MRTD + RTMR0-3 (firmware, config, kernel, initrd, workload) | Single `measurement` field (GCTX digest covering OVMF, kernel hashes page, VMSA pages) |
 | Artifact registry | CSV format, keyed by MRTD + RTMR0-2 | JSON format, keyed by vm_type + artifacts_ver |
-| Registry URL | `artifacts_registry/tdx.csv` | `artifacts_registry/sev.json` |
+| Registry URL | `https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/tdx.csv` | `https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/sev.json` |
 | Workload binding | RTMR3 = SHA-384 extend of (compose_hash, rootfs_data) | GCTX digest embeds kernel cmdline containing `docker_compose_hash` and `rootfs_hash` |
 | VM identity fields | MRTD, RTMR0-3 in quote fields | `family_id` (0x010) and `image_id` (0x020) in report body |
 | vCPU configuration | Not part of measurement | VMSA pages hashed per-vCPU into GCTX digest |
@@ -57,17 +57,15 @@ sequenceDiagram
 
     Note over P: Normalize report_data<br/>(strip spaces from hex bytes)<br/>Compare first 32 bytes with<br/>TLS cert digest (SPKI or full cert)
 
-    alt SEV Registry loaded
-        P->>B: GET :21434/docker-compose
-        B-->>P: docker-compose.yaml
+    P->>B: GET :21434/docker-compose
+    B-->>P: docker-compose.yaml
 
-        Note over P: Base64-decode quote<br/>Extract measurement (0x090, 48 bytes)<br/>Extract family_id (0x010, 16 bytes)<br/>Extract image_id (0x020, 16 bytes)
+    Note over P: Base64-decode quote<br/>Extract measurement (0x090, 48 bytes)<br/>Extract family_id (0x010, 16 bytes)<br/>Extract image_id (0x020, 16 bytes)
 
-        P->>R: Lookup by family_id vm_type
-        R-->>P: Matching SEV registry entries
+    P->>R: Lookup by family_id vm_type
+    R-->>P: Matching SEV registry entries
 
-        Note over P: For each entry:<br/>Build cmdline with compose hash<br/>Compute GCTX launch digest<br/>Compare vs quote measurement
-    end
+    Note over P: For each entry:<br/>Build cmdline with compose hash<br/>Compute GCTX launch digest<br/>Compare vs quote measurement<br/>No loaded SEV registry: attestation fails
 
     P->>B: GET :21434/gpu
     B-->>P: GPU attestation JSON
@@ -111,6 +109,8 @@ This is where SEV differs most significantly from TDX:
 - Compare the computed digest against the quote's `measurement`.
 
 Both the raw `/docker-compose` response and its HTML-extracted form are tried as compose-hash candidates, so old (HTML-wrapping) and new (raw-serving) attest-rest versions both verify.
+
+Like TDX, this step is mandatory. If the SEV registry is `nil` or was never loaded, `VerifyWorkload` returns `artifact_registry_not_available` and attestation fails rather than passing unverified (`workload_verifier.go:106-110`, `backend_verifier.go:211-213`). An unfetchable `/docker-compose` is fatal for the same reason (`backend_verifier.go:196-199`). Fail-closed since v7.4.0.
 
 #### 4. GPU binding
 
@@ -202,8 +202,8 @@ The `family_id` field encodes the VM template name, which maps to a vCPU count:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SEV_ARTIFACT_REGISTRY_URL` | [sev.json via npm](https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/sev.json) | URL for the SEV-SNP artifact registry JSON ([secretvm-verify](https://www.npmjs.com/package/secretvm-verify)) |
-| `ARTIFACT_REGISTRY_REFRESH_INTERVAL` | `1h` | Shared refresh interval for both TDX and SEV registries |
+| `SEV_ARTIFACT_REGISTRY_URL` | `https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/sev.json` | URL for the SEV-SNP artifact registry JSON ([secretvm-verify](https://www.npmjs.com/package/secretvm-verify)) |
+| `ARTIFACT_REGISTRY_REFRESH_INTERVAL` | `1h` | Shared refresh interval for both TDX and SEV registries; if unset or set to `0`, the constructor falls back to `1h` (`artifacts_registry.go:51-53`) |
 
 ## Code structure
 
