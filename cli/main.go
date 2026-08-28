@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"math/big"
 	"os"
 	"strings"
@@ -99,6 +100,18 @@ func main() {
 					&cli.StringFlag{
 						Name:     "provider",
 						Required: false,
+					},
+					&cli.Int64Flag{
+						Name:  "offset",
+						Value: 0,
+					},
+					&cli.UintFlag{
+						Name:  "limit",
+						Value: 10,
+					},
+					&cli.StringFlag{
+						Name:  "order",
+						Value: "asc",
 					},
 				},
 			},
@@ -248,6 +261,50 @@ func main() {
 
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// pagination flag validation ------------------------------------------------
+//
+// Pure by design so they're covered directly in main_test.go without
+// exercising the urfave/cli App.
+
+// limitToUint8 converts a --limit value into the uint8 the proxy-router
+// binds it to (structs.QueryOffsetLimitOrder.Limit, proxy-router/internal/blockchainapi/structs/req.go).
+// A value above the server's uint8 ceiling is rejected instead of silently
+// wrapping mod 256 (e.g. a bare uint8() conversion turns 256 into 0 and 300
+// into 44 -- exactly the truncation this pagination fix exists to eliminate).
+func limitToUint8(limit uint) (uint8, error) {
+	if limit > math.MaxUint8 {
+		return 0, fmt.Errorf("--limit %d exceeds the maximum accepted value of %d", limit, math.MaxUint8)
+	}
+	return uint8(limit), nil
+}
+
+// validateOffset rejects a negative --offset before it reaches the server.
+// The server's Offset field is tagged validate:"gte=0" (structs/req.go), but
+// that's a go-playground/validator tag; gin's ShouldBindQuery does not
+// enforce it, so a negative value would otherwise reach the server verbatim.
+func validateOffset(offset int64) error {
+	if offset < 0 {
+		return fmt.Errorf("--offset %d must not be negative", offset)
+	}
+	return nil
+}
+
+// orderToServerString validates --order against the two documented values,
+// case-insensitively, and maps it onto the exact string proxy-router's
+// mapOrder (internal/blockchainapi/mappers.go) requires: "ASC" is the only
+// string that mapper treats as ascending -- every other string, including a
+// lowercase "asc", falls through to descending.
+func orderToServerString(order string) (string, error) {
+	switch strings.ToLower(order) {
+	case "asc":
+		return "ASC", nil
+	case "desc":
+		return "DESC", nil
+	default:
+		return "", fmt.Errorf("--order %q is not valid; accepted values are \"asc\" and \"desc\"", order)
 	}
 }
 
@@ -544,9 +601,12 @@ type Bid struct {
 func (a *actions) blockchainProvidersBids(cCtx *cli.Context) error {
 	address := cCtx.String("address")
 	offset := cCtx.Int64("offset")
-	limit := cCtx.Uint("limit")
+	limit, err := limitToUint8(cCtx.Uint("limit"))
+	if err != nil {
+		return err
+	}
 
-	bidsResult, err := a.client.GetBidsByProvider(cCtx.Context, address, big.NewInt(offset), uint8(limit))
+	bidsResult, err := a.client.GetBidsByProvider(cCtx.Context, address, big.NewInt(offset), limit)
 
 	if err != nil {
 		return err
@@ -609,17 +669,33 @@ func (a *actions) openBlockchainSession(cCtx *cli.Context) error {
 func (a *actions) listBlockchainSessions(cCtx *cli.Context) error {
 	userAddress := cCtx.String("user")
 	providerAddress := cCtx.String("provider")
+	offset := cCtx.Int64("offset")
+	rawLimit := cCtx.Uint("limit")
+	rawOrder := cCtx.String("order")
 
 	if userAddress == "" && providerAddress == "" {
 		return fmt.Errorf("please provide either a user or provider address")
 	}
 
+	if err := validateOffset(offset); err != nil {
+		return err
+	}
+
+	limit, err := limitToUint8(rawLimit)
+	if err != nil {
+		return err
+	}
+
+	order, err := orderToServerString(rawOrder)
+	if err != nil {
+		return err
+	}
+
 	var sessions []client.SessionListItem
-	var err error
 	if userAddress != "" {
-		sessions, err = a.client.ListUserSessions(cCtx.Context, userAddress)
+		sessions, err = a.client.ListUserSessions(cCtx.Context, userAddress, big.NewInt(offset), limit, order)
 	} else {
-		sessions, err = a.client.ListProviderSessions(cCtx.Context, providerAddress)
+		sessions, err = a.client.ListProviderSessions(cCtx.Context, providerAddress, big.NewInt(offset), limit, order)
 	}
 
 	if err != nil {
@@ -645,6 +721,10 @@ func (a *actions) listBlockchainSessions(cCtx *cli.Context) error {
 		fmt.Println("\t- closed: ", !isActive)
 		fmt.Println("\t- expired: ", item.EndsAt < uint64(time.Now().Unix()))
 
+	}
+
+	if uint(len(sessions)) == uint(limit) {
+		fmt.Fprintln(os.Stderr, "note: a full page of results was returned; more sessions may exist, use --offset to page further")
 	}
 
 	return nil

@@ -323,10 +323,10 @@ func (c *ApiGatewayClient) GetBidsByModelAgent(ctx context.Context, modelAgentId
 	return result, err
 }
 
-func (c *ApiGatewayClient) ListUserSessions(ctx context.Context, user string) (result []SessionListItem, err error) {
+func (c *ApiGatewayClient) ListUserSessions(ctx context.Context, user string, offset *big.Int, limit uint8, order string) (result []SessionListItem, err error) {
 	response := map[string][]SessionListItem{}
 
-	err = c.getRequest(ctx, fmt.Sprintf("/blockchain/sessions/user?user=%s", user), &response)
+	err = c.getRequest(ctx, fmt.Sprintf("/blockchain/sessions/user?user=%s&offset=%s&limit=%d&order=%s", user, offset.String(), limit, order), &response)
 	if err != nil {
 		return nil, fmt.Errorf("internal error: %v", err)
 	}
@@ -334,10 +334,10 @@ func (c *ApiGatewayClient) ListUserSessions(ctx context.Context, user string) (r
 	return response["sessions"], nil
 }
 
-func (c *ApiGatewayClient) ListProviderSessions(ctx context.Context, provider string) (result []SessionListItem, err error) {
+func (c *ApiGatewayClient) ListProviderSessions(ctx context.Context, provider string, offset *big.Int, limit uint8, order string) (result []SessionListItem, err error) {
 	response := map[string][]SessionListItem{}
 
-	err = c.getRequest(ctx, fmt.Sprintf("/blockchain/sessions/provider?provider=%s", provider), &response)
+	err = c.getRequest(ctx, fmt.Sprintf("/blockchain/sessions/provider?provider=%s&offset=%s&limit=%d&order=%s", provider, offset.String(), limit, order), &response)
 	if err != nil {
 		return nil, fmt.Errorf("internal error: %v", err)
 	}
