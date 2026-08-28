@@ -1,13 +1,14 @@
 # Docs accuracy audit — 88 documents @ stake-duration
 
-> **Scope note.** This report was written against the full audit tree. The
+> **Scope note.** This report was written against the full audit tree, none of
+> which ships on this branch. The documentation gates and their checkers were
+> removed from this pull request and held back for a review of their own; the
 > audit-run orchestration, the per-commit coherence records, the raw
-> model-output rounds and the review screenshots stayed local and are not
-> included in this branch — so citations below to run scripts under
-> `tools/docs-audit/` (the checkers ship; the runners do not), to numbered
-> `verify/round*/` directories, and to `verify/coherence/` records will not
-> resolve here. The findings and the evidence for them are reproduced in full;
-> only the run artifacts are absent.
+> model-output rounds and the review screenshots stayed local. Script and
+> directory names mentioned below name artifacts of that audit tree, not files
+> in this checkout — nothing in this report is runnable from here. The findings
+> and the evidence for them are reproduced in full; only the run artifacts are
+> absent.
 
 **Scope** Every tracked `.md`/`.mdx` in the repo except `verify/` evidence files:
 88 documents, 10,219 lines. That is the four root operator docs (`CLAUDE.md`,
@@ -67,7 +68,7 @@ Worst-affected documents: `.ai-docs/TEE_Attestation_Architecture.md` (8),
 Two independent passes, because doc claims split cleanly into ones a script can
 settle and ones that need reading.
 
-**Phase 0 — deterministic (no model).** `tools/docs-audit/extract.mjs` pulls every
+**Phase 0 — deterministic (no model).** The audit tree's `extract.mjs` pulls every
 mechanically-shaped claim (paths, env names, script names, endpoints, ports,
 addresses, chain ids, links, versions, `last_verified`, frontmatter) and
 `check.mjs` adjudicates each against a source-of-truth artifact — `config.go`
@@ -87,8 +88,8 @@ is recorded as `UNVERIFIABLE-IN-REPO`, not TRUE.
 
 | Gate | Command | Result |
 |---|---|---|
-| Adjudicator selftest | `node tools/docs-audit/check.mjs --selftest` | **10/10** — each adjudicator fires on a near-miss (a real env var + `_X`, a real script + `x`, a real path + `2`, a real route + `/nope`) |
-| Quote-fidelity gate | `node tools/docs-audit/gate-quotes.mjs --selftest` | **6/6** — accepts the faithful quote as VERBATIM; rejects a fabricated quote, unrelated text at a real line, and a real quote in the wrong file; demotes a wrong-line quote and a one-word-altered quote so neither can be cited as wording |
+| Adjudicator selftest | `check.mjs --selftest` (audit tree) | **10/10** — each adjudicator fires on a near-miss (a real env var + `_X`, a real script + `x`, a real path + `2`, a real route + `/nope`) |
+| Quote-fidelity gate | `gate-quotes.mjs --selftest` (audit tree) | **6/6** — accepts the faithful quote as VERBATIM; rejects a fabricated quote, unrelated text at a real line, and a real quote in the wrong file; demotes a wrong-line quote and a one-word-altered quote so neither can be cited as wording |
 | Extraction fidelity | `gate-quotes.mjs` over 613 extracted rows | **505 accepted / 108 rejected** |
 | Ledger invariant | `merge.mjs` | **every TRUE row carries evidence**; 0 rows unsettled; 0 defects unsevered |
 
@@ -407,7 +408,7 @@ totals inherit the unit error.
 ## Fixes applied on this branch
 
 A third lane moved two claim classes out of model judgment into deterministic
-checks (`tools/docs-audit/check-mechanized.mjs`): *documented-as-wired vs has a
+checks (the audit tree's `check-mechanized.mjs`): *documented-as-wired vs has a
 caller*, and *documented default vs the default the code applies*. Both were
 chosen because the blind review had already proved they catch real defects.
 
@@ -713,11 +714,10 @@ basis would import the audit's own error rate into the documentation.
 
 ## Re-running
 
-```
-node tools/docs-audit/check.mjs --selftest        # 10/10 adjudicators fire
-node tools/docs-audit/gate-quotes.mjs --selftest  # 6/6 fidelity tiers hold
-node tools/docs-audit/extract.mjs | node tools/docs-audit/check.mjs > /tmp/p0.tsv
-```
+The audit tooling is not part of this branch — the checkers were removed from
+this pull request and held back for a review of their own, and the Phase 0
+extractor and adjudicator were never published at all. Re-running the phases
+below therefore requires that audit tree, not this one.
 
 Phase 0 is deterministic and reproduces identically. Phases 1 and 3 involve
 model judgment and will not reproduce byte-for-byte; the ledger records each

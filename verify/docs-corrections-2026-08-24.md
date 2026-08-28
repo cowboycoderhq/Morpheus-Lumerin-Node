@@ -24,15 +24,15 @@ fork — the two repos share these files. Where a change is fork-specific it say
 
 ## Verifying this record
 
-```bash
-node tools/docs-audit/check-consistency.mjs   # no page disagrees with source or itself
-node tools/docs-audit/verify-fixes.mjs        # every citation/figure/link added here resolves
-node tools/docs-audit/check-mechanized.mjs    # documented defaults vs compiled defaults
-node tools/docs-audit/recurrence.mjs          # no corrected claim has crept back
-```
+The mechanical checkers that backed this audit — page-vs-source consistency,
+citation resolution, documented-vs-compiled defaults, and recurrence of
+corrected claims — are **not part of this branch**. They were removed from this
+pull request and held back for a review of their own, along with the
+`--selftest` mutations that prove each one fires.
 
-Each has a `--selftest` built from near-miss mutations, so a green run means the
-checker can still fail. See `verify/docs-audit-HANDOFF.md`.
+Nothing in this branch depends on them. Each correction below cites the
+`file:line` in this tree that settles it, so any entry can be checked by hand
+against the source without the tooling.
 
 ---
 
@@ -160,7 +160,7 @@ unreachable" (commit `33b063f8`).
 
 ## 6. Defaults that did not match the compiled value
 
-Found by `tools/docs-audit/check-mechanized.mjs`, which compares documented
+Found by the audit's `check-mechanized.mjs` checker, which compares documented
 defaults against the defaults the code applies. It produced 16 candidates;
 **scouts confirmed 12 and refuted 4**, and each refutation was fixed in the
 checker rather than waved past.
