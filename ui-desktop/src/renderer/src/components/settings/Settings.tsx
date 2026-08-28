@@ -67,6 +67,8 @@ const Common = (props: CommonProps) => {
   const [ocStatus, setOcStatus] = useState<any>(null);
   const [ocBusy, setOcBusy] = useState(false);
   const [ocOutput, setOcOutput] = useState<string>('');
+  const [grokBusy, setGrokBusy] = useState(false);
+  const [grokOutput, setGrokOutput] = useState<string>('');
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const { variant, setVariant } = useThemeVariant();
 
@@ -383,8 +385,51 @@ const Common = (props: CommonProps) => {
             <SettingsCallout tone="info">
               {grok?.installed
                 ? 'Your models appear in grok’s /model picker automatically. Pick one there; if it has no open session you will be told, and this window will offer to open one.'
-                : 'grok is not installed. Install it from x.ai and your models will appear in its /model picker automatically.'}
+                : 'grok is a terminal coding agent from xAI. Install it and your models appear in its /model picker automatically.'}
             </SettingsCallout>
+            {grok?.installed === false && (
+              <>
+                <SettingsCallout tone="info">
+                  This runs <code>{grok?.installCommand}</code> in a shell.
+                  Nothing is installed until you click.
+                </SettingsCallout>
+                <Btn
+                  disabled={grokBusy}
+                  onClick={async () => {
+                    setGrokBusy(true);
+                    setGrokOutput('');
+                    try {
+                      const r = (await props.client.installGrok()) as {
+                        status?: any;
+                        output?: string;
+                      };
+                      setGrok(r?.status ?? (await props.client.getGrokStatus()));
+                      // Either way. An installer that fails silently leaves the
+                      // user with a missing tool and no idea why.
+                      setGrokOutput(r?.output ?? '');
+                    } finally {
+                      setGrokBusy(false);
+                    }
+                  }}
+                >
+                  {grokBusy ? 'Installing…' : 'Install grok'}
+                </Btn>
+              </>
+            )}
+            {grokOutput && (
+              <SettingsCallout tone="info">
+                <pre
+                  style={{
+                    whiteSpace: 'pre-wrap',
+                    maxHeight: '12rem',
+                    overflow: 'auto',
+                    margin: 0,
+                  }}
+                >
+                  {grokOutput}
+                </pre>
+              </SettingsCallout>
+            )}
 
             {/* opencode setup lives inside this card because it is only
                 meaningful once the endpoint it talks to is running. */}
