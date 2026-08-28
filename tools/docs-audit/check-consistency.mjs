@@ -61,6 +61,15 @@ export function classify(url, tail, lineText = '') {
   return null;
 }
 
+// THE SERVICES THIS GATE CAN ACTUALLY ADJUDICATE.
+// truthPorts() resolves four ports; classify() can only ever return 'proxyApi',
+// so the other three are resolved, printed, and never consulted. Anyone reading
+// "ports resolved from source: proxyApi/aiRuntime/ipfsApi/proxyTcp" would take
+// all four to be checked. Naming the set here — beside the only function that
+// can widen it — makes the gap explicit, lets the verdict label the unused rows,
+// and gives the NOT-RUN guard below something exact to require.
+export const CLASSIFIABLE = ['proxyApi'];
+
 const URL_RE = /(?:https?:\/\/)?(?:localhost|127\.0\.0\.1)(?::(\d+))?((?:\/[\w:*.$%{}<>-]*)*)/g;
 
 export function scanText(file, text, truth) {
@@ -119,6 +128,27 @@ function selftest() {
   run('models-config apiUrl left alone',
     '  "apiUrl": "http://localhost:8080/v1/chat/completions"', []);
 
+  // --- live anchors: the RESOLVER, not a hardcoded stand-in -----------------
+  // Every case above feeds the hardcoded `truth` on the first line of this
+  // function, so all six keep passing when truthPorts() stops resolving
+  // anything at all — and that is the one failure that turns this entire gate
+  // into a no-op. classify() can only name a CLASSIFIABLE service, so an
+  // unresolved entry makes scanText skip every URL at `!truth[svc]` and main()
+  // print a vacuous PASS over a full corpus. Reproduced by replacing the literal
+  // address in config.go with a named constant — an ordinary refactor.
+  //
+  // Each case REQUIRES its row to exist. check-mechanized:373-386 records why:
+  // a live case asserted negatively over an optional chain reported ok while its
+  // own evidence read "row not found" — it passed BECAUSE the subject had been
+  // deleted, and deleting the subject is the easier of the two to do by accident.
+  const live = truthPorts();
+  for (const svc of CLASSIFIABLE) {
+    const row = live[svc];
+    cases.push([!!row && /^\d+$/.test(String(row.port)),
+      `live: truthPorts() resolves ${svc}`,
+      row ? `port ${row.port} from ${row.src}` : 'NOT RESOLVED — this gate would adjudicate nothing']);
+  }
+
   let bad = 0;
   console.log('--- check-consistency selftest ---');
   for (const [ok, label, want] of cases) {
@@ -137,12 +167,43 @@ if (IS_MAIN) {
 
   const truth = truthPorts();
   console.log('ports resolved from source:');
-  for (const [k, v] of Object.entries(truth)) console.log(`  ${k.padEnd(10)} ${v.port}   ${v.src}`);
+  for (const [k, v] of Object.entries(truth)) {
+    const used = CLASSIFIABLE.includes(k);
+    console.log(`  ${k.padEnd(10)} ${v.port}   ${v.src}`
+      + (used ? '' : '   (resolved, NOT adjudicated — no documented path classifies to it)'));
+  }
+
+  // A SCAN OF NOTHING IS NOT A PASS — the same decision check-routes.mjs:302-341,
+  // check-addresses.mjs:139-146, check-dox.mjs:271-286 and check-hygiene.mjs:340-365
+  // already make, and the one this gate was missing.
+  //
+  // The oracle here is ONE regex over ONE line of config.go. When it stops
+  // matching — a named constant, a reformat, a rename — truth.proxyApi is
+  // undefined, scanText skips every URL at `!truth[svc]`, `all` is empty and
+  // main() prints CONSISTENCY: PASS over a full corpus, having adjudicated
+  // nothing. Measured: with a planted port drift in the tree, refactoring that
+  // one line took the gate from 2 findings to PASS with 91 docs "scanned".
+  //
+  // Emptiness is not the test — a MISSING CLASSIFIABLE SERVICE is. truthPorts()
+  // still returned three other ports in that run, so `Object.keys(truth).length`
+  // was 3 and any check for a bare empty object would have waved it through.
+  const missing = CLASSIFIABLE.filter((s) => !truth[s]);
+  if (missing.length) {
+    console.error(`CONSISTENCY: NOT RUN — the port oracle resolved nothing for: ${missing.join(', ')}. `
+      + 'Every URL for those services is skipped unjudged, so a PASS would clear nothing. '
+      + 'Check the resolver in truthPorts() against the source it reads.');
+    process.exit(2);
+  }
+  const docs = docFiles();
+  if (!docs.length) {
+    console.error('CONSISTENCY: NOT RUN — 0 document(s) were found, so no page was examined.');
+    process.exit(2);
+  }
 
   const all = [];
-  for (const f of docFiles()) all.push(...scanText(f, read(f), truth));
+  for (const f of docs) all.push(...scanText(f, read(f), truth));
 
-  console.log(`\ndocs scanned: ${docFiles().length}`);
+  console.log(`\ndocs scanned: ${docs.length}`);
   if (!all.length) {
     console.log('\nCONSISTENCY: PASS (no page disagrees with source or with itself)');
     process.exit(0);

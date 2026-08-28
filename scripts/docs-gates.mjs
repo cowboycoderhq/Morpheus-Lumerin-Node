@@ -57,7 +57,28 @@ if (process.argv.includes('--list')) {
 // each gate with no arguments, and no CI job called them either. A detector
 // that has only ever been observed passing is not known to fire.
 if (process.argv.includes('--selftests')) {
-  let bad = 0, none = 0;
+  // A GATE THAT PRINTED NO SELFTEST LINE COUNTS AS FAILED, NOT AS TOLERATED.
+  //
+  // `none` used to be its own bucket: reported to stderr and then never touched
+  // the exit code. MISSING incremented `bad`, so a DELETED gate was caught — but
+  // a gate that still exists and DIES during --selftest was not, and the CI step
+  // this feeds is named "Prove each gate's detector still fires". Reproduced by
+  // making one gate throw on load: the runner printed NO-SELFTEST, then
+  // "GATE-SELFTESTS: PASS", and exited 0. Deleting the file failed the run;
+  // breaking it did not, which is backwards — a broken detector is the one that
+  // stays in the tree looking armed.
+  //
+  // NO TOLERANCE, AND NO EXCEPTION FIELD. All eleven gates print a SELFTEST line
+  // today, so a "not proven but not broken" allowance protects nothing real and
+  // costs the whole guarantee. .github/workflows/docs-gates.yml:111-119 settled
+  // the same question one level up and gave the reason: an earlier
+  // --allow-failing=mechanized flag was REMOVED rather than kept, because "an
+  // exception path with no caller and no selftest of its own is the shape that
+  // hides the next real failure". Pre-building an unused bypass here would be
+  // that shape. If a gate ever genuinely has no detector to prove, saying so in
+  // the GATES table is a reviewable edit made at that moment — not a silent
+  // hole standing open until then.
+  let bad = 0;
   for (const g of GATES) {
     if (!existsSync(join(REPO, 'tools/docs-audit', g.file))) { bad++; console.log(`  MISSING  ${g.id}`); continue; }
     let code = 0, out = '';
@@ -74,15 +95,17 @@ if (process.argv.includes('--selftests')) {
     // for a live finding. recurrence is exactly this case: no flag, but an
     // always-on guard selftest whose summary line is the thing to read.
     if (!/SELFTEST:/i.test(out)) {
-      none++;
-      console.log(`  NO-SELFTEST ${g.id.padEnd(11)} ${g.file} printed no SELFTEST line — its detector is unproven here (exit ${code})`);
+      bad++;
+      console.log(`  NO-SELFTEST ${g.id.padEnd(11)} ${g.file} printed no SELFTEST line — its detector is UNPROVEN, which is not a pass (exit ${code})`);
+      for (const l of out.split('\n').map((x) => x.trimEnd()).filter(Boolean).slice(-3)) {
+        console.log(`             ${l.slice(0, 100)}`);
+      }
       continue;
     }
     if (/SELFTEST:\s*FAIL/i.test(out)) { bad++; console.log(`  FAILED   ${g.id.padEnd(13)} ${sum.trim().slice(0, 90)}`); continue; }
     console.log(`  ok       ${g.id.padEnd(13)} ${sum.trim().slice(0, 90)}`);
   }
-  if (none) console.error(`\n${none} gate(s) expose no --selftest — not proven, not disproven.`);
-  if (bad) { console.error(`\nGATE-SELFTESTS: ${bad} failed.`); process.exit(1); }
+  if (bad) { console.error(`\nGATE-SELFTESTS: ${bad} gate(s) failed or proved nothing.`); process.exit(1); }
   console.log('\nGATE-SELFTESTS: PASS');
   process.exit(0);
 }
@@ -173,6 +196,13 @@ function readOut(out) {
 
 let failed = 0, broken = 0, ran = 0;
 const lines = [];
+// The diff base the history gates resolved, hoisted out of their output.
+// auditBase() prints it, but this runner shows ONE line per gate — the
+// verdict — so the base was printed and then truncated away, which is the
+// same silence the printing was added to remove. A collapsed base makes three
+// gates examine almost nothing and still say PASS, so it belongs in the
+// summary. A Set because disagreement between gates is worth seeing too.
+const auditBases = new Set();
 try {
   for (const g of GATES) {
     if (staged && g.needsHistory) {
@@ -192,6 +222,7 @@ try {
       out = `${e.stdout || ''}${e.stderr || ''}`;
     }
     ran++;
+    for (const m of out.matchAll(/^audit base: .*$/gm)) auditBases.add(m[0].trim());
     const { tail, excerpt } = readOut(out);
     // Silence is not a pass. Every gate here reports; one that exits 0 having
     // printed nothing has either died before its main body or been invoked in a
@@ -232,6 +263,7 @@ try {
 }
 
 console.log(`docs-gates: ${ran} gate(s)${staged ? ' (staged mode — index content, history gates skipped)' : ''}`);
+for (const b of auditBases) console.log(`  ${b}`);
 console.log(lines.join('\n'));
 if (broken) { console.error(`\nDOCS-GATES: ${broken} gate(s) could not run — that is not a pass.`); process.exit(2); }
 if (failed) { console.error(`\nDOCS-GATES: BLOCKED — ${failed} gate(s) failed.`); process.exit(1); }

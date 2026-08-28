@@ -33,8 +33,16 @@ fi
 # is not taxed. --staged skips the gates that need a diff base; pre-push and CI
 # run those. All three layers call the SAME runner: three copies would drift and
 # the weakest would become the real gate.
+#
+# The extension list must match tools/docs-audit/lib.mjs docFiles(), which is the
+# corpus the gates actually read. `.mdc` was in docFiles() and NOT here, so a
+# commit touching only .cursor/rules/morpheus.mdc skipped every gate — and that
+# file is the one lib.mjs:86-100 calls the branch's headline corpus bug: an
+# always-applied agent instruction file that sat outside all eleven gates and
+# held the wrong side of three claims the docs exist to correct. Adding it to
+# docFiles() without adding it here left the hook as the remaining way in.
 STAGED_ALL=$(git diff --cached --name-only)
-if echo "$STAGED_ALL" | grep -qE '\.(md|mdx)$|^tools/docs-audit/|^scripts/docs-gates\.mjs$'; then
+if echo "$STAGED_ALL" | grep -qE '\.(md|mdx|mdc)$|^tools/docs-audit/|^scripts/docs-gates\.mjs$'; then
   echo "docs gates: documentation staged — running checkers"
   node "$REPO_ROOT/scripts/docs-gates.mjs" --staged
   CODE=$?

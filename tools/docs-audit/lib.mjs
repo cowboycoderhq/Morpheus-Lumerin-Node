@@ -369,28 +369,70 @@ export const gitOptional = (args, opts = {}) => { try { return git(args, opts); 
 //
 // Resolve it instead: first candidate that both exists and has a merge base with
 // HEAD wins. If none does, say so in one line and exit, rather than throwing.
+let _auditBase = null;
 export function auditBase() {
+  if (_auditBase) return _auditBase;
   const try_ = (...a) => { try { return execSync(`git ${a.join(' ')}`, { cwd: REPO, encoding: 'utf8', stdio: ['ignore','pipe','ignore'] }).trim(); } catch { return ''; } };
+  const upstream = try_('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}');
+  // `ownBranch` marks the candidate that is THIS BRANCH's own remote-tracking
+  // ref. It needs a different test from the others — see the skip below.
   const candidates = [
-    process.env.AUDIT_BASE,
-    try_('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'),
-    'stake-duration',
-    'origin/stake-duration',
-  ].filter(Boolean);
+    { ref: process.env.AUDIT_BASE, via: 'AUDIT_BASE' },
+    { ref: upstream, via: '@{upstream}', ownBranch: true },
+    { ref: 'stake-duration', via: 'fallback' },
+    { ref: 'origin/stake-duration', via: 'fallback' },
+  ].filter((c) => c.ref);
   const head = try_('rev-parse', 'HEAD');
+  const skipped = [];
   for (const c of candidates) {
-    if (!try_('rev-parse', '--verify', '--quiet', `${c}^{commit}`)) continue;
-    const mb = try_('merge-base', c, 'HEAD');
-    if (!mb) continue;
+    const sha = try_('rev-parse', '--verify', '--quiet', `${c.ref}^{commit}`);
+    if (!sha) { skipped.push(`${c.ref} — does not resolve`); continue; }
+    const mb = try_('merge-base', c.ref, 'HEAD');
+    if (!mb) { skipped.push(`${c.ref} — shares no history with HEAD`); continue; }
     // A base at or ahead of HEAD yields an EMPTY corpus, and every history gate
     // then passes having examined nothing. That is the shape this suite exists to
     // refuse, so skip such a candidate rather than measure zero lines and call it
     // clean. It is not hypothetical: once `push -u` sets an upstream, @{upstream}
     // above resolves to this branch's own remote ref and merge-base becomes HEAD.
-    if (mb === head) continue;
-    return c;
+    if (mb === head) { skipped.push(`${c.ref} — at or ahead of HEAD, so the corpus would be empty`); continue; }
+    // ONE CASE TOO NARROW, AND THE MISSING CASE IS THE ORDINARY ONE.
+    //
+    // The check above only catches an upstream that equals HEAD. With a single
+    // UNPUSHED commit the upstream is merely BEHIND HEAD, merge-base is the
+    // upstream rather than HEAD, and it was accepted — so the audit's corpus
+    // silently became "my unpushed commits" instead of "what this branch added".
+    // Measured on this repo the moment a sibling commit landed: the base moved
+    // from origin/stake-duration to origin/pr/docs-accuracy and the corpus went
+    // from 23464 added doc lines to 32, with verify-fixes then reporting
+    // `economic figures re-derived : 0` and PASS. Nothing in the output named
+    // which base had been used, so the collapse was invisible.
+    //
+    // The test is ANCESTRY, and it applies ONLY to this branch's own upstream.
+    // A blanket "reject any ancestor of HEAD" would also reject
+    // origin/stake-duration — the branch point, and the correct answer. The
+    // distinction is whose line of development the ref sits on: another branch's
+    // tip that HEAD descends from IS a branch point; this branch's own remote ref
+    // is just HEAD minus whatever has not been pushed yet.
+    if (c.ownBranch && mb === sha) {
+      skipped.push(`${c.ref} — this branch's own upstream, an ancestor of HEAD: `
+        + `the diff would be only the ${try_('rev-list', '--count', `${sha}..HEAD`) || '?'} unpushed commit(s), not the audit`);
+      continue;
+    }
+    _auditBase = c.ref;
+    // PRINT THE BASE. A shrunken corpus used to be indistinguishable from a clean
+    // one: three gates report "examined N lines" with no statement of what they
+    // measured against, so a base that collapsed the range read as a tree with
+    // little in it. CI already prints this (.github/workflows/docs-gates.yml:98-103,
+    // added for the same reason); this brings a local or pre-push run to parity.
+    const added = gitOptional(['diff', '-U0', `${c.ref}...HEAD`, '--', '*.md', '*.mdx', '*.mdc'])
+      .split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).length;
+    console.log(`audit base: ${c.ref} @ ${sha.slice(0, 8)} (via ${c.via}) — `
+      + `${try_('rev-list', '--count', `${mb}..HEAD`) || '?'} commit(s), ${added} added line(s) across *.md/*.mdx/*.mdc in range`);
+    for (const s of skipped) console.log(`  base skipped: ${s}`);
+    return _auditBase;
   }
-  console.error(`no usable audit base: tried ${candidates.join(', ')}\n` +
-    'set AUDIT_BASE to a ref that shares history with HEAD and is behind it.');
+  console.error('no usable audit base. Candidates and why each was rejected:');
+  for (const s of skipped) console.error(`  ${s}`);
+  console.error('set AUDIT_BASE to a ref that shares history with HEAD and is behind it.');
   process.exit(2);
 }

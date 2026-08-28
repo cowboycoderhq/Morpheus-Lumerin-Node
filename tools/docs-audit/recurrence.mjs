@@ -317,7 +317,43 @@ const CLAIMS = [
 // A line that REFUTES the claim necessarily repeats its vocabulary. Without this
 // guard the sweep re-flags its own corrections — the same over-reach that made
 // the first mechanized checker produce 164 artefacts.
-const REFUTES_CI = /\b(no on-chain tier|does not exist|no longer|replaced|which replaced|not wired|no MOR-denominated|no subnet tier|auto-?sweep|automatically every|informal term|instead of|rather than|now requires|owner-settable|derived accounts?|no such tier|Base Sepolia|on Sepolia|Sepolia\)|mainnet)\b/i;
+// NETWORK NAMES ARE NOT REFUTATIONS, AND THEY USED TO BE FOUR OF THESE.
+//
+// `mainnet`, `Base Sepolia`, `on Sepolia` and `Sepolia\)` were alternatives in
+// this list, so ANY line containing a network name exempted itself from every
+// rule using the broad guard. A network qualifier says WHERE a figure applies;
+// it never says the figure is wrong. And it is not a coincidental neighbour: a
+// network name beside a token figure is how these tables are normally written,
+// which is exactly where the retired claims live.
+//
+// MEASURED, on the corpus, before narrowing. Eight of the twelve rules use this
+// guard (the other four already opted out via guard:'explicit-only'). Taking one
+// plainly-stated repeat per broad-guard rule and adding one incidental word:
+//   prefix "On Base Sepolia, "        silenced 8 of 8
+//   suffix " on Base mainnet."        silenced 8 of 8
+//   suffix "; this replaced the old scheme."  silenced 8 of 8
+// 24 of 32 mutations turned a firing detector silent, with nothing in the output
+// saying a line had been exempted. Two rules already carried this diagnosis in
+// their own comments (:198-208 and :238-252, both naming "mainnet" as the
+// exemption that made them green for the wrong reason) and both fixed it locally
+// by opting out. Removing the network alternatives generalises that fix to the
+// eight rules that did not.
+//
+// COST, ALSO MEASURED: zero. Stripping the whole guard exposes 11 corpus sites
+// it forgives; every one of them carries a CONTENTFUL corrective as well, so all
+// 11 stay exempt without the network words. The one site that leaned on them —
+// register-onchain.mdx:76, exempted by "no subnet tier", "on Sepolia" AND
+// "mainnet" — keeps "no subnet tier". The anchored cases in the guard selftest
+// pin each of those lines to the file it came from.
+//
+// KNOWN RESIDUE, DELIBERATELY LEFT: `replaced`, `instead of` and `rather than`
+// are still broad, and still exemptable by accident ("; this replaced the old
+// scheme"). They are NOT removable without turning correct lines red — the four
+// starting-services-screen corrections all read "which replaced the older
+// 'Starting services' list", and where-is-my-mor.mdx:100 is exempted by "instead
+// of" alone. Removing them is a documentation decision about those five lines,
+// not a checker decision, so it is reported rather than taken here.
+const REFUTES_CI = /\b(no on-chain tier|does not exist|no longer|replaced|which replaced|not wired|no MOR-denominated|no subnet tier|auto-?sweep|automatically every|informal term|instead of|rather than|now requires|owner-settable|derived accounts?|no such tier)\b/i;
 
 // "is NOT" is an emphasis marker we write deliberately in corrective text. Under
 // the /i flag it also matched ordinary lower-case English, so ANY flagged line
@@ -528,8 +564,83 @@ const SELF = [
   ["**What the attestation actually pins.** RTMR3 is the replay of two inputs", false, "the corrected \"what the attestation actually pins\" must stay silent"],
   ["Neither is immutable at runtime: both are Docker `ENV` defaults", false, "the corrected \"neither is immutable at runtime\" must stay silent"],
 ];
+
+// ---------------------------------------------------------------------------
+// A REPEAT CARRYING AN INCIDENTAL EXEMPTION WORD.
+//
+// Every case above tests a rule's PATTERN. None of them tested the GUARD on a
+// broad-guard rule: not one plants a genuine repeat that merely happens to
+// contain an exemption word, which is the failure mode the broad guard actually
+// has. The eight rules below all used to go silent when a network name was added
+// to a line stating their retired claim.
+//
+// One plainly-stated repeat per broad-guard rule. Each is asserted to fire BARE
+// first — a fixture that is not a repeat would make the contaminated cases pass
+// for the wrong reason, which is how this family of case goes vacuous.
+const BROAD_FIRING = [
+  ['subnet-tier-10000',        '| **Subnet provider** | A provider that has staked `10000` MOR and gets elevated standing. |'],
+  ['session-floor-5mor',       SELF_BASE_SESSIONROW],
+  ['go-1.22',                  'The proxy-router requires go 1.22 or newer.'],
+  ['reward-period-1day',       'PROVIDER_REWARD_LIMITER_PERIOD is 1 day.'],
+  ['mnemonic-tier1-only',      'Only the tier-1 address from your mnemonic is imported.'],
+  ['starting-services-screen', SELF_BASE_REPEAT],
+  ['tls-immediate-hard-fail',  'A TLS-fingerprint mismatch is an immediate hard fail.'],
+  ['withdraw-manual-only',     'The remainder must be claimed via `withdrawUserStakes` on the Diamond.'],
+];
+// Ordinary documentation prose. Neither says the claim beside it is wrong.
+const CONTAMINANTS = [
+  ['a trailing network qualifier', (s) => s.replace(/\s+$/, '') + ' on Base mainnet.'],
+  ['a leading network qualifier',  (s) => 'On Base Sepolia, ' + s],
+];
+for (const [id, line] of BROAD_FIRING) {
+  SELF.push([line, true, `broad-guard fixture is a real repeat (${id})`]);
+  for (const [what, f] of CONTAMINANTS) {
+    SELF.push([f(line), true, `${id}: ${what} must NOT exempt the repeat`]);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// THE CORRECTIONS THE GUARD IS FOR, LIFTED FROM THE TREE RATHER THAN RETYPED.
+//
+// These are every corpus line the broad guard currently forgives — found by
+// running the sweep with the guard stripped and diffing the site lists. They are
+// the population narrowing the guard could break, so each is pinned here.
+//
+// Each fixture is read OUT OF THE FILE at its file:line, not typed in, and is
+// checked to still contain `expect` before it is used. A retyped "verbatim"
+// fixture proves the typist; an anchored one fails loudly the moment the line
+// moves or is reworded, instead of quietly testing a sentence that no longer
+// exists. `expect` is the contentful corrective the exemption now rests on —
+// the words that survive after the network qualifiers were removed.
+const ANCHORED = [
+  ['docs/get-started/networks-and-tokens.mdx',  60, 'no such tier'],
+  ['docs/providers/full/register-onchain.mdx',  76, 'no subnet tier'],
+  ['docs/providers/resale/container-pnode.mdx', 22, 'no such tier'],
+  ['docs/reference/glossary.mdx',               32, 'No on-chain tier exists'],
+  ['docs/ai/where-is-my-mor.mdx',              100, 'instead of'],
+  ['docs/consumers/install/linux.mdx',          25, 'which replaced'],
+  ['docs/consumers/install/windows.mdx',        21, 'which replaced'],
+  ['docs/consumers/quickstart.mdx',             54, 'which replaced'],
+  ['docs/get-started/quickstart-consumer.mdx',  46, 'replaced'],
+  ['docs/ai/why-locked-in-contract.mdx',        21, 'automatically every'],
+  ['docs/concepts/sessions-stake-close-recover.mdx', 92, 'automatically every'],
+];
+const anchorFailures = [];
+for (const [file, lineNo, expect] of ANCHORED) {
+  let lifted = null;
+  try { lifted = read(file).split('\n')[lineNo - 1]; } catch (e) { lifted = null; }
+  if (lifted == null || !lifted.includes(expect)) {
+    // NOT skipped. A fixture that no longer matches its source is a broken
+    // case, and skipping it is how an anchor quietly stops anchoring.
+    anchorFailures.push(`${file}:${lineNo} no longer contains ${JSON.stringify(expect)}`);
+    continue;
+  }
+  SELF.push([lifted, false, `corpus-anchored correction stays exempt (${file}:${lineNo})`]);
+}
+
 let bad = 0;
 console.log('\n--- guard selftest ---');
+for (const a of anchorFailures) { bad++; console.log(`FAIL  anchored fixture drifted: ${a}`); }
 // A 4th element is the UNIT the line sits in, for claims whose meaning depends
 // on its neighbours. Omitted, the line is its own unit — every legacy case
 // below is unchanged by this.
@@ -574,3 +685,31 @@ if (!wordIsNotTheClaim) bad++;
 console.log(`${wordIsNotTheClaim ? 'ok  ' : 'FAIL'}  leaving the topic word out is load-bearing: `
   + `adding it ${wordIsNotTheClaim ? 'FALSE-FLAGS' : 'does not flag'} the corrected bullet`);
 console.log(bad ? `GUARD SELFTEST: FAIL (${bad}/${SELF.length})` : `GUARD SELFTEST: PASS (${SELF.length}/${SELF.length} — fires on repeats, silent on corrections)`);
+
+// A FAILING GUARD SELFTEST FAILS THIS GATE.
+//
+// process.exitCode was set once, at the corpus sweep above, and nothing after it
+// touched the code again — so a broken detector reported `GUARD SELFTEST: FAIL`
+// and exited 0, and docs-gates listed `ok recurrence` under `DOCS-GATES: PASS`.
+// Reproduced by giving REFUTES_CS the /i flag back (the exact regression
+// :322-327 documents): GUARD SELFTEST: FAIL (1/48), exit 0, suite green.
+//
+// The comment at :386-393 fixed this inversion on the OTHER output channel — the
+// runner was picking the selftest banner as the corpus verdict — by marking the
+// verdict line. The same inversion survived on the exit code, which is the
+// channel that actually blocks a push.
+//
+// `|| 0` is not used and the assignment only ever RAISES: a corpus finding
+// already set 1, and a passing selftest must not clear it.
+if (bad) process.exitCode = 1;
+
+// And the verdict line has to move with it. GATE-VERDICT above is emitted before
+// the selftest runs, so on a selftest failure the runner would print
+//   FAILED recurrence exit 1 — RECURRENCE: PASS (no corrected claim has crept back)
+// which is a FAILED row whose own text asserts the opposite — precisely the
+// inversion :386-393 exists to prevent, reintroduced one line later. readOut()
+// selects the LAST GATE-VERDICT line, so re-marking it here wins.
+if (bad) {
+  console.log(`GATE-VERDICT: RECURRENCE: GUARD SELFTEST FAILED (${bad}/${SELF.length}) — `
+    + 'the detector is broken, so the corpus result above cleared nothing');
+}

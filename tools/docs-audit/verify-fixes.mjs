@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO, docFiles, auditBase } from './lib.mjs';
-import { weiFor, retiredWeiFor, provenance } from './onchain-params.mjs';
+import { weiFor, retiredWeiFor, provenance, PARAMS, NETWORKS } from './onchain-params.mjs';
 
 // Resolved, not hardcoded — see auditBase() in lib.mjs. Lazy so --selftest runs
 // in a tree that has no base at all.
@@ -152,17 +152,84 @@ function checkEconomics(lines) {
     }
   }
 
-  // The floor is quoted in wei in several places; assert the wei matches deploy.
+  // Any backticked >=10-digit number followed by `wei`, judged against EVERY wei
+  // value this oracle has observed — not against the bid bounds alone.
+  //
+  // `known` was `[...e.floorWei, ...e.ceilWei]`, i.e. the two bid-price bounds,
+  // while the pattern below matches any wei figure on an audit-added line. The
+  // same oracle carries two more wei-denominated parameters — providerMinStake
+  // (200000000000000000) and marketplaceBidFee (300000000000000000) — so both
+  // were measured against a list that structurally could not contain them, and
+  // both FAILED, each with an error telling the reader to go and re-read
+  // getMinMaxBidPricePerSecond(), which is not the getter for either value.
+  //
+  // The sentence this rejected is the one recurrence.mjs:469-471 certifies as the
+  // CORRECT post-fix form of the provider-stake line, byte for byte. Two blocking
+  // gates reading the SAME record disagreed about the same sentence, and the one
+  // that wins blocks the push. Widening here rather than narrowing there, because
+  // the value is genuinely in the oracle: the allow-list was short, the sentence
+  // was right.
   for (const { file, text } of lines) {
     for (const m of text.matchAll(/`(\d{10,})`\s*wei/g)) {
       checked++;
-      const known = [...e.floorWei, ...e.ceilWei];
-      if (!known.includes(m[1])) {
-        fail('economics', file, `wei value ${m[1]} matches no observed bid bound (min ${e.floorWei.join('/')}, max ${e.ceilWei.join('/')}) — ${BOUNDS_NOTE}`);
+      if (observedWei().has(m[1])) continue;
+      const param = paramFromContext(text);
+      if (param) {
+        const p = PARAMS[param];
+        const seen = NETWORKS.filter((n) => p.networks[n]).map((n) => `${n} ${p.networks[n].value}`).join(', ');
+        fail('economics', file, `wei value ${m[1]} is not a value this record has observed for ${param} `
+          + `— ${p.getter} returned ${seen}. Re-read ${p.getter} and update `
+          + `tools/docs-audit/onchain-params.mjs, the only place these values live`
+          + (BID_BOUND_PARAMS.has(param) ? ` — ${BOUNDS_NOTE}` : ''));
+      } else {
+        // No context word, so naming ONE getter would be a guess presented as a
+        // diagnosis. List what the record holds instead and let the reader pick.
+        const all = [...observedWei().entries()]
+          .map(([v, uses]) => `${v} (${uses.map((u) => `${u.param}/${u.network}`).join(', ')})`).join('; ');
+        fail('economics', file, `wei value ${m[1]} matches no value in tools/docs-audit/onchain-params.mjs, `
+          + `and the line names no parameter to check it against. Observed: ${all}`);
       }
     }
   }
   return checked;
+}
+
+// Every wei-denominated value the oracle has observed, indexed by the literal
+// digits a document would quote. Built from PARAMS itself rather than from a
+// hand-kept list of accessors, so a parameter added there is covered here
+// without a second edit — which is how the bid-bounds-only list got stale.
+// RETIRED values are deliberately absent: they are what recurrence.mjs hunts,
+// and a doc restating one must still fail here.
+let _observed = null;
+function observedWei() {
+  if (_observed) return _observed;
+  _observed = new Map();
+  for (const [param, p] of Object.entries(PARAMS)) {
+    if (!/^wei(\/sec)?$/.test(p.unit || '')) continue;
+    for (const n of NETWORKS) {
+      const v = p.networks[n];
+      if (!v || v.value == null) continue;
+      if (!_observed.has(v.value)) _observed.set(v.value, []);
+      _observed.get(v.value).push({ param, network: n, getter: p.getter });
+    }
+  }
+  return _observed;
+}
+
+const BID_BOUND_PARAMS = new Set(['bidMinPricePerSecond', 'bidMaxPricePerSecond']);
+// Which parameter a line is talking about, so the error names the getter for the
+// value it ACTUALLY saw. Provider stake and bid fee are tested FIRST: "provider
+// minimum stake" contains "minimum" and would otherwise be diagnosed as a bid
+// floor, which is the same wrong-getter error one step later.
+const PARAM_CONTEXT = [
+  [/provider[^\n]{0,24}stake|providerMinStake|getProviderMinimumStake/i, 'providerMinStake'],
+  [/bid\s*fee|marketplaceBidFee|getBidFee/i, 'marketplaceBidFee'],
+  [/ceiling|maximum|max\s*bid|bidMaxPricePerSecond/i, 'bidMaxPricePerSecond'],
+  [/floor|minimum|min\s*bid|bidMinPricePerSecond/i, 'bidMinPricePerSecond'],
+];
+function paramFromContext(text) {
+  const hit = PARAM_CONTEXT.find(([re]) => re.test(text));
+  return hit ? hit[1] : null;
 }
 
 // --------------------------------------------------------------- link targets
@@ -257,6 +324,57 @@ function selftest() {
   // links
   run('link to a real page', [{ file: 'docs/x.mdx', text: 'see [p](/concepts/tokens-and-fees)' }], checkLinks, false);
   run('link to a near-miss page', [{ file: 'docs/x.mdx', text: 'see [p](/concepts/tokens-and-fee)' }], checkLinks, true);
+
+  // --- the two gates must agree about the same sentence --------------------
+  // recurrence.mjs:469-471 carries this line as its example of the CORRECT
+  // post-fix form of the provider-stake claim and asserts it must NOT fire
+  // there. It is BUILT the same way — from PARAMS, not typed — so the two gates
+  // are quoting one record rather than two copies of a number. Before the
+  // allow-list was widened this failed here while passing there: one blocking
+  // gate demanded what another forbade, and the one that wins blocks the push.
+  const stakeSentence = '- Provider stake: `' + PARAMS.providerMinStake.networks['base-mainnet'].value
+    + '` wei on Base mainnet, the corrected value.';
+  run('provider stake, the value recurrence.mjs certifies as correct',
+    [{ file: 'x.mdx', text: stakeSentence }], checkEconomics, false);
+  run('the mainnet bid fee quoted in wei',
+    [{ file: 'x.mdx', text: 'the bid fee is `' + PARAMS.marketplaceBidFee.networks['base-mainnet'].value + '` wei on Base mainnet' }],
+    checkEconomics, false);
+  // Near-misses: one digit off each, so the widening cannot be mistaken for
+  // "any long number now passes".
+  run('provider stake one digit short',
+    [{ file: 'x.mdx', text: '- Provider stake: `' + PARAMS.providerMinStake.networks['base-mainnet'].value.slice(0, -1) + '` wei on Base mainnet' }],
+    checkEconomics, true);
+  run('the RETIRED 0.1 provider stake in wei',
+    [{ file: 'x.mdx', text: '- Provider stake: `' + PARAMS.providerMinStake.retired[0].value + '` wei on Base mainnet' }],
+    checkEconomics, true);
+
+  // --- the error must name the getter for the value it ACTUALLY saw ---------
+  // The old message sent every wei mismatch to getMinMaxBidPricePerSecond(),
+  // including provider stakes and bid fees. A diagnosis naming the wrong
+  // instrument is worse than none: it is a confident instruction to go and
+  // re-read a getter that was never going to hold the number.
+  const msgFor = (text) => {
+    const before = failures.length;
+    checkEconomics([{ file: 'x.mdx', text }]);
+    const got = failures.slice(before).map((f) => f.msg).join(' | ');
+    failures.length = before;
+    return got;
+  };
+  for (const [label, text, want, notWant] of [
+    ['provider-stake mismatch names getProviderMinimumStake()',
+     '- Provider stake: `999999999999999999` wei on Base mainnet',
+     'getProviderMinimumStake()', 'getMinMaxBidPricePerSecond()'],
+    ['bid-fee mismatch names getBidFee()',
+     'the bid fee is `999999999999999999` wei on Base mainnet',
+     'getBidFee()', 'getMinMaxBidPricePerSecond()'],
+    ['bid-floor mismatch still names getMinMaxBidPricePerSecond()',
+     'floor is `999999999999999999` wei/sec',
+     'getMinMaxBidPricePerSecond()', 'getProviderMinimumStake()'],
+  ]) {
+    const msg = msgFor(text);
+    cases.push([msg.includes(want) && !msg.includes(notWant), label,
+      msg ? `names ${want}` : 'DID NOT FIRE — cannot check the message']);
+  }
 
   let bad = 0;
   console.log('--- verify-fixes selftest ---');
