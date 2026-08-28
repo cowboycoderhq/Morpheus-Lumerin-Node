@@ -38,7 +38,7 @@ import {
   writeStartPlugin,
   writeEndpointDescriptor
 } from '../../opencode/setup'
-import { GrokSupervisor, bringAppToFront } from '../../grok/supervisor'
+import { bringAppToFront, detectGrokPath } from '../../app-window'
 import {
   buildGrokLaunchScript,
   buildGrokModelsToml,
@@ -1252,16 +1252,13 @@ const provisionOpencodePlugins = async (api: OpenAiApiConfig) => {
 // takes the command off the wire — that part is stable — and the choosing
 // happens in this window, which we own. See ../../grok/supervisor.ts.
 
-let grokSupervisor: GrokSupervisor | null = null
-const grokPicker = new Map<number, (outcome: { opened: boolean; note?: string }) => void>()
-
 /**
- * Picker requests raised by the ENDPOINT rather than by the relay.
+ * Picker requests raised by the endpoint.
  *
- * Both render the same modal, so both travel on one channel and are told apart
- * by request id. The offer ids start far above anything the relay's own counter
- * reaches, because two live sources numbering from zero would eventually answer
- * each other's dialogs.
+ * Ids start high for a reason that has outlived its cause: they once had to
+ * avoid colliding with the relay's own counter. The relay is archived; the
+ * numbering is left alone because nothing is gained by renumbering a live
+ * channel.
  */
 const offerModelByRequestId = new Map<
   number,
@@ -1269,51 +1266,6 @@ const offerModelByRequestId = new Map<
 >()
 let nextOfferRequestId = 1_000_000_000
 
-const ensureGrokSupervisor = (): GrokSupervisor => {
-  if (!grokSupervisor) {
-    grokSupervisor = new GrokSupervisor({
-      grokPath: () => {
-        // A GUI app does not inherit the user's shell PATH, so probe where
-        // grok's own installer puts it.
-        for (const p of [
-          path.join(os.homedir(), '.grok', 'bin', 'grok'),
-          '/opt/homebrew/bin/grok',
-          '/usr/local/bin/grok'
-        ]) {
-          if (fs.existsSync(p)) return p
-        }
-        return undefined
-      },
-      log: (m) => log.info(m),
-      onStatus: (status) => {
-        BrowserWindow.getAllWindows()[0]?.webContents.send('grok-status', status)
-      },
-      askRenderer: (request) =>
-        new Promise((resolve) => {
-          const win = bringAppToFront()
-          if (!win) {
-            // Resolve rather than hang: the terminal is holding a turn open on
-            // a dialog that can never appear.
-            resolve({ opened: false, note: 'the app window is not available' })
-            return
-          }
-          let settled = false
-          const done = (outcome: { opened: boolean; note?: string }) => {
-            if (settled) return
-            settled = true
-            grokPicker.delete(request.requestId)
-            resolve(outcome)
-          }
-          grokPicker.set(request.requestId, done)
-          // A renderer that never answers must not wedge the turn forever.
-          const timer = setTimeout(() => done({ opened: false, note: 'timed out' }), 10 * 60_000)
-          timer.unref?.()
-          win.webContents.send('grok-picker-request', request)
-        })
-    })
-  }
-  return grokSupervisor
-}
 
 /**
  * Publish the models grok can currently reach, into its managed config.
@@ -1481,8 +1433,8 @@ const startGrokModelsRefresh = (): void => {
  * they reported.
  */
 export const openInGrok = async ({ modelId, cwd }: { modelId: string; cwd?: string }) => {
-  const grok = ensureGrokSupervisor().status()
-  if (!grok.installed || !grok.grokPath) {
+  const grokPath = detectGrokPath()
+  if (!grokPath) {
     return {
       ok: false,
       reason: 'not_installed',
@@ -1519,7 +1471,7 @@ export const openInGrok = async ({ modelId, cwd }: { modelId: string; cwd?: stri
   const workdir = cwd || (getOpenAiApiSetting()?.opencodeCwd as string) || app.getPath('home')
   try {
     const script = buildGrokLaunchScript({
-      grokPath: grok.grokPath,
+      grokPath: grokPath,
       // The ADVERTISED id, so grokModelKey produces the key the config declares.
       modelId: advertised,
       cwd: workdir
@@ -1533,14 +1485,8 @@ export const openInGrok = async ({ modelId, cwd }: { modelId: string; cwd?: stri
 
 export const getGrokStatus = async () => {
   startGrokModelsRefresh()
-  return ensureGrokSupervisor().status()
-}
-
-export const setGrokEnabled = async (enabled: boolean) => {
-  const sup = ensureGrokSupervisor()
-  if (enabled) return sup.start()
-  await sup.stop()
-  return sup.status()
+  const grokPath = detectGrokPath()
+  return { installed: !!grokPath, grokPath }
 }
 
 /** The renderer reporting what the user chose. */
@@ -1682,8 +1628,6 @@ export const grokPickerDone = async (payload: {
   opened: boolean
   note?: string
 }) => {
-  grokPicker.get(payload.requestId)?.({ opened: payload.opened, note: payload.note })
-
   // An endpoint-raised offer has no waiting turn to resolve — what it needs is
   // the gate updated, so a decline buys quiet and an open drops the cached model
   // list before the agent resends.
