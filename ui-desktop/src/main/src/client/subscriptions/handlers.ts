@@ -23,7 +23,7 @@ import {
   type OpenAiApiConfig,
   type ExternalActivity
 } from '../../openai-compat/server'
-import { claimNewestOffer } from '../../openai-compat/session-offers'
+import { claimNewestOffer, OFFER_TTL_MS } from '../../openai-compat/session-offers'
 import { forCodingAgents, isPickerRoute } from '../../openai-compat/protocol'
 import { patchGrokUserConfig } from '../../grok/user-config'
 import { toggleStarredModel as applyStarToggle } from '../../../../shared/starred-models'
@@ -1108,6 +1108,12 @@ const ensureOpenAiServer = (): OpenAiCompatServer => {
           return
         }
         const requestId = nextOfferRequestId++
+        // Drop anything already past its window before adding. Otherwise an
+        // offer raised at a moment no renderer could answer — and never asked
+        // for afterwards — sits in this map for the life of the process.
+        for (const [id, queued] of [...offerModelByRequestId.entries()]) {
+          if (Date.now() - queued.at >= OFFER_TTL_MS) offerModelByRequestId.delete(id)
+        }
         offerModelByRequestId.set(requestId, {
           modelId: model.id,
           advertised: model.advertised,
@@ -1415,6 +1421,11 @@ const watchGrokConfig = (): void => {
  * later run cannot overwrite the original backup with our own output.
  */
 const ensureGrokSyncDisabled = (): void => {
+  // ONLY when we are actually publishing models. This runs off the endpoint's
+  // construction, which happens the moment anything reads its config — opening
+  // Settings was enough. Editing someone's grok config because they glanced at
+  // a screen, for a feature they never switched on, is not ours to do.
+  if (!readOpenAiConfig().enabled) return
   const grokHome = path.join(os.homedir(), '.grok')
   if (!fs.existsSync(grokHome)) return
 
@@ -1592,8 +1603,12 @@ export const toggleStarredModel = async ({ modelId }: { modelId: string }) => {
   // let opencode keep receiving local models for weeks.
   const starredModelIds = applyStarToggle(cfg.starredModelIds ?? [], modelId)
   setOpenAiApiSetting({ ...cfg, starredModelIds })
-  // Publish immediately: the point of pinning is that a terminal can see it.
-  await refreshGrokModels().catch((e) => log.warn(`grok models: ${String(e)}`))
+  // Republish, but do NOT make the click wait for it: refreshGrokModels forces
+  // a model-list rebuild, which is a router round trip — a second on a good
+  // day, and this endpoint has taken 108 on a bad one. The pin is already
+  // stored; the terminal seeing it is worth a moment's delay, a frozen button
+  // is not.
+  void refreshGrokModels().catch((e) => log.warn(`grok models: ${String(e)}`))
   return { starredModelIds }
 }
 

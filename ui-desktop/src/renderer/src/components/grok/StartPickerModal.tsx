@@ -86,9 +86,6 @@ type Props = {
   open: boolean;
   /** Free text typed after `/start`, may be ''. Prefills the model search. */
   args: string;
-  /** Endpoint base + bearer token, from client.getOpenAiApiConfig(). */
-  baseUrl: string;
-  token: string;
   /** ALWAYS called exactly once per `open` — cancel, error, or success. */
   onDone: (outcome: { opened: boolean; note?: string }) => void;
   /**
@@ -180,13 +177,11 @@ type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
  * what "Failed to fetch" was. Main has no Origin and holds the token, so the
  * rule stays as strict as it was for real pages.
  *
- * `baseUrl`/`token` are still taken as props and deliberately ignored — main
- * reads the live values, so a port or token that moved cannot strand the picker
- * with a stale pair.
+ * It takes neither a base URL nor a token, because it needs neither: main reads
+ * the live values at call time, so a port or token that moved cannot strand
+ * this dialog with a stale pair — and the renderer never holds the credential.
  */
 async function apiRequest<T>(
-  _baseUrl: string,
-  _token: string,
   path: string,
   init?: RequestInit,
 ): Promise<ApiResult<T>> {
@@ -241,7 +236,7 @@ const formatMor = (n: number | null | undefined, decimals = 4): string =>
 const truncateAddr = (addr: string): string =>
   addr.length > 14 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
 
-function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Props) {
+function StartPickerModal({ open, args, onDone, onOpened }: Props) {
   const prefersReducedMotion = useReducedMotion();
 
   // `onDone` is called through a ref so a stale closure captured by the
@@ -314,8 +309,6 @@ function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Prop
     setCatalogLoading(true);
     setCatalogError(null);
     const res = await apiRequest<Catalog>(
-      baseUrl,
-      token,
       '/morpheus/v1/catalog',
     );
     setCatalogLoading(false);
@@ -348,8 +341,6 @@ function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Prop
     // Fire-and-forget: the effect itself cannot be async.
     void (async () => {
       const res = await apiRequest<Catalog>(
-        baseUrl,
-        token,
         '/morpheus/v1/catalog',
       );
       setCatalogLoading(false);
@@ -445,8 +436,6 @@ function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Prop
     setProvidersError(null);
     setProvidersLoading(true);
     const res = await apiRequest<ProvidersResponse>(
-      baseUrl,
-      token,
       `/morpheus/v1/providers?modelId=${encodeURIComponent(m.id)}`,
     );
     setProvidersLoading(false);
@@ -472,7 +461,7 @@ function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Prop
     setQuote(null);
     setQuoteError(null);
     setQuoteLoading(true);
-    const res = await apiRequest<Quote>(baseUrl, token, '/morpheus/v1/quote', {
+    const res = await apiRequest<Quote>('/morpheus/v1/quote', {
       method: 'POST',
       body: JSON.stringify({
         modelId: model.id,
@@ -501,8 +490,6 @@ function StartPickerModal({ open, args, baseUrl, token, onDone, onOpened }: Prop
     setOpening(true);
     setOpenError(null);
     const res = await apiRequest<OpenSessionResponse>(
-      baseUrl,
-      token,
       '/morpheus/v1/sessions',
       {
         method: 'POST',
