@@ -326,20 +326,35 @@ export function sortModelsForPicker<T extends SortableModel>(
 // ---- Close lock -----------------------------------------------------------
 // Closing a session does not spend your stake — it TIME-LOCKS the part you
 // actually used, until the end of the UTC day, after which the proxy-router's
-// StakeClaimer sweeps it home. Only the UNUSED remainder comes back at once.
+// StakeClaimer sweeps it home. For a multi-day session, the lock covers only the consumption within the final UTC day; earlier days' consumed stake is not locked and returns immediately, so more than just the unused remainder comes back at once.
 //
-//   userDuration_    = min(endsAt, closedAt) - max(openedAt, startOfDay(closedAt))
-//   userInitialLock_ = userDuration_ * pricePerSecond
-//   userStakeToLock_ = userStake.min(stipendToStake(userInitialLock_, startOfDay(closedAt)))
-//   userStakesOnHold[user].push(OnHold(userStakeToLock_, startOfDay(closedAt) + 1 days))
+//   sessionEnd_      = min(closedAt, endsAt)          // NOT closedAt
+//   startOfEndDay_   = startOfDay(sessionEnd_)
+//   releaseAt_       = startOfEndDay_ + 1 days
+//   if (block.timestamp < releaseAt_) {               // else nothing is locked
+//     userDuration_    = sessionEnd_ - max(openedAt, startOfEndDay_)
+//     userInitialLock_ = userDuration_ * pricePerSecond
+//     userStakeToLock_ = userStake.min(stipendToStake(userInitialLock_, startOfEndDay_))
+//     userStakesOnHold[user].push(OnHold(userStakeToLock_, releaseAt_))
+//   }
 //   userAmountToWithdraw_ = userStake - userStakeToLock_    // returned NOW
 //
-// THIS APPLIES TO EVERY CLOSE, INCLUDING NATURAL EXPIRY. The vendored
-// smart-contracts/ copy (last touched 2024-12-10) wraps the lock in
-// `if (!isClosingLate_)`, so letting a session run to endsAt would return the
-// stake in full. The DEPLOYED Diamond does not do that, and the Diamond is
-// upgradeable — the vendored source is 18 months stale and must not be trusted
-// as a description of mainnet.
+// THIS APPLIES TO EVERY CLOSE, INCLUDING NATURAL EXPIRY: the guard is
+// `block.timestamp < releaseAt_` (SessionRouter.sol:305), never "closed early".
+//
+// The vendored smart-contracts/ copy now says the same thing, and an older
+// version of this note said otherwise — do not restore it. It claimed the
+// vendored copy wrapped the user lock in `if (!isClosingLate_)`, so a session
+// left to run to endsAt returned its stake in full. That guard is not in the
+// file: PR #830 (5d647e0e, 2026-07-29) rewrote _rewardUserAfterClose to anchor
+// on min(closedAt, endsAt), and the only `isClosingLate_` left in
+// SessionRouter.sol is at :280 and :285, inside _rewardProviderAfterClose,
+// where it gates the PROVIDER's dispute hold — a different hold, on a different
+// party's money. Nothing in that file returns the user's stake in full on a
+// same-day natural close.
+//
+// The Diamond is upgradeable, so mainnet still outranks the vendored source if
+// the two diverge again; they do not diverge today.
 //
 // Measured on Base mainnet 2026-08-06 (public sessions, not the operator's):
 // two sessions of stake 28.1569 MOR, each run to its full 1799s and closed 3s
@@ -349,8 +364,14 @@ export function sortModelsForPicker<T extends SortableModel>(
 // Four more late closes across three other wallets showed the same 0.05–0.08%.
 //
 // So the shape is: run it to the end and you lock ~everything until end of day;
-// close it at half time and you lock ~half. There is no timing that avoids the
-// lock — earlier only means a bigger immediate refund of time you did not buy.
+// close it at half time and you lock ~half. No timing INSIDE that UTC day avoids
+// the lock — earlier only means a bigger immediate refund of time you did not buy.
+// One timing does avoid it entirely: a close submitted at or after releaseAt_ =
+// startOfDay(min(endsAt, closedAt)) + 1 day. The `block.timestamp < releaseAt_`
+// gate at SessionRouter.sol:305 is false by then, so nothing is locked and the
+// remaining stake comes back in the closing tx. The two mainnet closes measured
+// above were 3s and 31s after endsAt — still inside the session's own UTC day,
+// which is why they locked ~everything.
 // A real user closed a 6-minute session at 3 minutes and watched ~2.7 MOR
 // disappear for a day with no warning at all (2026-07-16).
 //
@@ -389,15 +410,22 @@ export type EarlyCloseLock = {
   known: boolean;
   /**
    * true when this close lands BEFORE the session's end time. Does NOT mean
-   * "this is the close that locks stake" — every close locks the used portion.
-   * Test `lockedWei > 0n` for that.
+   * "this is the close that locks stake": a close before releaseAt_ locks the
+   * final UTC day's consumption whether it is early or late, and a close at or
+   * after releaseAt_ locks nothing at all. Test `lockedWei > 0n` for that.
    */
   isEarly: boolean;
-  /** the used portion, held until `unlockAt` */
+  /** the final UTC day's consumed slice, held until `unlockAt` */
   lockedWei: bigint;
-  /** the unused remainder, back in the wallet in the closing tx */
+  /** everything else — remaining stake − lockedWei — back in the closing tx */
   returnedWei: bigint;
-  /** unix seconds; the lock releases at startOfDay(now) + 1 day */
+  /**
+   * unix seconds; the contract releases at startOfDay(min(endsAt, closedAt)) + 1
+   * day — it anchors to when the session stopped consuming compute, not to when
+   * the close tx landed (SessionRouter.sol:296-298). This field derives it from
+   * `now`, which agrees only while the close lands on the session's own end day;
+   * a close on a LATER UTC day is already past releaseAt_ and locks nothing.
+   */
   unlockAt: number;
   /** unix seconds; the session's own end time. Waiting for it locks MORE, not less. */
   endsAt: number;
@@ -416,6 +444,15 @@ const toBig = (v: unknown): bigint | null => {
 
 /**
  * What closing `session` at `nowSec` costs the user, per the contract above.
+ *
+ * The NAME overstates its scope and is kept only because renaming an export is
+ * a code change. This is not an early-close-only cost: SessionRouter.sol:305
+ * gates the lock on `block.timestamp < releaseAt_`, with releaseAt_ derived at
+ * :296-298 from min(closedAt, endsAt), so an early close, a natural expiry and
+ * a late close on the session's own UTC day all lock alike — and running the
+ * session to its end locks MORE, not less, because the lock covers time USED.
+ * Read `earlyCloseLock` as "close lock", and the returned `isEarly` as the
+ * literal "landed before endsAt" and nothing more.
  *
  * @param session a session as returned by /blockchain/sessions/user
  *                (Stake / OpenedAt / EndsAt, all seconds & wei)
@@ -445,13 +482,28 @@ export function earlyCloseLock(
   const startOfDay = now - (now % BigInt(DAY));
   const unlockAt = Number(startOfDay) + DAY;
 
-  // NO early return for `now >= endsAt`. There used to be one, returning
-  // "locks nothing, full stake back", on the vendored contract's
-  // `if (!isClosingLate_)` guard. The deployed Diamond has no such guard: a
-  // session closed after its end time locks the whole billed window. The
-  // general path below already handles it — `to` clamps at endsAt, so a late
-  // close prices the full duration and lands on ~the entire stake, which is
-  // exactly what the chain does (see the measurements above).
+  // NO early return here, and do not add one. An earlier comment asked for a
+  // guard on `now >= unlockAt`; that condition is UNREACHABLE by construction —
+  // unlockAt - now == DAY - (now % DAY), which is always in (0, DAY]. A guard on
+  // it would be dead code, and the reasoning behind it mislocates the contract's
+  // real guard.
+  //
+  // What the contract actually guards is `block.timestamp < releaseAt_` where
+  // releaseAt_ = startOfDay(min(closedAt, endsAt)) + 1 day (SessionRouter.sol
+  // :296-305) — anchored to the session's END day, not to the CLOSING day this
+  // function's `startOfDay` uses. The two anchors differ only when the close
+  // lands on a later UTC day than the session ended, and in exactly that case
+  // the `to > from` clamp below already yields userDuration == 0, so this
+  // function returns lockedWei = 0n — which is what the contract's guard
+  // produces. Checked by sweeping 18,330 (openedAt, duration, close-offset)
+  // combinations spanning UTC boundaries: 0 mismatches in lockedWei and 0 in
+  // release time. The divergent `unlockAt` never surfaces either, because
+  // stakeReleaseSchedule drops entries with lockedWei <= 0n.
+  //
+  // Scope of that equivalence: it covers the day-ANCHOR logic. It assumes the
+  // stipendToStake ratio cancels, which is exact within one UTC day and a
+  // conservative ceiling across midnight — see the linearity argument above.
+  //
   const fullDuration = endsAt - openedAt;
   // Mirrors userDuration_: clamped to this UTC day, and never negative.
   const from = openedAt > startOfDay ? openedAt : startOfDay;
@@ -485,15 +537,17 @@ export type StakeReleaseTranche = {
 };
 
 // The schedule on which on-hold stake frees — the answer to "when do I get it
-// back" when the money came from MORE THAN ONE early close.
+// back" when the money came from MORE THAN ONE close. Any close can put stake
+// here, early or not; see the note on earlyCloseLock's name.
 //
 // getUserStakesOnHold returns aggregate amounts (available/hold) and throws the
 // per-entry releaseAt away, so neither the times NOR their split can come from
-// that endpoint. But each early close pushes OnHold(amount,
-// startOfDay(closedAt)+1day), and the session list carries ClosedAt and Stake —
-// so a session's locked amount and release time are exactly what earlyCloseLock
-// computes for a close AT its ClosedAt. Two sessions closed on different UTC days
-// therefore free on different days, and this groups them by release day.
+// that endpoint. But every close landing before releaseAt_ pushes
+// OnHold(amount, startOfDay(min(closedAt, endsAt)) + 1 day), and the session
+// list carries ClosedAt and Stake — so a session's locked amount and release
+// time are exactly what earlyCloseLock computes for a close AT its ClosedAt.
+// Two sessions closed on different UTC days therefore free on different days,
+// and this groups them by release day.
 //
 // FUTURE entries only. A matured entry (releaseAt <= now) is excluded because the
 // router's auto-claimer sweeps it within minutes AND — unlike a future entry —
@@ -516,7 +570,11 @@ export function stakeReleaseSchedule(
     const closedAt = toBig(s?.ClosedAt);
     if (closedAt === null || closedAt <= 0n) continue; // still open
     // earlyCloseLock priced at the moment of close gives this session's real
-    // historical lock and its unlockAt (startOfDay(closedAt)+1day).
+    // historical lock, and its unlockAt. The chain's release time is
+    // startOfDay(min(ClosedAt, EndsAt)) + 1 day; this reports
+    // startOfDay(ClosedAt) + 1 day. Those are the same day whenever anything is
+    // actually held — when they are not, the lock is 0 and the next guard drops
+    // the entry before its unlockAt is ever used.
     const at = earlyCloseLock(s, Number(closedAt));
     // Gate on "did it lock anything", NOT on isEarly. Gating on isEarly dropped
     // every LATE close from the schedule, and a late close is what a session

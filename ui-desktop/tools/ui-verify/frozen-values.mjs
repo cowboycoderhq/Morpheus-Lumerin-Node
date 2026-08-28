@@ -16,7 +16,7 @@
 //    adversarial reviewer then found by swapping the theme on the real
 //    component.
 //
-// 2. Findings are split by REACHABILITY from App.tsx. This repo carries a dead
+// 2. Findings are split by REACHABILITY from `main.tsx`. This repo carries a dead
 //    legacy marketplace (contracts-list, unused icons, tools/) holding 40 of
 //    the 41 raw hits. Failing on those would make the gate red forever, and a
 //    gate that is always red is a gate nobody runs. A frozen value in code that

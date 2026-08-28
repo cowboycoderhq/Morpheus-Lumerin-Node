@@ -707,9 +707,9 @@ export class Orchestrator {
     // from orchestrator.config (contract addresses, ports, and PATHS), with no
     // user data or secrets in it (the router generates its own auth cookie
     // separately). Skipping meant a .env written by an OLDER or containerized
-    // build survived forever: a cached .env carrying Docker paths
-    // (PROXY_STORAGE_PATH=/app/app/data) made the router report its cookie at
-    // /app/app/data/.cookie — a path that doesn't exist on the host. getAuthHeaders
+    // build survived forever: a cached .env carrying a containerized
+    // COOKIE_FILE_PATH (the documented Docker quickstart sets /app/data/.cookie)
+    // made the router report a path that doesn't exist on the host. getAuthHeaders
     // then failed with ENOENT and onboarding died at its first authenticated
     // call, leaving a logged-in user with no wallet. Rewriting every launch keeps
     // the file in lockstep with the config (this also fixes stale IPFS_MULTADDR

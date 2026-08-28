@@ -76,10 +76,13 @@ const withDashboardState = (WrappedComponent) => {
       return { balances, rate };
     };
 
-    // Stake time-locked by closing a session EARLY. This is the money that used
-    // to simply vanish: the Diamond has always tracked it, but nothing in the
-    // app ever asked, so the user saw their balance drop and had no way to learn
-    // where it went or when it returns.
+    // Stake time-locked by closing a session before `releaseAt` - the start of
+    // the UTC day after it ended - which covers early, natural and late
+    // same-day closes alike, not early close alone (SessionRouter.sol:296-298,
+    // gated at :305 on `block.timestamp < releaseAt_`). This is the money that
+    // used to simply vanish: the Diamond has always tracked it, but nothing in
+    // the app ever asked, so the user saw their balance drop and had no way to
+    // learn where it went or when it returns.
     //
     // Fetched straight from the local proxy-router (same pattern as
     // withChatState.getProviders) rather than through the main process — the

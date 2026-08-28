@@ -63,9 +63,15 @@ func (c *BlockchainController) RegisterRoutes(r interfaces.Router) {
 	// sessions
 	r.GET("/proxy/sessions/:id/providerClaimableBalance", c.authConf.CheckAuth("get_sessions"), c.getProviderClaimableBalance)
 	r.POST("/proxy/sessions/:id/providerClaim", c.authConf.CheckAuth("session_provider_claim"), c.claimProviderBalance)
-	// Stake time-locked by closing sessions EARLY. The Diamond has always had
-	// getUserStakesOnHold/withdrawUserStakes; nothing ever published them, so the
-	// money was invisible to the UI and unreachable by the user.
+	// Stake time-locked by closing a session before the end of the UTC day it ended in
+	// (any close, not only an early one - SessionRouter.sol:305 gates on
+	// block.timestamp < releaseAt_, with releaseAt_ from :296-298). The Diamond has always had
+	// getUserStakesOnHold/withdrawUserStakes, but nothing called either until this
+	// route and the auto-claimer, so the money was invisible to the UI and
+	// unreachable by the user. Both halves are covered now: the GET below is the
+	// read side, and StakeClaimer (stake_claimer.go, started in proxyctl.go) is the
+	// write side — it withdraws matured stake on start and every claimInterval
+	// (10m), so the money comes home whether or not anyone looks.
 	r.GET("/blockchain/stakes/on-hold", c.authConf.CheckAuth("get_balance"), c.getStakesOnHold)
 	r.GET("/blockchain/sessions/user", c.authConf.CheckAuth("get_sessions"), c.getSessionsForUser)
 	r.GET("/blockchain/sessions/user/ids", c.authConf.CheckAuth("get_sessions"), c.getSessionsIdsForUser)
@@ -79,16 +85,6 @@ func (c *BlockchainController) RegisterRoutes(r interfaces.Router) {
 	r.GET("/blockchain/token/supply", c.authConf.CheckAuth("get_supply"), c.getSupply)
 }
 
-// GetProviderClaimableBalance godoc
-//
-//	@Summary		Get Provider Claimable Balance
-//	@Description	Get provider claimable balance from session
-//	@Tags			sessions
-//	@Produce		json
-//	@Param			id	path		string	true	"Session ID"
-//	@Success		200	{object}	structs.BalanceRes
-//	@Security		BasicAuth
-//	@Router			/proxy/sessions/{id}/providerClaimableBalance [get]
 // GetStakesOnHold godoc
 //
 //	@Summary		Get stake on hold from early session closes
@@ -96,6 +92,7 @@ func (c *BlockchainController) RegisterRoutes(r interfaces.Router) {
 //	@Tags			wallet
 //	@Produce		json
 //	@Success		200	{object}	structs.StakesOnHoldRes
+//	@Security		BasicAuth
 //	@Router			/blockchain/stakes/on-hold [get]
 func (c *BlockchainController) getStakesOnHold(ctx *gin.Context) {
 	available, hold, err := c.service.GetUserStakesOnHold(ctx)
@@ -110,6 +107,16 @@ func (c *BlockchainController) getStakesOnHold(ctx *gin.Context) {
 	})
 }
 
+// GetProviderClaimableBalance godoc
+//
+//	@Summary		Get Provider Claimable Balance
+//	@Description	Get provider claimable balance from session
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			id	path		string	true	"Session ID"
+//	@Success		200	{object}	structs.BalanceRes
+//	@Security		BasicAuth
+//	@Router			/proxy/sessions/{id}/providerClaimableBalance [get]
 func (c *BlockchainController) getProviderClaimableBalance(ctx *gin.Context) {
 	var params structs.PathHex32ID
 	err := ctx.ShouldBindUri(&params)
@@ -386,7 +393,7 @@ func (c *BlockchainController) getAllModels(ctx *gin.Context) {
 
 // GetBidsByModelAgent godoc
 //
-//	@Summary		Get Bids by	Model Agent
+//	@Summary		Get Bids by Model Agent
 //	@Description	Get bids from blockchain by model agent
 //	@Tags			bids
 //	@Produce		json
@@ -432,7 +439,7 @@ func (c *BlockchainController) getBidsByModelAgent(ctx *gin.Context) {
 //	@Param			request	query		structs.QueryOffsetLimitOrder	true	"Query Params"
 //	@Success		200		{object}	structs.BidsRes
 //	@Security		BasicAuth
-//	@Router			/blockchain/models/{id}/bids [get]
+//	@Router			/blockchain/models/{id}/bids/active [get]
 func (c *BlockchainController) getActiveBidsByModel(ctx *gin.Context) {
 	var params structs.PathHex32ID
 	err := ctx.ShouldBindUri(&params)
@@ -495,7 +502,6 @@ func (s *BlockchainController) getBalance(ctx *gin.Context) {
 //	@Security		BasicAuth
 //	@Success		200	{object}	structs.TransactionsRes
 //	@Router			/blockchain/transactions [get]
-//	@Security		BasicAuth
 func (c *BlockchainController) getTransactions(ctx *gin.Context) {
 	page, limit, err := getPageLimit(ctx)
 	if err != nil {

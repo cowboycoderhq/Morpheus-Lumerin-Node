@@ -12,9 +12,15 @@ import (
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/lib"
 )
 
+// Fixtures are VENDORED under testdata/, not read from a sibling checkout.
+// The previous paths pointed at ../../secretvm-verify/, a directory this repo
+// neither contains, ignores, nor provisions — so all ten fixture-backed tests
+// here failed on any clean checkout, which is indistinguishable from ten tests
+// passing if only the exit code is read. See testdata/README.md for provenance
+// and why the copies are vendored rather than fetched.
 const (
-	testDataRelPath    = "../../secretvm-verify/test-data"
-	registryCSVRelPath = "../../secretvm-verify/artifacts_registry/tdx.csv"
+	testDataRelPath    = "testdata"
+	registryCSVRelPath = "testdata/tdx.csv"
 )
 
 func readTestFixture(t *testing.T, filename string) string {

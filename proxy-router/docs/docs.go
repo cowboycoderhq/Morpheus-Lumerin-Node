@@ -753,6 +753,64 @@ const docTemplate = `{
                 "tags": [
                     "bids"
                 ],
+                "summary": "Get Bids by Model Agent",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ModelAgent ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "example": 10,
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 0,
+                        "type": "integer",
+                        "example": 0,
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "asc",
+                            "desc"
+                        ],
+                        "type": "string",
+                        "example": "asc",
+                        "name": "order",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/structs.BidsRes"
+                        }
+                    }
+                }
+            }
+        },
+        "/blockchain/models/{id}/bids/active": {
+            "get": {
+                "security": [
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "Get bids from blockchain by model agent",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bids"
+                ],
                 "summary": "Get Active Bids by Model",
                 "parameters": [
                     {
@@ -1491,6 +1549,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/blockchain/stakes/on-hold": {
+            "get": {
+                "security": [
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "MOR time-locked by closing sessions before they ended. ` + "`" + `available` + "`" + ` has matured and is swept home automatically by the stake auto-claimer; ` + "`" + `hold` + "`" + ` is still locked (released a day after the UTC day the session was closed).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "wallet"
+                ],
+                "summary": "Get stake on hold from early session closes",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/structs.StakesOnHoldRes"
+                        }
+                    }
+                }
+            }
+        },
         "/blockchain/token/supply": {
             "get": {
                 "security": [
@@ -1519,9 +1602,6 @@ const docTemplate = `{
         "/blockchain/transactions": {
             "get": {
                 "security": [
-                    {
-                        "BasicAuth": []
-                    },
                     {
                         "BasicAuth": []
                     }
@@ -2596,9 +2676,7 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
-                        "schema": {
-                            "type": "object"
-                        }
+                        "schema": {}
                     }
                 }
             }
@@ -2915,6 +2993,49 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/proxyapi.ResultResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/chats/{id}/session": {
+            "post": {
+                "security": [
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Bind a chat to the session currently serving it",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "hex32",
+                        "description": "Chat ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Session",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/proxyapi.UpdateChatSessionReq"
+                        }
                     }
                 ],
                 "responses": {
@@ -3268,6 +3389,9 @@ const docTemplate = `{
                 "teeType": {
                     "$ref": "#/definitions/attestation.TEEType"
                 },
+                "tlsBindingKind": {
+                    "$ref": "#/definitions/attestation.TLSBindingKind"
+                },
                 "verifiedAt": {
                     "type": "string"
                 },
@@ -3301,6 +3425,17 @@ const docTemplate = `{
             "x-enum-varnames": [
                 "TEETypeTDX",
                 "TEETypeSEV"
+            ]
+        },
+        "attestation.TLSBindingKind": {
+            "type": "string",
+            "enum": [
+                "spki",
+                "certificate"
+            ],
+            "x-enum-varnames": [
+                "TLSBindingSPKI",
+                "TLSBindingCertificate"
             ]
         },
         "authapi.AddUserReq": {
@@ -3348,7 +3483,7 @@ const docTemplate = `{
                 "allowances": {
                     "type": "object",
                     "additionalProperties": {
-                        "$ref": "#/definitions/lib.BigInt"
+                        "type": "string"
                     }
                 },
                 "isConfirmed": {
@@ -3531,6 +3666,10 @@ const docTemplate = `{
                 "modelId": {
                     "type": "string"
                 },
+                "sessionId": {
+                    "description": "Mirrors ChatHistory.SessionID so the chat LIST alone is enough to bind each\nrow to its own session; the client would otherwise have to fetch every\nchat's full transcript just to learn which session it belongs to.",
+                    "type": "string"
+                },
                 "title": {
                     "type": "string"
                 }
@@ -3549,6 +3688,10 @@ const docTemplate = `{
                     }
                 },
                 "modelId": {
+                    "type": "string"
+                },
+                "sessionId": {
+                    "description": "The marketplace session this chat's turns were served by. Empty for local\nmodels, and empty for chats written before this field existed (Go leaves\nabsent JSON fields at the zero value, so old files load fine and pick the\nid up on their next write — no migration).\n\nThis exists so a chat can be re-bound to ITS OWN session. Without it the\nclient had to re-derive the session from the model on every chat switch\n(first open session wins), which made two chats on one model share one\nsession and made a second session on the same provider unreachable.",
                     "type": "string"
                 },
                 "title": {
@@ -3577,14 +3720,6 @@ const docTemplate = `{
                 },
                 "responseAt": {
                     "type": "integer"
-                }
-            }
-        },
-        "lib.BigInt": {
-            "type": "object",
-            "properties": {
-                "big.Int": {
-                    "type": "string"
                 }
             }
         },
@@ -4180,6 +4315,20 @@ const docTemplate = `{
                 }
             }
         },
+        "proxyapi.UpdateChatSessionReq": {
+            "type": "object",
+            "required": [
+                "sessionId"
+            ],
+            "properties": {
+                "modelId": {
+                    "type": "string"
+                },
+                "sessionId": {
+                    "type": "string"
+                }
+            }
+        },
         "proxyapi.UpdateChatTitleReq": {
             "type": "object",
             "required": [
@@ -4690,6 +4839,17 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/structs.Session"
                     }
+                }
+            }
+        },
+        "structs.StakesOnHoldRes": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "string"
+                },
+                "hold": {
+                    "type": "string"
                 }
             }
         },

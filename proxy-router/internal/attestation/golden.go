@@ -88,13 +88,22 @@ type GoldenValues struct {
 	// AMD SEV-SNP — per-template map keyed by SecretVM template name
 	// (small/medium/large/2xlarge/4xlarge). The launch digest depends on
 	// vCPU count, so the manifest publishes one value per portal-selectable
-	// VM size; consumers pick the entry matching the live quote's family_id.
+	// VM size. NOTE: MatchSEVMeasurement below has no caller in the runtime
+	// path - SEV workload verification selects by family_id and vmType and
+	// brute-forces the registry when family_id is unset (sev_workload.go:52,
+	// :82, :103). This map is published by CI and parsed here; nothing
+	// compares a live measurement against it.
 	SEVPerTemplate map[string]string
 }
 
 // MatchSEVMeasurement returns the template name whose published golden SEV
 // measurement equals `live` (case-insensitive). Returns an empty string when
 // no template matches or when no per-template values were published.
+//
+// UNUSED in the runtime path. Kept because the per-template map it reads is
+// part of the published manifest schema, but SEV workload verification does
+// not call it: sev_workload.go selects by family_id/vmType and brute-forces
+// the registry when family_id is unset.
 func (g *GoldenValues) MatchSEVMeasurement(live string) string {
 	if g == nil || live == "" {
 		return ""

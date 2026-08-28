@@ -1263,8 +1263,8 @@ const provisionOpencodePlugins = async (api: OpenAiApiConfig) => {
 // `/start` is typed in a terminal, so the picker cannot live there: three
 // attempts at another tool's in-terminal UI failed on APIs that were published
 // but absent, or present and then removed by a self-installed update. The relay
-// takes the command off the wire — that part is stable — and the choosing
-// happens in this window, which we own. See ../../grok/supervisor.ts.
+// that took the command off the wire is archived (9f653b3c); the choosing happens
+// in this window, which we own. What survives of it is in ../../app-window.ts.
 
 /**
  * Picker requests raised by the endpoint.
