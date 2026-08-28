@@ -37,7 +37,9 @@ for with real defects.
 ## The two verification kits — both are load-bearing
 - `ui-desktop/tools/ui-verify` (`npm run verify`) — logic checks, the **frozen-value
   gate**, and 24 isolation cases that mount REAL components in Playwright
-  (`tools/ui-verify/isolate/cases/`, excluding the `_mount.jsx` helper).
+  (`ui-desktop/tools/ui-verify/isolate/cases/`, excluding the `_mount.jsx`
+  helper). The `ui-desktop/` prefix matters: there is a second, unrelated
+  `tools/ui-verify/` at the repo root, and it has no `isolate/` directory.
   - `npm run frozen` — every colour-valued declaration must derive from `props.theme`.
     Queries the INVARIANT, not a list of literals; scans `.jsx/.tsx/.html/.css`;
     splits findings by reachability from the entry. Live findings FAIL, dead code is
