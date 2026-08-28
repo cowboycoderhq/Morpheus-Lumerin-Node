@@ -129,10 +129,10 @@ stateDiagram-v2
   [*] --> Opening
   Opening --> Open: openSession succeeds, stake escrowed, sessionId issued
   Open --> Closed: closeSession (early or at/after endsAt)
-  Closed --> [*]: unconsumed remainder transferred immediately; near 0 only if fully consumed
+  Closed --> [*]: unconsumed remainder transferred immediately — near 0 only if fully consumed
   Closed --> OnHold: final-day slice parked until releaseAt_ = startOfTheDay(min(closedAt, endsAt)) + 1 day
-  OnHold --> Swept: proxy-router StakeClaimer polls every 10 min and sweeps once releaseAt_ has passed
-  Swept --> [*]: withdrawUserStakes submitted by your node; calling it yourself is optional
+  OnHold --> Swept: withdrawUserStakes submitted once releaseAt_ has passed — by your node's StakeClaimer (polls every 10 min) or by you
+  Swept --> [*]: releasable rows safeTransferred to your wallet
 ```
 
 ## What "recover" really means

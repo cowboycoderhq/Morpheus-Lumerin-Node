@@ -19,7 +19,8 @@ stateDiagram-v2
   StuckPastEndsAt --> Closed: closeSession finally succeeds
   Closed --> [*]: remainder (if any) safeTransferred — if close before releaseAt, the day-locked slice is held in userStakesOnHold
   Closed --> OnHold: day-locked slice of used stipend (final UTC day) → userStakesOnHold if close before releaseAt
-OnHold --> [*]: StakeClaimer auto-sweep after releaseAt
+  OnHold --> Swept: withdrawUserStakes submitted once releaseAt has passed — by your node's StakeClaimer (polls every 10 min) or by you
+  Swept --> [*]: releasable rows safeTransferred to your wallet
 ```
 
 ## Transitions and side effects
@@ -30,7 +31,8 @@ OnHold --> [*]: StakeClaimer auto-sweep after releaseAt
 | `Opening` | `Open` | Tx mined | `transferFrom(you, InferenceContract, stake)` | Wallet `−stake` |
 | `Open` | `Closed` | `closeSession` mined | `_rewardUserAfterClose` if close before `releaseAt`, locks the stake-equivalent of the final UTC day's consumption in `userStakesOnHold`; returns remainder (if any); if close after `releaseAt`, no lock. `_rewardProviderAfterClose` pays provider from `fundingAccount` for non-direct-pay sessions, or from contract's token balance via `safeTransfer` for direct-pay sessions | Wallet `+remainder` (the unconsumed part; near 0 only if fully consumed) |
 | `Closed` | `OnHold` | (within close txn) close before `releaseAt` | `releaseAt_ = startOfTheDay(min(closedAt, endsAt)) + 1 days` | None until claim |
-| `OnHold` | `[*]` | StakeClaimer auto-sweep after `releaseAt` | Releasable rows `safeTransfer`'d to your wallet | Wallet `+held part` |
+| `OnHold` | `Swept` | `withdrawUserStakes` submitted after `releaseAt` — by your node's StakeClaimer, or by you | Releasable rows removed from `userStakesOnHold` | None until the tx mines |
+| `Swept` | `[*]` | Tx mined | Releasable rows `safeTransfer`'d to your wallet | Wallet `+held part` |
 | `Open` | `StuckPastEndsAt` | Time passes without successful `closeSession` | None — session record unchanged | None |
 | `StuckPastEndsAt` | `Closed` | `closeSession` finally mined | Same as `Open → Closed` | Wallet `+remainder` (the unconsumed part, near 0 only if fully consumed; + hold if still before `releaseAt`) |
 
