@@ -104,14 +104,17 @@ func main() {
 					&cli.Int64Flag{
 						Name:  "offset",
 						Value: 0,
+						Usage: "page offset into the results; must be >= 0",
 					},
 					&cli.UintFlag{
 						Name:  "limit",
 						Value: 10,
+						Usage: "max results per page, 1-255 (the server binds this to a uint8; values above 255 are rejected rather than truncated, and 0 is rejected too since the server returns an empty page for it)",
 					},
 					&cli.StringFlag{
 						Name:  "order",
 						Value: "asc",
+						Usage: "sort order, \"asc\" or \"desc\" (case-insensitive); omit the flag entirely to keep the tool's pre-pagination default order",
 					},
 				},
 			},
@@ -233,10 +236,12 @@ func main() {
 					&cli.Int64Flag{
 						Name:  "offset",
 						Value: 0,
+						Usage: "page offset into the results; must be >= 0",
 					},
 					&cli.UintFlag{
 						Name:  "limit",
 						Value: 10,
+						Usage: "max results per page, 1-255 (the server binds this to a uint8; values above 255 are rejected rather than truncated, and 0 is rejected too since the server returns an empty page for it)",
 					},
 				},
 			},
@@ -274,7 +279,13 @@ func main() {
 // A value above the server's uint8 ceiling is rejected instead of silently
 // wrapping mod 256 (e.g. a bare uint8() conversion turns 256 into 0 and 300
 // into 44 -- exactly the truncation this pagination fix exists to eliminate).
+// Zero is rejected too: the server's contract is validate:"gte=1", limit=0
+// returns an empty page, and listBlockchainSessions' full-page note (below)
+// would otherwise print "a full page of results was returned" over zero rows.
 func limitToUint8(limit uint) (uint8, error) {
+	if limit == 0 {
+		return 0, fmt.Errorf("--limit 0 is not valid; the server requires limit >= 1 (structs.QueryOffsetLimitOrder, proxy-router/internal/blockchainapi/structs/req.go) and returns an empty page for it, not a truncated one")
+	}
 	if limit > math.MaxUint8 {
 		return 0, fmt.Errorf("--limit %d exceeds the maximum accepted value of %d", limit, math.MaxUint8)
 	}
@@ -306,6 +317,40 @@ func orderToServerString(order string) (string, error) {
 	default:
 		return "", fmt.Errorf("--order %q is not valid; accepted values are \"asc\" and \"desc\"", order)
 	}
+}
+
+// resolveOrder decides what --order value (if any) reaches the server for a
+// given listBlockchainSessions invocation. isSet is cCtx.IsSet("order"):
+// true only if the caller explicitly passed --order on the command line.
+//
+// When isSet is false, resolveOrder returns ("", nil) -- the client's cue
+// (see ListUserSessions/ListProviderSessions in cli/chat/client/client.go)
+// to omit the order parameter from the request entirely, exactly matching
+// what the pre-pagination CLI sent (nothing). That matters because
+// proxy-router's mapOrder treats only the exact string "ASC" as ascending
+// (internal/blockchainapi/mappers.go:105-110), while the server's own
+// default is the lowercase "asc" (structs/req.go's
+// `form:"order,default=asc"`), so "no order parameter" has always meant
+// "let the server's own (buggy) default apply" -- i.e. effectively
+// descending, newest-first. The operator has decided a bare
+// `listBlockchainSession` must keep returning exactly that, even though
+// it's a known server-side bug being filed separately (out of scope here;
+// mappers.go is not touched by this fix).
+//
+// This is deliberately not done by hard-coding "desc"/"DESC" as the flag's
+// own default value: that would bake today's server-side bug into the CLI
+// permanently, and stay wrong the day the server-side fix ships. Omitting
+// the parameter instead keeps deferring to "whatever the server's default
+// currently is", which is exactly what "no parameter was sent" always meant.
+//
+// When isSet is true, --order asc and --order desc must mean what they say
+// regardless of any of the above, so resolveOrder delegates to
+// orderToServerString unconditionally.
+func resolveOrder(isSet bool, value string) (string, error) {
+	if !isSet {
+		return "", nil
+	}
+	return orderToServerString(value)
 }
 
 type actions struct {
@@ -601,6 +646,11 @@ type Bid struct {
 func (a *actions) blockchainProvidersBids(cCtx *cli.Context) error {
 	address := cCtx.String("address")
 	offset := cCtx.Int64("offset")
+
+	if err := validateOffset(offset); err != nil {
+		return err
+	}
+
 	limit, err := limitToUint8(cCtx.Uint("limit"))
 	if err != nil {
 		return err
@@ -671,7 +721,6 @@ func (a *actions) listBlockchainSessions(cCtx *cli.Context) error {
 	providerAddress := cCtx.String("provider")
 	offset := cCtx.Int64("offset")
 	rawLimit := cCtx.Uint("limit")
-	rawOrder := cCtx.String("order")
 
 	if userAddress == "" && providerAddress == "" {
 		return fmt.Errorf("please provide either a user or provider address")
@@ -686,7 +735,7 @@ func (a *actions) listBlockchainSessions(cCtx *cli.Context) error {
 		return err
 	}
 
-	order, err := orderToServerString(rawOrder)
+	order, err := resolveOrder(cCtx.IsSet("order"), cCtx.String("order"))
 	if err != nil {
 		return err
 	}
@@ -723,6 +772,9 @@ func (a *actions) listBlockchainSessions(cCtx *cli.Context) error {
 
 	}
 
+	// limit is guaranteed >= 1 by limitToUint8 (0 is rejected), so
+	// len(sessions) == 0 can never equal limit here -- an empty page can no
+	// longer be misreported as "full".
 	if uint(len(sessions)) == uint(limit) {
 		fmt.Fprintln(os.Stderr, "note: a full page of results was returned; more sessions may exist, use --offset to page further")
 	}
