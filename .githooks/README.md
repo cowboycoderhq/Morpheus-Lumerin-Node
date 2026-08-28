@@ -16,15 +16,18 @@ contributor working purely in `proxy-router/`, say — can set it by hand with
 the command above from the repo root.
 
 Both hooks accept `git commit --no-verify` / `git push --no-verify` to bypass
-them, same as any git hook. That bypass is a real gap, which is why
-`.github/workflows/opsec-check.yml` runs the identical checks server-side —
-the local hooks are the fast, friendly first line; CI is the one that can't
-be skipped by forgetting a flag.
+them, same as any git hook. That bypass is a real gap, which is why both sets
+of checks are mirrored server-side — `.github/workflows/opsec-check.yml` for
+the identity-leak gate and `.github/workflows/docs-gates.yml` for the
+documentation gates (CI runs their full form, not the `--staged` subset). The
+local hooks are the fast, friendly first line; CI is the one that can't be
+skipped by forgetting a flag.
 
-- `pre-commit` — the identity-leak gate (`scripts/check-identity-leak.mjs
-  --staged`) plus the existing typecheck+build gate, path-scoped to
-  `ui-desktop/`.
-- `pre-push` — the identity-leak gate again, this time over the actual
-  commit range and content about to become public (`--diff` and `--commits`),
-  mechanizing the manual ahead/behind-and-grep check this repo's own history
-  did by hand before every push to a public remote.
+- `pre-commit` — three gates, cheapest/most-severe first: the identity-leak gate
+  (`scripts/check-identity-leak.mjs --staged`); the documentation gates
+  (`scripts/docs-gates.mjs --staged`, run only when documentation or one of its
+  checkers is staged); and the typecheck+build gate, path-scoped to `ui-desktop/`.
+- `pre-push` — the identity-leak gate over the actual commit range and content
+  about to become public (`--diff` and `--commits`); then the full documentation
+  gate set (`scripts/docs-gates.mjs`, including the history-dependent gates
+  `--staged` skips). Either one blocks the push.

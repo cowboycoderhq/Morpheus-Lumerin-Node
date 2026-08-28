@@ -44,4 +44,19 @@ if [ "$FAILED" -ne 0 ]; then
   echo "'git push --no-verify' to bypass (CI still checks; see .github/workflows/opsec-check.yml)." >&2
   exit 1
 fi
-exit 0
+
+# --- documentation gates, full set --------------------------------------
+# pre-commit ran these in --staged mode; here the history-dependent ones run too.
+node "$REPO_ROOT/scripts/docs-gates.mjs"
+CODE=$?
+if [ $CODE -ne 0 ]; then
+  echo "DOCS GATES: push blocked (exit $CODE). Fix, or bypass visibly with" >&2
+  echo "'git push --no-verify' — CI re-runs these server-side." >&2
+  exit "$CODE"
+fi
+
+# Never `exit 0` here. An earlier revision set FAILED=1 above and then exited 0,
+# so the gate ran, printed its failure, and let the push through anyway. A gate
+# whose result is discarded is worse than no gate: it produces the reassurance
+# without the check.
+exit "$FAILED"

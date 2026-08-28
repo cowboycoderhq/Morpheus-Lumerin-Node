@@ -1,17 +1,23 @@
 #!/bin/bash
 # Tracked pre-commit hook (see .githooks/README.md for how this gets wired up).
-# Two gates, in order — cheapest/most-severe first:
+# Three gates, in order — cheapest/most-severe first:
 #
 # 1. Identity-leak gate: scans staged content for a local path or a
 #    non-allowlisted git author before anything else runs. A leak here is
 #    worse than a build failure and costs nothing to check.
-# 2. Build gate: blocks the commit if typecheck/build exit nonzero (exit
+# 2. Documentation gates: scripts/docs-gates.mjs --staged, and only when
+#    documentation or one of its checkers is staged, so a code-only commit is
+#    not taxed. --staged omits the gates that need a diff base; pre-push and CI
+#    run the full set from the SAME runner — three copies would drift and the
+#    weakest would become the real gate.
+# 3. Build gate: blocks the commit if typecheck/build exit nonzero (exit
 #    CODE, not output — a defect shipped over visible errors once already).
 #    Path-scoped to ui-desktop, since that's the only build this repo's
 #    pre-commit can cheaply run.
 #
-# `git commit --no-verify` bypasses both — mirrored in CI as the backstop
-# for exactly that case (.github/workflows/opsec-check.yml).
+# `git commit --no-verify` bypasses all three — the identity-leak and
+# documentation gates are mirrored server-side as the backstop for exactly that
+# case (.github/workflows/opsec-check.yml, .github/workflows/docs-gates.yml).
 set -u
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -20,6 +26,22 @@ node "$REPO_ROOT/scripts/check-identity-leak.mjs" --staged
 CODE=$?
 if [ $CODE -ne 0 ]; then
   exit $CODE
+fi
+
+# --- documentation gates -------------------------------------------------
+# Runs only when documentation or its checkers are staged, so a code-only commit
+# is not taxed. --staged skips the gates that need a diff base; pre-push and CI
+# run those. All three layers call the SAME runner: three copies would drift and
+# the weakest would become the real gate.
+STAGED_ALL=$(git diff --cached --name-only)
+if echo "$STAGED_ALL" | grep -qE '\.(md|mdx)$|^tools/docs-audit/|^scripts/docs-gates\.mjs$'; then
+  echo "docs gates: documentation staged — running checkers"
+  node "$REPO_ROOT/scripts/docs-gates.mjs" --staged
+  CODE=$?
+  if [ $CODE -ne 0 ]; then
+    echo "DOCS GATES: blocked (exit $CODE). Fix, or bypass visibly with --no-verify (CI re-runs these)." >&2
+    exit $CODE
+  fi
 fi
 
 STAGED=$(git diff --cached --name-only)
