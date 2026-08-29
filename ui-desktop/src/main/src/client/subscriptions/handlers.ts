@@ -1058,7 +1058,15 @@ const ensureOpenAiServer = (): OpenAiCompatServer => {
     // the Settings screen. Hanging it off getGrokStatus meant the models only
     // appeared once someone opened Settings — so a user who just wanted to pick
     // a model in their terminal found nothing there.
-    setImmediate(() => startGrokModelsRefresh())
+    setImmediate(() => {
+      try {
+        startGrokModelsRefresh()
+      } catch (e) {
+        // An uncaught throw here would surface as a main-process crash with the
+        // renderer frozen on whatever screen it was showing.
+        log.warn(`grok: could not start model publishing — ${String(e)}`)
+      }
+    })
     openAiServer = new OpenAiCompatServer({
       routerUrl: () => config.chain.localProxyRouterUrl,
       authHeaders: getAuthHeaders,
@@ -1406,9 +1414,23 @@ const startGrokModelsRefresh = (): void => {
   const tick = () => {
     refreshGrokModels().catch((e) => log.warn(`grok models: ${String(e)}`))
   }
-  tick()
-  ensureGrokSyncDisabled()
-  watchGrokConfig()
+  // NOTHING HERE MAY TAKE DOWN THE APP.
+  //
+  // This runs inside a setImmediate, so anything that throws synchronously
+  // becomes an uncaught exception in main — and a terminal integration that
+  // nobody has switched on must never be able to stop the app from starting.
+  // Two of these touch the filesystem in a directory another program owns
+  // (~/.grok), which is exactly the kind of place a surprise comes from.
+  const safely = (what: string, fn: () => void) => {
+    try {
+      fn()
+    } catch (e) {
+      log.warn(`grok: ${what} failed, continuing without it — ${String(e)}`)
+    }
+  }
+  safely('publishing models', tick)
+  safely('turning off the managed-config sync', ensureGrokSyncDisabled)
+  safely('watching the managed config', watchGrokConfig)
   grokModelsTimer = setInterval(tick, 60_000)
   grokModelsTimer.unref?.()
 }
