@@ -13,11 +13,21 @@ name: proxy-router CI
 #
 # Scope: this repository only, on every branch.
 #
-# Both jobs below carry the guard build.yml puts on its own jobs:
-#     if: github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node'
-# 19 of build.yml's 21 jobs use exactly that condition; the other two gate on
-# github.ref instead, so "every job in build.yml is repository-guarded" would be
-# wrong — 19 of 21 is the measured figure.
+# Both jobs below carry:
+#     if: github.repository == 'cowboycoderhq/Morpheus-Lumerin-Node'
+#
+# THE LITERAL NAMES THIS REPOSITORY, NOT UPSTREAM — do not "correct" it to match
+# build.yml. build.yml guards 19 of its 21 jobs with the same expression naming
+# 'MorpheusAIs/Morpheus-Lumerin-Node'; the other two gate on github.ref instead,
+# so "every job in build.yml is repository-guarded" would be wrong — 19 of 21 is
+# the measured figure. But this workflow does not exist upstream. It was added
+# here and lives only here, so a guard carrying upstream's name matches nothing
+# anywhere the file is installed: it would not scope this workflow, it would
+# disable it. That was tried, and measured — both jobs went from 11 and 9
+# executed steps to a run reporting `steps: []`, skipped on this repository's
+# own pushes. A green tick that is green because it did not run is the failure
+# mode this whole suite exists to prevent, so the guard names the repository
+# that actually runs it.
 #
 # The guard sits on the JOBS, not the trigger, because `on:` accepts no `if:` —
 # a workflow cannot restrict itself by repository at the trigger level, which is
@@ -25,15 +35,31 @@ name: proxy-router CI
 # `on:`. Ungated, this workflow ran on every branch of every fork, spending a
 # forker's Actions minutes on a suite they never added.
 #
+# Why guarded at all, when .github/workflows/opsec-check.yml is deliberately
+# UNGATED? Both comments object to the same thing — a guard naming a repository
+# that is not this one — and neither forbids naming this one: opsec-check needs
+# to run "on THIS fork's own pushes, not only on the upstream repo", which this
+# guard also delivers. They diverge only on OTHER people's forks, and the cost
+# decides it. opsec-check is an identity-leak backstop whose stated concern is
+# that nothing STOP it running, so extra copies of the tree cost nothing worth
+# saving. This is a build-and-test suite, and running it on a stranger's fork
+# spends their Actions minutes on a suite they never added. Guarding removes a
+# cost the leak scanner does not have.
+#
+# On a pull_request, github.repository is the BASE repository, so a pull request
+# opened from someone else's fork INTO this one still runs both jobs. The guard
+# excludes other people's own pushes and their fork-internal pull requests, not
+# their contributions here.
+#
 # build.yml's BRANCH restriction is deliberately not copied. It limits its push
 # trigger to main/test/dev/cicd/*; this stays on '**' because the proxy-router
 # module has no other CI coverage, and a feature branch is precisely where a
 # build or vet break should surface. Gating the repository fixes the fork
 # problem; gating the branches too would reopen the gap this workflow closes.
 #
-# Consequence, stated rather than hidden: on a fork both jobs are SKIPPED, not
-# green — a skipped job reports no status it did not earn. A fork contributor
-# runs the same checks locally:
+# Consequence, stated rather than hidden: on someone else's fork both jobs are
+# SKIPPED, not green — a skipped job reports no status it did not earn. A fork
+# contributor runs the same checks locally:
 #     cd proxy-router && go build ./... && go test ./...
 #     bash scripts/check-spec-fresh.sh
 
@@ -52,7 +78,7 @@ defaults:
 jobs:
   go:
     name: proxy-router Go build, vet and tests
-    if: github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node'
+    if: github.repository == 'cowboycoderhq/Morpheus-Lumerin-Node'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -227,7 +253,7 @@ jobs:
 
   spec-fresh:
     name: OpenAPI spec matches the annotations
-    if: github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node'
+    if: github.repository == 'cowboycoderhq/Morpheus-Lumerin-Node'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
