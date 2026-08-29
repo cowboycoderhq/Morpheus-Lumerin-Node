@@ -1032,6 +1032,64 @@ console.log('openai endpoint: an unknown model is refused, never defaulted');
   ok('and it raised no offer to spend', offers.length === 1);
 }
 
+// ---- who is asking decides which permission applies -------------------------
+// The app's own picker is a human clicking confirm in the app's window, having
+// been shown the model, the provider, the length and the stake. Requiring "let
+// outside tools spend on their own" for THAT was a mistake: it is a different
+// permission, and granting it to use a dialog in this app would have handed a
+// tool the right to spend unattended.
+console.log('');
+console.log('openai endpoint: the app opening a session vs a tool doing it');
+{
+  cfg = { ...cfg, allowAutoOpen: false };
+  await server.sync();
+
+  const open = (extra) =>
+    fetch(`${base}/morpheus/v1/sessions`, {
+      method: 'POST',
+      headers: { ...auth, 'content-type': 'application/json', ...extra },
+      body: JSON.stringify({ modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 3600, confirm: true }),
+    });
+
+  const tool = await open({});
+  ok('a tool is refused while the switch is off', tool.status === 403);
+  ok('and told which permission it lacks',
+    (await tool.json()).error?.code === 'auto_open_disabled');
+
+  // Forgery: the header exists, the value is wrong. A token holder can guess
+  // the name — the value never leaves the process.
+  const forged = await open({ 'x-morpheus-app': 'not-the-real-key' });
+  ok('a guessed proof header is still refused', forged.status === 403);
+
+  const proof = server.appProofHeader();
+  const app = await open(proof);
+  // Assert the REASON, not the status: this request also trips the spend cap
+  // (3600s at this bid is 3.6 MOR against a 1 MOR ceiling), and an earlier
+  // version of this check read that refusal as a permission refusal.
+  const appBody = await app.json();
+  ok('the app is not blocked by the tool permission',
+    appBody.error?.code !== 'auto_open_disabled');
+
+  // Everything else still applies to both. The proof says who is asking; it
+  // does not say "skip the safety rails".
+  const noConfirm = await fetch(`${base}/morpheus/v1/sessions`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json', ...proof },
+    body: JSON.stringify({ modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 3600 }),
+  });
+  ok('the app still cannot open one without an explicit confirm',
+    noConfirm.status === 400);
+
+  cfg = { ...cfg, maxStakeMor: 0.0001 };
+  await server.sync();
+  const capped = await open(proof);
+  ok('and the spend caps still bite for the app', capped.status === 403);
+  ok('naming the cap, not the permission',
+    (await capped.json()).error?.code === 'cap_exceeded');
+  cfg = { ...cfg, maxStakeMor: 1 };
+  await server.sync();
+}
+
 await server.stop();
 await new Promise((r) => fakeRouter.close(r));
 

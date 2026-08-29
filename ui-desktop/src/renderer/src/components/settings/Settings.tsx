@@ -322,11 +322,13 @@ const Common = (props: CommonProps) => {
               </SettingsCallout>
             )}
 
-            {/* The one switch on this screen that lets something OUTSIDE the
-                app spend MOR. It is off by default and stays off unless it is
-                turned on here — the endpoint being enabled is not enough. */}
+            {/* The one switch that lets something OUTSIDE the app spend MOR on
+                its own. Off by default; the endpoint being enabled is not
+                enough. It does NOT govern this app's own session picker — that
+                is a human clicking confirm in this window, which needs no
+                permission granted to anybody else. */}
             <SectionDescription style={{ marginTop: '1.6rem' }}>
-              Opening sessions from outside the app
+              Letting a tool open sessions on its own
             </SectionDescription>
             <FieldRow>
               <ToggleRow htmlFor="openai-api-auto-open">
@@ -342,14 +344,14 @@ const Common = (props: CommonProps) => {
                   }}
                 />
                 <ToggleLabel>
-                  Let <code>/start</code> in opencode stake MOR
+                  Let a tool holding the key above stake MOR without asking
                 </ToggleLabel>
               </ToggleRow>
             </FieldRow>
             <SettingsCallout tone={apiCfg?.allowAutoOpen ? 'warning' : 'info'}>
               {apiCfg?.allowAutoOpen
-                ? 'A tool holding the key above can open paid sessions without asking the app. The limits below are what bound it.'
-                : 'While this is off, nothing reaching the endpoint can cause a blockchain transaction — it can only use sessions you already opened.'}
+                ? 'A tool holding the key above can open paid sessions on its own. The limits below are what bound it.'
+                : 'While this is off, no tool can cause a blockchain transaction — it can only use sessions that already exist. You can still open sessions yourself, here and from the picker.'}
             </SettingsCallout>
 
             {/* A way in that does not depend on the automatic notice having
@@ -455,22 +457,10 @@ const Common = (props: CommonProps) => {
                 </ToggleLabel>
               </ToggleRow>
             </FieldRow>
-            {/* The picker opens its session through the same gated endpoint as
-                everything else, so with the switch above off it would appear,
-                take four decisions from the user, and then be refused. Say so
-                here rather than letting them find out at the confirm step. */}
-            <SettingsCallout
-              tone={
-                apiCfg?.offerSessionOnUse && !apiCfg?.allowAutoOpen
-                  ? 'warning'
-                  : 'info'
-              }
-            >
-              {apiCfg?.offerSessionOnUse && !apiCfg?.allowAutoOpen
-                ? 'The offer will appear, but opening it needs the switch above turned on as well — without it the app refuses its own request at the last step.'
-                : apiCfg?.offerSessionOnUse
-                  ? 'Your models stay listed in grok and opencode whether or not a session is open. Using one without a session is refused, and this window comes forward so you can open it — one offer at a time, and cancelling one buys quiet for a few minutes.'
-                  : 'Using a model with no open session is refused with a message telling you to open one in the app. Turn this on and the app will offer to open it for you instead.'}
+            <SettingsCallout tone="info">
+              {apiCfg?.offerSessionOnUse
+                ? 'Your models stay listed in grok and opencode whether or not a session is open. Using one without a session is refused, and this window comes forward so you can open it — one offer at a time, and cancelling one buys quiet for a few minutes. This needs no other permission: you approve each session here.'
+                : 'Using a model with no open session is refused with a message telling you to open one in the app. Turn this on and the app will offer to open it for you instead.'}
             </SettingsCallout>
             {apiCfg?.allowAutoOpen && (
               <Flex.Row gap="0.8rem">
@@ -517,7 +507,7 @@ const Common = (props: CommonProps) => {
               </Flex.Row>
             )}
 
-            {/* grok: /start in a terminal, choosing in this window. */}
+            {/* grok: pinned models in its picker, sessions opened here. */}
             {/* grok needs no switch any more.
                 This used to enable a relay on grok's own leader socket so a
                 typed /start could be intercepted. That is archived: models are

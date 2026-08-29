@@ -196,7 +196,7 @@ export function shellQuote(value: string): string {
 export type LaunchInput = {
   opencodePath: string;
   configPath: string;
-  /** Omitted → launch with no model preselected, so `/start` can choose one. */
+  /** Omitted → launch with no model preselected; the user picks in opencode. */
   modelId?: string;
   cwd: string;
 };
