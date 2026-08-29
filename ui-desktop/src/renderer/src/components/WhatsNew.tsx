@@ -4,7 +4,11 @@ import { useNavigate } from 'react-router';
 import { IconSparkles, IconCheck } from '@tabler/icons-react';
 import Modal from './contracts/modals/Modal';
 import { withClient } from '../store/hocs/clientContext';
-import { notesToShow, type ReleaseNote } from '../../../shared/release-notes';
+import {
+  notesToShow,
+  RELEASE_NOTES,
+  type ReleaseNote,
+} from '../../../shared/release-notes';
 
 // ============================================================================
 // "Here is what you just got."
@@ -117,7 +121,16 @@ const Note = styled.div`
   text-align: left;
 `;
 
-export const WhatsNew = withClient(({ client }: any) => {
+/**
+ * Also openable on demand.
+ *
+ * The automatic showing depends on stored state, an IPC round trip and a
+ * version match — three things that can each fail quietly, as one just did. A
+ * button in Settings depends on none of them, so a tester always has a way to
+ * read what changed, and support has a way to say "open this" rather than
+ * "it should have appeared".
+ */
+export const WhatsNew = withClient(({ client, forceOpen, onClose }: any) => {
   const [notes, setNotes] = useState<ReleaseNote[]>([]);
   const [busy, setBusy] = useState('');
   const [actionNote, setActionNote] = useState('');
@@ -125,11 +138,47 @@ export const WhatsNew = withClient(({ client }: any) => {
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (forceOpen) {
+      // Show the current release's notes regardless of what was last seen.
+      void (async () => {
+        try {
+          const state: any = await client.getWhatsNewState();
+          const current = RELEASE_NOTES.find((n) => n.version === state?.version);
+          setNotes(current ? [current] : RELEASE_NOTES.slice(0, 1));
+          const g: any = await client.getGrokStatus().catch(() => null);
+          setGrokInstalled(g ? !!g.installed : null);
+        } catch {
+          setNotes(RELEASE_NOTES.slice(0, 1));
+        }
+      })();
+      return;
+    }
     let cancelled = false;
     void (async () => {
+      // RETRY, and say so when it fails.
+      //
+      // The first version asked main once and swallowed anything that went
+      // wrong — so a bridge that was not ready yet, or a main process that had
+      // not finished subscribing, produced exactly the same result as "nothing
+      // to show": silence. That is indistinguishable from the feature working,
+      // which is how it reached a tester and did nothing.
+      let state: any = null;
+      for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+        try {
+          state = await client.getWhatsNewState();
+          if (state?.version) break;
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn(`what's new: could not read state (try ${attempt + 1})`, e);
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      if (cancelled || !state?.version) {
+        // eslint-disable-next-line no-console
+        console.warn("what's new: no version from main; not showing anything");
+        return;
+      }
       try {
-        const state: any = await client.getWhatsNewState();
-        if (cancelled || !state?.version) return;
         const due = notesToShow(state.version, state.lastSeenVersion);
         if (!due.length) return;
         setNotes(due);
@@ -154,6 +203,7 @@ export const WhatsNew = withClient(({ client }: any) => {
 
   const dismiss = async () => {
     setNotes([]);
+    onClose?.();
     try {
       await client.markWhatsNewSeen();
     } catch {

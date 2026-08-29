@@ -2,6 +2,7 @@ import { LayoutHeader } from '../common/LayoutHeader';
 import { View } from '../common/View';
 import { Btn, Flex, Modal, Tabs, TextInput } from '../common';
 import withSettingsState from '../../store/hocs/withSettingsState';
+import { WhatsNew } from '../WhatsNew';
 import { useContext, useEffect, useState } from 'react';
 import {
   IconPalette,
@@ -76,6 +77,7 @@ const Common = (props: CommonProps) => {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [modelSearch, setModelSearch] = useState('');
   const [pinBusy, setPinBusy] = useState('');
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
   const [grokBusy, setGrokBusy] = useState(false);
   const [grokOutput, setGrokOutput] = useState<string>('');
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
@@ -349,6 +351,17 @@ const Common = (props: CommonProps) => {
                 ? 'A tool holding the key above can open paid sessions without asking the app. The limits below are what bound it.'
                 : 'While this is off, nothing reaching the endpoint can cause a blockchain transaction — it can only use sessions you already opened.'}
             </SettingsCallout>
+
+            {/* A way in that does not depend on the automatic notice having
+                worked — it did not, for a tester, and the failure was silent. */}
+            <FieldRow style={{ marginTop: '1.2rem' }}>
+              <GhostBtn onClick={() => setShowWhatsNew(true)}>
+                What’s new in this version
+              </GhostBtn>
+            </FieldRow>
+            {showWhatsNew && (
+              <WhatsNew forceOpen onClose={() => setShowWhatsNew(false)} />
+            )}
 
             {/* WHICH MODELS YOUR TERMINAL SEES.
                 This was the missing step: models had to be pinned before grok
