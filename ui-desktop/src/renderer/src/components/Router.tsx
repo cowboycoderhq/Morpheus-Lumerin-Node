@@ -12,6 +12,7 @@ import Models from './models/Models';
 import Agents from './agents/Agents';
 import Settings from './settings/Settings';
 import StartPickerModal from './grok/StartPickerModal';
+import WhatsNew from './WhatsNew';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import Providers from './providers/Providers';
 import { withClient } from '../store/hocs/clientContext';
@@ -243,6 +244,9 @@ const GrokStartHost = withClient(({ client }: any) => {
 export const Layout = () => (
   <Container data-testid="router-container">
     <GrokStartHost />
+    {/* Sits beside the picker host for the same reason: it must not depend on
+        which tab happens to be open. */}
+    <WhatsNew />
     <Sidebar />
     <Main
       data-scrollelement // Required by react-virtualized implementation in Dashboard/TxList

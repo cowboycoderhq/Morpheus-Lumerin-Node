@@ -265,6 +265,8 @@ const createClient = function (createStore) {
     getGrokStatus: utils.forwardToMainProcess('get-grok-status', 30000),
     // The installer downloads a release; give it the same room as opencode's.
     installGrok: utils.forwardToMainProcess('install-grok', 600000),
+    getWhatsNewState: utils.forwardToMainProcess('get-whats-new-state'),
+    markWhatsNewSeen: utils.forwardToMainProcess('mark-whats-new-seen'),
     openInGrok: utils.forwardToMainProcess('open-in-grok', 120000),
     refreshGrokModels: utils.forwardToMainProcess('refresh-grok-models', 30000),
     grokPickerDone: utils.forwardToMainProcess('grok-picker-done', 15000),
