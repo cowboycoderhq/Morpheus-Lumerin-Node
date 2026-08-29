@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router';
 import { useSelector } from 'react-redux';
 import { useQueryClient } from '@tanstack/react-query';
@@ -179,6 +179,11 @@ const SessionPrefetcher = withClient(({ client }: any) => {
  */
 const GrokStartHost = withClient(({ client }: any) => {
   const [request, setRequest] = useState<any>(null);
+  // Read by the unmount cleanup, which must not re-run every time `request`
+  // changes — a cleanup that fires on every state change would cancel the very
+  // offer it is showing.
+  const requestRef = useRef<any>(null);
+  requestRef.current = request;
 
   useEffect(() => {
     // No endpoint config is read here any more. It used to be fetched purely to
@@ -215,6 +220,22 @@ const GrokStartHost = withClient(({ client }: any) => {
     };
   }, [client]);
 
+  // An offer that is never answered holds the model's single in-flight slot,
+  // so the next attempt is silently refused. The modal reports on Done and on
+  // Cancel — but not if this host unmounts underneath it (a reload, a window
+  // close, anything that tears the tree down). Report on the way out.
+  useEffect(() => {
+    return () => {
+      if (requestRef.current) {
+        void client.grokPickerDone({
+          requestId: requestRef.current.requestId,
+          opened: false,
+          note: 'the window closed before it was answered',
+        });
+      }
+    };
+  }, [client]);
+
   if (!request) return null;
   return (
     <StartPickerModal
@@ -231,6 +252,7 @@ const GrokStartHost = withClient(({ client }: any) => {
         });
       }}
       onDone={(outcome) => {
+        requestRef.current = null;
         // ALWAYS report back — the terminal is holding a turn open until we do.
         // Harmless if onOpened already did: main forgets the request after the
         // first report, so the second settles nothing twice.
