@@ -11,14 +11,31 @@ name: proxy-router CI
 # the proxy-router module has no CI coverage, and a Go-test job existing
 # elsewhere in the tree is exactly why nobody noticed.
 #
-# Deliberately UNGATED by github.repository and unrestricted by branch, the same
-# way .github/workflows/opsec-check.yml is and for the same reason. Every job in
-# build.yml is guarded by
-#     github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node'
-#   && (push to main | test | dev | cicd/*)
-# so a copy of this job placed there would never execute on this fork or on any
-# feature branch — a green tick that is green because it did not run. That is the
-# failure mode this whole suite exists to prevent, so it is not repeated here.
+# Scope: this repository only, on every branch.
+#
+# Both jobs below carry the guard build.yml puts on its own jobs:
+#     if: github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node'
+# 19 of build.yml's 21 jobs use exactly that condition; the other two gate on
+# github.ref instead, so "every job in build.yml is repository-guarded" would be
+# wrong — 19 of 21 is the measured figure.
+#
+# The guard sits on the JOBS, not the trigger, because `on:` accepts no `if:` —
+# a workflow cannot restrict itself by repository at the trigger level, which is
+# why build.yml expresses the repository half per-job and only the branch half in
+# `on:`. Ungated, this workflow ran on every branch of every fork, spending a
+# forker's Actions minutes on a suite they never added.
+#
+# build.yml's BRANCH restriction is deliberately not copied. It limits its push
+# trigger to main/test/dev/cicd/*; this stays on '**' because the proxy-router
+# module has no other CI coverage, and a feature branch is precisely where a
+# build or vet break should surface. Gating the repository fixes the fork
+# problem; gating the branches too would reopen the gap this workflow closes.
+#
+# Consequence, stated rather than hidden: on a fork both jobs are SKIPPED, not
+# green — a skipped job reports no status it did not earn. A fork contributor
+# runs the same checks locally:
+#     cd proxy-router && go build ./... && go test ./...
+#     bash scripts/check-spec-fresh.sh
 
 on:
   push:
@@ -35,6 +52,7 @@ defaults:
 jobs:
   go:
     name: proxy-router Go build, vet and tests
+    if: github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -209,6 +227,7 @@ jobs:
 
   spec-fresh:
     name: OpenAPI spec matches the annotations
+    if: github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

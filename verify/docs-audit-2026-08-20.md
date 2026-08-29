@@ -659,7 +659,10 @@ rather than claiming a control that is not in effect.
   claims** and **0 default mismatches** — the same detectors that found these
   defects now pass, and the corrected text documents the gap rather than
   re-asserting the claim.
-- All three gates green: **10/10**, **6/6**, **32/32**.
+- All three selftest gates green: the adjudicator's **10/10** and the quote-fidelity
+  gate's **6/6** (both named in the table above), and **32/32** for
+  `check-mechanized.mjs --selftest` — the selftest of the same audit-tree checker
+  whose re-run is reported just above.
 - Phase 0's script-detected FALSEs fell **33 → 29**.
 - Every replacement was applied under an exact-match, single-occurrence assertion,
   so a stale target would have failed loudly rather than mis-editing.

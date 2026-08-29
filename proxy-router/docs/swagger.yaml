@@ -2197,9 +2197,10 @@ paths:
       - sessions
   /blockchain/stakes/on-hold:
     get:
-      description: MOR time-locked by closing sessions before they ended. `available`
-        has matured and is swept home automatically by the stake auto-claimer; `hold`
-        is still locked (released a day after the UTC day the session was closed).
+      description: 'MOR time-locked by closing sessions before they ended. `available`
+        has matured: a running proxy-router sweeps it for its own wallet, otherwise
+        it needs a manual `withdrawUserStakes`. `hold` is still locked (released a
+        day after the UTC day the session was closed).'
       produces:
       - application/json
       responses:
