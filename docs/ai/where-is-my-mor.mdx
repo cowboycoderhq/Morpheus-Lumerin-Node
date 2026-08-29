@@ -115,8 +115,8 @@ If you tried an action and the transaction reverted because you didn't have enou
 | Symptom | Reality |
 |---------|---------|
 | "Wallet balance dropped after opening a session." | Expected — stake is in the active session (Bucket 1). |
-| "I closed (or let it expire) and only part came back." | Expected — the final UTC day's slice is in the on-hold queue (Bucket 2). The proxy-router automatically sweeps matured stake every 10 minutes; no manual claim needed. |
-| "I closed and **nothing** came back." | Expected when the session was fully consumed inside one UTC day — e.g. it ran to `endsAt` — because then the consumed slice is essentially the whole stake. **Not** expected from an early close, which returns the unconsumed part in the close txn. The proxy-router automatically sweeps the held part after `releaseAt`; no manual claim needed. |
+| "I closed (or let it expire) and only part came back." | Expected — the final UTC day's slice is in the on-hold queue (Bucket 2). A running proxy-router automatically sweeps matured stake every 10 minutes for the wallet it holds, so no manual claim is needed — with the node off, or for another wallet's stake, submit `withdrawUserStakes` yourself. |
+| "I closed and **nothing** came back." | Expected when the session was fully consumed inside one UTC day — e.g. it ran to `endsAt` — because then the consumed slice is essentially the whole stake. **Not** expected from an early close, which returns the unconsumed part in the close txn. A running proxy-router automatically sweeps the held part after `releaseAt` for the wallet it holds, so no manual claim is needed — with the node off, or for another wallet's stake, submit `withdrawUserStakes` yourself. |
 | "I can't open another session with the same MOR today." | Expected — used stake is day-locked; size wallet float for gross daily stake. |
 | "Session is past `endsAt` but still open." | Bucket 3 — close transaction hasn't succeeded yet. |
 | "I see the contract holding tokens." | The Inference Contract holds tokens for **all users' active sessions and on-hold queues** combined. Not all of it is yours. |

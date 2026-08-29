@@ -88,8 +88,8 @@ The Morpheus consumer node (proxy-router) does **not** custody tokens — it jus
       come back.
     </Warning>
   </Step>
-  <Step title="The day-locked slice comes back on its own">
-    After `releaseAt` (≈ after the end of the UTC day the session ended on) the proxy-router sweeps it automatically every 10 minutes; you may also call `withdrawUserStakes(yourAddress, iterations)` on the Diamond contract. **There is no HTTP route for this on the proxy-router today** — use `cast send`, MetaMask "Interact with contract", or your wallet's contract UI.
+  <Step title="The day-locked slice comes back — while your node is running">
+    After `releaseAt` (≈ after the end of the UTC day the session ended on) a running proxy-router sweeps it automatically every 10 minutes, and only for the wallet it holds. With the node off, or for a session opened from another wallet, nothing sweeps and you must call `withdrawUserStakes(yourAddress, iterations)` on the Diamond contract yourself; with that node running you call it only to take the withdrawal sooner. **There is no HTTP route for this on the proxy-router today** — use `cast send`, MetaMask "Interact with contract", or your wallet's contract UI.
 
     ```bash
     # Mainnet; replace placeholders
@@ -100,7 +100,7 @@ The Morpheus consumer node (proxy-router) does **not** custody tokens — it jus
     ```
   </Step>
   <Step title="Done">
-    Spendable MOR is back in your wallet — everything except the final UTC day's locked slice lands at close, and that slice once the day-lock expires and the proxy-router's StakeClaimer sweeps it back — no manual claim needed. It is not an "unused now, used later" split: on a multi-day session the earlier days' consumed stake is in the amount returned at close.
+    Spendable MOR is back in your wallet — everything except the final UTC day's locked slice lands at close, and that slice once the day-lock expires and the proxy-router's StakeClaimer sweeps it back, which needs no manual claim while your own node is running and holds the wallet you opened from. With the node off, or for a session opened from another wallet, nothing sweeps and you submit `withdrawUserStakes` yourself. It is not an "unused now, used later" split: on a multi-day session the earlier days' consumed stake is in the amount returned at close.
   </Step>
 </Steps>
 
@@ -108,7 +108,7 @@ The Morpheus consumer node (proxy-router) does **not** custody tokens — it jus
 
 The used portion of stake is **not reusable the same UTC day**. Plan float accordingly:
 
-- Opening many short sessions that each "use" most of their stake will park that capital until the next UTC day, when the proxy-router's StakeClaimer sweeps it back automatically. The wait is the day-lock, not a manual claim step.
+- Opening many short sessions that each "use" most of their stake will park that capital until the next UTC day, when a running proxy-router sweeps it back automatically for the wallet it holds. The wait is the day-lock, not a manual claim step — unless the node is off or the session was opened from another wallet, in which case the manual claim is the step.
 - Letting sessions expire naturally does **not** free the used stake for immediate reuse — the node auto-close still day-locks it.
 - Size your wallet for the **gross** stake you need in a day of concurrent / sequential sessions, not for recycling one pile of MOR many times before midnight UTC.
 
@@ -129,11 +129,16 @@ stateDiagram-v2
   [*] --> Opening
   Opening --> Open: openSession succeeds, stake escrowed, sessionId issued
   Open --> Closed: closeSession (early or at/after endsAt)
+  Open --> StuckPastEndsAt: endsAt passed but no closeSession yet
+  StuckPastEndsAt --> Closed: closeSession finally succeeds
   Closed --> [*]: unconsumed remainder transferred immediately — near 0 only if fully consumed
-  Closed --> OnHold: final-day slice parked until releaseAt_ = startOfTheDay(min(closedAt, endsAt)) + 1 day
-  OnHold --> Swept: withdrawUserStakes submitted once releaseAt_ has passed — by your node's StakeClaimer (polls every 10 min) or by you
-  Swept --> [*]: releasable rows safeTransferred to your wallet
+  Closed --> OnHold: final-day slice parked until releaseAt_ = startOfTheDay(min(closedAt, endsAt)) + 1 day, and only if the close lands before releaseAt_
+  OnHold --> OnHold: withdrawUserStakes reverts (SessionUserAmountToWithdrawIsZero) — nothing popped, stake stays on hold, a running StakeClaimer retries in 10 min
+  OnHold --> Swept: withdrawUserStakes mined once releaseAt_ has passed — releasable rows popped and safeTransferred in the same call — by your node's StakeClaimer (polls every 10 min) or by you
+  Swept --> [*]: stake is back in your wallet, nothing left on hold
 ```
+
+`withdrawUserStakes` pops the releasable rows and `safeTransfer`s them in a single call (`SessionRouter.sol:448-465`), so there is no on-chain step between `OnHold` and `Swept`: a submitted-but-unmined withdrawal has changed nothing, and one that reverts (`SessionUserAmountToWithdrawIsZero`, `:444` and `:462`) leaves the queue exactly as it was — which is the self-loop above. The same six states and edges are listed with their side effects in [Session states (open, close, claim)](/ai/session-states-open-close-recover), the agent-citable version of this diagram.
 
 ## What "recover" really means
 
