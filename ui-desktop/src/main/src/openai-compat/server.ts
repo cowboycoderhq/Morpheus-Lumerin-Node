@@ -395,7 +395,7 @@ export class OpenAiCompatServer {
    * user paid — the worst possible moment to serve a stale list.
    */
   settleOffer(modelId: string, outcome: 'opened' | 'declined'): void {
-    this.offers.settle(modelId, outcome);
+    this.offers.settle(modelId);
     if (outcome === 'opened') {
       this.modelsCache = null;
     }
@@ -1132,9 +1132,8 @@ export class OpenAiCompatServer {
             // reported as a bug rather than as a cooldown doing its job.
             const secs = Math.max(1, Math.ceil(decision.retryInMs / 1000));
             extra =
-              decision.reason === 'cooling_down'
-                ? ` You closed the last offer for this model, so the app is not asking again for ${secs}s — open it from the Morpheus window, or send this again after that.`
-                : ` The app is already asking about this model; check the Morpheus window. If nothing is showing, send this again in ${secs}s.`;
+              ` The Morpheus window is already asking about this model — answer it there.` +
+              ` If nothing is showing, send this again in ${secs}s.`;
           }
         }
         this.deps.log?.(

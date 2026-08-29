@@ -10,13 +10,24 @@
 //  - Agents send CONCURRENT requests. grok fires a hidden title-generation call
 //    alongside the real turn; both can name the same model. Two offers for one
 //    intent would let a distracted user open two sessions and pay twice.
-//  - Agents RETRY. Measured: grok reissued a request 8 times in 2 minutes when a
-//    response was malformed. Without a cooldown, cancelling an offer just means
-//    the window comes back, and back, until the user clicks the expensive button
-//    to make it stop. That is a spending decision made by fatigue.
+// There is NO cooldown after a dismissal, and there used to be.
 //
-// So: one offer in flight per model, and a decline buys quiet for a while. The
-// gate is pure and takes its clock, so both rules are testable without waiting.
+// It was insurance against an agent retrying in a loop and nagging someone into
+// clicking the expensive button. Measured on both clients, that loop does not
+// happen: a clean 400 gets ONE request per user send from grok and from
+// opencode, and neither reissues it. (The 8-retries-in-2-minutes figure that
+// justified the cooldown came from a MALFORMED response — a 200 whose body was
+// not SSE — which is a different bug, fixed separately and pinned by its own
+// check.)
+//
+// So the cooldown suppressed nothing an agent does, and everything a person
+// does: cancel, think, ask again, get silence. The reported symptom — "it only
+// works the first time" — was the guard, not a fault it was guarding against.
+//
+// What remains is COALESCING, which is not rate-limiting: while a dialog for a
+// model is genuinely up, a second request for that same model must not replace
+// it mid-decision and orphan the first. The TTL is only a backstop for a dialog
+// that never reports back.
 // ============================================================================
 
 /** An offer waiting for a renderer able to show it. */
@@ -66,13 +77,11 @@ export type OfferDecision =
    * appear, and nothing anywhere said why or for how long. Silence that looks
    * identical to a broken feature is worse than the nag it was avoiding.
    */
-  | { offer: false; reason: 'in_flight' | 'cooling_down'; retryInMs: number };
+  | { offer: false; reason: 'in_flight'; retryInMs: number };
 
 export type OfferGateOptions = {
   /** Injected so tests do not sleep. */
   now?: () => number;
-  /** Quiet period after the user declines an offer for a model. */
-  cooldownMs?: number;
   /**
    * How long an unanswered offer holds the model.
    *
@@ -93,25 +102,15 @@ export type OfferGateOptions = {
  */
 export const OFFER_TTL_MS = 2 * 60_000;
 
-type Entry = { inFlightAt?: number; quietUntil?: number };
+type Entry = { inFlightAt: number };
 
 export class SessionOfferGate {
   private readonly now: () => number;
-  private readonly cooldownMs: number;
   private readonly inFlightTtlMs: number;
   private readonly byModel = new Map<string, Entry>();
 
   constructor(options: OfferGateOptions = {}) {
     this.now = options.now ?? Date.now;
-    // 45 seconds, not five minutes.
-    //
-    // Five was chosen against an imagined retry storm. Measured, grok sends ONE
-    // request per user send for a clean 400 and does not retry it — so the only
-    // thing a long cooldown suppresses is a PERSON pressing enter again, which
-    // is intent, not noise. The reported symptom was exactly that: "the app
-    // only opens the first time". Long enough to absorb a double-send, short
-    // enough that trying again is trying again.
-    this.cooldownMs = options.cooldownMs ?? 45_000;
     this.inFlightTtlMs = options.inFlightTtlMs ?? OFFER_TTL_MS;
   }
 
@@ -125,19 +124,9 @@ export class SessionOfferGate {
   request(modelId: string): OfferDecision {
     const t = this.now();
     this.forget(t);
-    const entry = this.byModel.get(modelId) ?? {};
+    const entry = this.byModel.get(modelId);
 
-    if (entry.quietUntil !== undefined && t < entry.quietUntil) {
-      return {
-        offer: false,
-        reason: 'cooling_down',
-        retryInMs: entry.quietUntil - t,
-      };
-    }
-    if (
-      entry.inFlightAt !== undefined &&
-      t - entry.inFlightAt < this.inFlightTtlMs
-    ) {
+    if (entry && t - entry.inFlightAt < this.inFlightTtlMs) {
       return {
         offer: false,
         reason: 'in_flight',
@@ -150,18 +139,14 @@ export class SessionOfferGate {
   }
 
   /**
-   * Record what the human did.
+   * Record what the human did. Either answer FREES the model.
    *
-   * `opened` clears everything: the model now has a session, so the next request
-   * succeeds and there is nothing to be quiet about. `declined` starts the
-   * cooldown — this is the case a retry loop would otherwise exploit.
+   * `opened` because it now has a session; `declined` because a person who
+   * closed a dialog and then asked again wants the dialog, and making them wait
+   * for it is the behaviour this gate was reported as a bug for.
    */
-  settle(modelId: string, outcome: 'opened' | 'declined'): void {
-    if (outcome === 'opened') {
-      this.byModel.delete(modelId);
-      return;
-    }
-    this.byModel.set(modelId, { quietUntil: this.now() + this.cooldownMs });
+  settle(modelId: string): void {
+    this.byModel.delete(modelId);
   }
 
   /**
@@ -174,12 +159,7 @@ export class SessionOfferGate {
    */
   private forget(t: number): void {
     for (const [id, e] of this.byModel) {
-      const quietOver = e.quietUntil !== undefined && t >= e.quietUntil;
-      const flightOver =
-        e.inFlightAt !== undefined && t - e.inFlightAt >= this.inFlightTtlMs;
-      if ((e.quietUntil === undefined || quietOver) && (e.inFlightAt === undefined || flightOver)) {
-        this.byModel.delete(id);
-      }
+      if (t - e.inFlightAt >= this.inFlightTtlMs) this.byModel.delete(id);
     }
   }
 
@@ -192,10 +172,7 @@ export class SessionOfferGate {
   pending(): string[] {
     const t = this.now();
     return [...this.byModel.entries()]
-      .filter(
-        ([, e]) =>
-          e.inFlightAt !== undefined && t - e.inFlightAt < this.inFlightTtlMs,
-      )
+      .filter(([, e]) => t - e.inFlightAt < this.inFlightTtlMs)
       .map(([id]) => id);
   }
 }
