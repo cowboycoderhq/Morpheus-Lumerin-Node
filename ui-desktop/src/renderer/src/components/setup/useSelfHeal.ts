@@ -79,6 +79,35 @@ const STUCK_MS = 6 * 60 * 1000;
 // makes the timeout real rather than decorative.
 const HEARTBEAT_MS = 5000;
 
+// NOTHING IS MOVING — the case every per-key rule above misses.
+//
+// The stuck-clock only runs while a service is actively 'starting'. A service
+// stuck in 'pending' (the pipeline never reached it) or a download that stalls
+// without erroring both read as 'working' with the clock reset on every tick,
+// so no escalation can ever fire. That is a spinner forever, which is exactly
+// what a tester saw: "Connecting to the Morpheus network — just a moment,
+// sorting something out…", indefinitely, with no error and nothing to click.
+//
+// This watchdog does not care WHY. If the whole picture — every status, every
+// download's progress — is byte-identical for this long, setup is not
+// progressing and the user is owed the truth and a button.
+const STALL_MS = 3 * 60 * 1000;
+
+/**
+ * A fingerprint of everything that would change if anything were happening.
+ *
+ * Downloads are included by BYTES, not just status: a download that is moving
+ * slowly must not look identical to one that has stopped, or a thin connection
+ * would be told setup had stalled.
+ */
+const progressFingerprint = (services: LoadingState): string =>
+  JSON.stringify({
+    startup: services.startup.map((s) => [s.id, s.status, s.error ?? '']),
+    // By PROGRESS, not just status: a download inching along on a thin
+    // connection must not look identical to one that has stopped dead.
+    download: services.download.map((d) => [d.name, d.status, d.progress]),
+  });
+
 // THREE states, not two. This used to be a boolean `failing`, and the missing
 // third state made the whole escalation path dead code:
 //
@@ -178,6 +207,10 @@ export function useSelfHeal(services: LoadingState, client: Client) {
   );
   const [escalation, setEscalation] = useState<EscalationInfo | null>(null);
   const [beat, setBeat] = useState(0);
+  const stallRef = useRef<{ print: string; since: number }>({
+    print: '',
+    since: Date.now(),
+  });
 
   // Re-evaluate on a clock, not only on service state changes — a stuck service
   // is defined by the absence of state changes.
@@ -278,6 +311,26 @@ export function useSelfHeal(services: LoadingState, client: Client) {
         });
       }, delay);
     });
+
+    // The catch-all. Checked after the per-key rules so a specific diagnosis
+    // always wins over "nothing is happening".
+    const print = progressFingerprint(services);
+    if (print !== stallRef.current.print) {
+      stallRef.current = { print, since: now };
+    } else if (!nextEscalation && now - stallRef.current.since > STALL_MS) {
+      const stuck = services.startup.find((s) => s.status !== 'running');
+      nextEscalation = {
+        key: (stuck?.id as HealKey) ?? 'proxyRouter',
+        kind: 'generic',
+        message:
+          `Setup stopped making progress ${Math.round(
+            (now - stallRef.current.since) / 60000,
+          )} minutes ago` +
+          (stuck ? `, waiting on ${stuck.id} (${stuck.status}).` : '.') +
+          ' Nothing reported an error — it simply stopped moving.',
+        stderr: (stuck as any)?.stderrOutput,
+      };
+    }
 
     if (healingChanged) setHealingKeys(nextHealing);
     if (nextEscalation !== escalation) setEscalation(nextEscalation);
