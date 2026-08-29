@@ -22,23 +22,6 @@
 // the TUI is UX plus agent-resistance; these are the enforcement.
 // ============================================================================
 
-export type SessionCaps = {
-  /** Hard ceiling on MOR staked by any ONE session opened through this API. */
-  maxStakeMor: number;
-  /** Hard ceiling on MOR staked across all sessions opened today. */
-  maxDailyStakeMor: number;
-  /**
-   * Hard ceiling on the NUMBER of sessions opened today.
-   *
-   * The MOR caps alone do not bound this: against a cheap model a loop can open
-   * hundreds of sessions well inside the daily MOR ceiling, and each one is a
-   * chain transaction costing gas and locking its stake to end of day. An agent
-   * that misreads a failure and retries is the realistic way that happens, not
-   * an attacker. Optional so existing callers keep working; unset means
-   * unbounded, which is why the app always sets it.
-   */
-  maxDailySessions?: number;
-};
 
 /** Contract floor (300s) plus the cushion the app uses everywhere else. */
 export const MIN_SESSION_SECONDS = 305;
@@ -163,81 +146,6 @@ export function stakeForDuration(
   return (price * durationSec * supply) / budget / MOR;
 }
 
-/**
- * Decide whether a stake may proceed.
- *
- * Both limits are checked, and the message names WHICH one bound — a refusal
- * that does not say why leaves the user guessing at a number they cannot see.
- */
-export function checkCaps(
-  stakeMor: number,
-  caps: SessionCaps,
-  ledger: SpendRecord[],
-  nowMs: number,
-): { allowed: boolean; reason?: string } {
-  if (!Number.isFinite(stakeMor) || stakeMor <= 0) {
-    return { allowed: false, reason: 'Could not price this session.' };
-  }
-  // A cap that is not a usable number must REFUSE, not wave things through.
-  // Every comparison below is `x > cap`, and that is false for NaN — so a
-  // corrupted or half-written setting would silently mean "no limit" on the
-  // three lines standing between an agent loop and the wallet. The config
-  // reader coerces these already; this is the function refusing to depend on
-  // its caller having done so.
-  for (const [name, value] of [
-    ['maxStakeMor', caps.maxStakeMor],
-    ['maxDailyStakeMor', caps.maxDailyStakeMor],
-  ] as const) {
-    if (!Number.isFinite(value) || (value as number) < 0) {
-      return {
-        allowed: false,
-        reason: `The ${name} limit is not set to a usable number, so no session can be opened. Set it in the app under Settings.`,
-      };
-    }
-  }
-  if (
-    caps.maxDailySessions !== undefined &&
-    !Number.isFinite(caps.maxDailySessions)
-  ) {
-    return {
-      allowed: false,
-      reason:
-        'The daily session limit is not set to a usable number, so no session can be opened. Set it in the app under Settings.',
-    };
-  }
-  if (stakeMor > caps.maxStakeMor) {
-    return {
-      allowed: false,
-      reason: `This session would stake ${stakeMor.toFixed(
-        2,
-      )} MOR, over the per-session limit of ${caps.maxStakeMor} MOR. Raise it in the app under Settings, or choose a shorter duration.`,
-    };
-  }
-  const already = spentToday(ledger, nowMs);
-  if (already + stakeMor > caps.maxDailyStakeMor) {
-    return {
-      allowed: false,
-      reason: `This would bring today's staking to ${(
-        already + stakeMor
-      ).toFixed(2)} MOR, over the daily limit of ${
-        caps.maxDailyStakeMor
-      } MOR (${already.toFixed(2)} already staked today).`,
-    };
-  }
-  if (typeof caps.maxDailySessions === 'number') {
-    const from = startOfDay(nowMs);
-    const count = ledger.filter((r) => r.at >= from).length;
-    if (count + 1 > caps.maxDailySessions) {
-      return {
-        allowed: false,
-        reason: `That would be session ${count + 1} today, over the daily limit of ${
-          caps.maxDailySessions
-        }. Raise it in the app under Settings if this is deliberate.`,
-      };
-    }
-  }
-  return { allowed: true };
-}
 
 /**
  * Build the picker catalog: models, each with the providers that can serve it.

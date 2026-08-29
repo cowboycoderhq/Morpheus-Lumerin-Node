@@ -66,9 +66,6 @@ const Common = (props: CommonProps) => {
   // for — a port collision must not read as "on".
   const [apiCfg, setApiCfg] = useState<any>(null);
   const [apiTokenShown, setApiTokenShown] = useState(false);
-  // In-flight text for the spend-cap fields, keyed by config field. Only a
-  // usable number is committed; see the inputs below.
-  const [capDraft, setCapDraft] = useState<Record<string, string>>({});
   const [grok, setGrok] = useState<any>(null);
   const [ocStatus, setOcStatus] = useState<any>(null);
   const [ocBusy, setOcBusy] = useState(false);
@@ -322,38 +319,6 @@ const Common = (props: CommonProps) => {
               </SettingsCallout>
             )}
 
-            {/* The one switch that lets something OUTSIDE the app spend MOR on
-                its own. Off by default; the endpoint being enabled is not
-                enough. It does NOT govern this app's own session picker — that
-                is a human clicking confirm in this window, which needs no
-                permission granted to anybody else. */}
-            <SectionDescription style={{ marginTop: '1.6rem' }}>
-              Letting a tool open sessions on its own
-            </SectionDescription>
-            <FieldRow>
-              <ToggleRow htmlFor="openai-api-auto-open">
-                <ToggleInput
-                  id="openai-api-auto-open"
-                  checked={Boolean(apiCfg?.allowAutoOpen)}
-                  onChange={async (e) => {
-                    setApiCfg(
-                      await props.client.setOpenAiApiConfig({
-                        allowAutoOpen: Boolean(e.target.checked),
-                      }),
-                    );
-                  }}
-                />
-                <ToggleLabel>
-                  Let a tool holding the key above stake MOR without asking
-                </ToggleLabel>
-              </ToggleRow>
-            </FieldRow>
-            <SettingsCallout tone={apiCfg?.allowAutoOpen ? 'warning' : 'info'}>
-              {apiCfg?.allowAutoOpen
-                ? 'A tool holding the key above can open paid sessions on its own. The limits below are what bound it.'
-                : 'While this is off, no tool can cause a blockchain transaction — it can only use sessions that already exist. You can still open sessions yourself, here and from the picker.'}
-            </SettingsCallout>
-
             {/* A way in that does not depend on the automatic notice having
                 worked — it did not, for a tester, and the failure was silent. */}
             <FieldRow style={{ marginTop: '1.2rem' }}>
@@ -429,82 +394,6 @@ const Common = (props: CommonProps) => {
                   </SearchRow>
                 ))}
               </SearchResults>
-            )}
-
-            {/* Distinct from the switch above, and deliberately so: that one
-                lets a tool spend on its own, this one only lets a tool make the
-                app ASK. Every session it leads to is still opened by hand,
-                here, in this window. */}
-            <SectionDescription style={{ marginTop: '1.6rem' }}>
-              Offering a session when a terminal asks for one
-            </SectionDescription>
-            <FieldRow>
-              <ToggleRow htmlFor="openai-api-offer-session">
-                <ToggleInput
-                  id="openai-api-offer-session"
-                  checked={Boolean(apiCfg?.offerSessionOnUse)}
-                  onChange={async (e) => {
-                    setApiCfg(
-                      await props.client.setOpenAiApiConfig({
-                        offerSessionOnUse: Boolean(e.target.checked),
-                      }),
-                    );
-                  }}
-                />
-                <ToggleLabel>
-                  Bring this window forward when a terminal picks a model with no
-                  session
-                </ToggleLabel>
-              </ToggleRow>
-            </FieldRow>
-            <SettingsCallout tone="info">
-              {apiCfg?.offerSessionOnUse
-                ? 'Your models stay listed in grok and opencode whether or not a session is open. Using one without a session is refused, and this window comes forward so you can open it — one offer at a time, and cancelling one buys quiet for a few minutes. This needs no other permission: you approve each session here.'
-                : 'Using a model with no open session is refused with a message telling you to open one in the app. Turn this on and the app will offer to open it for you instead.'}
-            </SettingsCallout>
-            {apiCfg?.allowAutoOpen && (
-              <Flex.Row gap="0.8rem">
-                {(
-                  [
-                    ['maxStakeMor', 'Max MOR per session'],
-                    ['maxDailyStakeMor', 'Max MOR per day'],
-                    ['maxDailySessions', 'Max sessions per day'],
-                  ] as const
-                ).map(([key, label]) => (
-                  <TextInput
-                    key={key}
-                    id={`openai-api-${key}`}
-                    label={label}
-                    // The DRAFT while typing, the stored value otherwise.
-                    // Committing the parsed number on every keystroke made
-                    // clearing the field write 0 — a cap of zero refuses
-                    // everything — and backspacing to retype was enough to do
-                    // it. Hold the text, commit only a usable number.
-                    value={capDraft[key] ?? String(apiCfg[key] ?? '')}
-                    onChange={async (e: any) => {
-                      // This control calls onChange({ id, value }), NOT a DOM
-                      // event — reading e.target.value threw on every
-                      // keystroke and the field could not be edited at all.
-                      const text = String(e?.value ?? '');
-                      setCapDraft((d) => ({ ...d, [key]: text }));
-                      const n = Number(text);
-                      if (text.trim() === '' || !Number.isFinite(n) || n < 0) {
-                        return;
-                      }
-                      setApiCfg(
-                        await props.client.setOpenAiApiConfig({ [key]: n }),
-                      );
-                    }}
-                    onBlur={() =>
-                      setCapDraft((d) => {
-                        const next = { ...d };
-                        delete next[key];
-                        return next;
-                      })
-                    }
-                  />
-                ))}
-              </Flex.Row>
             )}
 
             {/* grok: pinned models in its picker, sessions opened here. */}

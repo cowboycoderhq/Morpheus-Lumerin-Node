@@ -12,11 +12,12 @@
 // tested without a socket. This file is the shell: sockets, streaming, and the
 // one genuinely dangerous decision — whether a request may open a paid session.
 //
-// DEFAULT POSTURE: disabled, and spend-inert when enabled. `allowAutoOpen` is
-// off unless the operator turns it on, so by default no request arriving here
-// can cause a blockchain transaction. That is the real defence: authentication
-// cannot stop same-user local malware (it can read whatever holds the token),
-// so the port must not have spending authority in the first place.
+// DEFAULT POSTURE: disabled, and spend-inert whenever it is not. NO request
+// arriving on this port can cause a blockchain transaction — session opening is
+// reserved to the app's own window, proven by a per-process key the renderer
+// never sees. That is the real defence: authentication cannot stop same-user
+// local malware (it can read whatever holds the token), so the port must not
+// have spending authority at all, rather than having it behind a switch.
 // ============================================================================
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
@@ -36,7 +37,6 @@ import {
 import { SessionOfferGate } from './session-offers';
 import {
   buildCatalog,
-  checkCaps,
   checkDuration,
   spentToday,
   stakeForDuration,
@@ -44,7 +44,6 @@ import {
   CHAIN_CAP_FALLBACK_SEC,
   MIN_SESSION_SECONDS,
   type Quote,
-  type SessionCaps,
   type SpendRecord,
 } from './sessions-api';
 
@@ -52,14 +51,6 @@ export type OpenAiApiConfig = {
   enabled: boolean;
   port: number;
   token: string;
-  /** When false the server never opens a session — the safe default. */
-  allowAutoOpen: boolean;
-  /** Ceiling on MOR staked by any ONE auto-opened session. */
-  maxStakeMor: number;
-  /** Ceiling on MOR staked across every session opened today. */
-  maxDailyStakeMor: number;
-  /** Ceiling on how MANY sessions may be opened today. */
-  maxDailySessions: number;
   /**
    * Marketplace models (hex32 chain ids) the user wants available in a terminal.
    *
@@ -69,9 +60,12 @@ export type OpenAiApiConfig = {
    */
   starredModelIds?: string[];
   /**
-   * May a refusal bring the app forward to offer a session? Off by default:
-   * until the user has said yes, a request from a terminal can be refused but
-   * must not take over their screen.
+   * Kept as a field, no longer a setting.
+   *
+   * Being offered a session for a model you just asked for IS the feature; it
+   * was never something a user would want on separately, and as a checkbox it
+   * was one more thing standing between "endpoint on" and "it works". Defaults
+   * true and nothing in the UI turns it off.
    */
   offerSessionOnUse?: boolean;
 };
@@ -124,17 +118,8 @@ export const defaultConfig = (): OpenAiApiConfig => ({
   enabled: false,
   port: DEFAULT_PORT,
   token: generateToken(),
-  allowAutoOpen: false,
-  // Deliberately small. These are the ceiling on what a tool holding this
-  // token can spend without the operator watching, so the default is "enough
-  // to try it", not "enough to matter".
-  maxStakeMor: 1,
-  maxDailyStakeMor: 5,
-  maxDailySessions: 10,
   starredModelIds: [],
-  // Off until the user asks for it: being interrupted by a window you did not
-  // summon is not a default anyone should inherit.
-  offerSessionOnUse: false,
+  offerSessionOnUse: true,
 });
 
 /**
@@ -566,17 +551,21 @@ export class OpenAiCompatServer {
   }
 
   // ==========================================================================
-  // /morpheus/v1/* — the surface `/start` drives. Only ONE route here spends.
+  // /morpheus/v1/* — the surface the session picker drives. ONE route spends.
   //
   // The security model, stated plainly because it decides the code:
   //
-  // The TUI confirmation is a real boundary against an AGENT — a model cannot
-  // press a key — but it is CLIENT-SIDE. Anything holding the bearer token can
-  // POST /morpheus/v1/sessions directly and skip it. So the dialog is UX plus
-  // agent-resistance, and these are the enforcement:
-  //   - `allowAutoOpen` off by default; without it this route cannot spend at all
-  //   - caps that live in the app and cannot be raised over the wire
-  //   - a per-day MOR ledger AND a per-day session count
+  // Opening is APP-ONLY. A tool holding the bearer token can read the catalog,
+  // price a session and be refused into asking for one; it cannot open one,
+  // because the route requires a per-process key that exists only in main's
+  // memory. Every session is therefore a person looking at a model, a provider,
+  // a length and a stake, and clicking confirm.
+  //
+  // There are no spend caps, and their absence is deliberate. They bounded a
+  // tool spending unattended — a thing that can no longer happen — and as
+  // settings they were three more boxes to tick before anything worked, which
+  // is how a safety feature turns into an obstacle nobody reads. What remains
+  // is the part that protects a person who IS watching:
   //   - the open RE-PRICES rather than trusting a figure sent back to it, and
   //     a caller may pass `confirmedStakeMor` as a CEILING: if the re-price
   //     comes out above what the user actually confirmed, the open is refused.
@@ -588,17 +577,14 @@ export class OpenAiCompatServer {
   //   - every open reported to the UI via onActivity
   // ==========================================================================
 
-  /** Sessions opened through this API today. In memory: see the caps note. */
+  /**
+   * Sessions opened through this API today.
+   *
+   * Kept for what it SHOWS — Settings reports what has been opened, and "last
+   * external use" is how a user answers "did that really go through Morpheus".
+   * It no longer forbids anything: nothing but this app can open a session.
+   */
   private ledger: SpendRecord[] = [];
-
-  private caps(): SessionCaps {
-    const cfg = this.deps.config();
-    return {
-      maxStakeMor: cfg.maxStakeMor,
-      maxDailyStakeMor: cfg.maxDailyStakeMor,
-      maxDailySessions: cfg.maxDailySessions,
-    };
-  }
 
   private capSeconds(): number {
     return this.deps.maxSessionSeconds?.() ?? CHAIN_CAP_FALLBACK_SEC;
@@ -631,15 +617,14 @@ export class OpenAiCompatServer {
   }
 
   private async serveMorpheusStatus(res: ServerResponse): Promise<void> {
-    const cfg = this.deps.config();
-    const caps = this.caps();
     const now = Date.now();
     sendJson(res, 200, {
-      canOpen: cfg.allowAutoOpen,
-      reason: cfg.allowAutoOpen
-        ? undefined
-        : 'Opening sessions from outside the app is turned off. Enable it in the app under Settings → OpenAI-compatible API.',
-      caps,
+      // A caller can never open one; it can ask for a pinned model and be
+      // offered. Reported plainly so a tool does not build a flow around a
+      // capability it does not have.
+      canOpen: false,
+      reason:
+        'Sessions are opened in the Morpheus app. Ask for a model you have pinned and the app will offer to open one.',
       spentTodayMor: spentToday(this.ledger, now),
       sessionsToday: this.ledger.filter((r) => r.at >= startOfDay(now)).length,
       maxSessionSeconds: this.capSeconds(),
@@ -848,17 +833,16 @@ export class OpenAiCompatServer {
       pricing.supply,
       pricing.budget,
     );
-    const verdict = checkCaps(stakeMor, this.caps(), this.ledger, Date.now());
-    const cfg = this.deps.config();
+    // No caps. They bounded a tool spending unattended, and a tool cannot open
+    // a session at all now — every one is a person confirming a figure they
+    // have just been shown, with the confirmed-stake ceiling below catching a
+    // price that moves between the quote and the click.
     return {
       modelId,
       bidId,
       durationSec: duration.durationSec,
       stakeMor,
-      allowed: verdict.allowed && cfg.allowAutoOpen,
-      reason: !cfg.allowAutoOpen
-        ? 'Opening sessions from outside the app is turned off. Enable it in the app under Settings → OpenAI-compatible API.'
-        : verdict.reason,
+      allowed: true,
     };
   }
 
@@ -873,28 +857,26 @@ export class OpenAiCompatServer {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const cfg = this.deps.config();
-    // WHO IS ASKING decides which permission applies.
+    // ONLY THIS APP MAY OPEN A SESSION. There is no setting that changes this.
     //
-    // The app's own session picker is a human clicking a confirm button in this
-    // window, having been shown the model, the provider, the length and the
-    // stake. Requiring "let outside tools spend on their own" for that was a
-    // mistake: it is a different permission, and granting it to use a dialog in
-    // this app would have meant granting a tool the right to spend unattended.
+    // Every session is a human reading the model, the provider, the length and
+    // the stake in the app's own window and clicking confirm. A tool holding
+    // the bearer key can USE sessions and can be refused into asking for one —
+    // it can never open one itself, so there is no unattended spending to bound
+    // and no permission for anyone to grant by accident.
     //
-    // Everything else on this route — the confirm flag, the caps, the
-    // confirmed-stake ceiling — still applies to both.
+    // The proof is a per-process key the renderer never sees; see internalKey.
     const fromThisApp =
       typeof req.headers['x-morpheus-app'] === 'string' &&
       req.headers['x-morpheus-app'] === this.internalKey;
 
-    if (!fromThisApp && !cfg.allowAutoOpen) {
+    if (!fromThisApp) {
       sendJson(
         res,
         403,
         errorBody(
-          'A tool holding this key is not allowed to open sessions on its own. Turn that on in the app under Settings → OpenAI-compatible API if you want it. Opening a session from the app itself does not need it.',
-          'auto_open_disabled',
+          'Sessions are opened in the Morpheus app, not through this endpoint. Ask for a model you have pinned and the app will offer to open one.',
+          'app_only',
           'permission_error',
         ),
       );
@@ -959,34 +941,10 @@ export class OpenAiCompatServer {
       }
     }
 
-    // Re-check the caps and reserve in ONE synchronous step.
-    //
-    // priceRequest forms its verdict on the far side of an await, so in
-    // principle two requests arriving together could both be told "allowed"
-    // against the same empty ledger and both then open. Checking and reserving
-    // here, with no await between, closes that window.
-    //
-    // HONEST STATUS: theoretical. I could not make it happen. Five concurrent
-    // opens against a cap of one were tried, including with the fake router
-    // holding all five bid lookups and releasing them in a single tick to force
-    // same-tick resumption — one session opened either way, with or without
-    // this block. Every path to checkCaps goes through I/O while the span from
-    // checkCaps to the push is pure microtask, which appears to serialise them.
-    // The endpoint suite's concurrency check therefore does NOT discriminate
-    // this guard; treat it as cheap insurance against an interleaving I could
-    // not construct, not as a fix for a demonstrated bug.
-    const verdict = checkCaps(quote.stakeMor, this.caps(), this.ledger, Date.now());
-    if (!verdict.allowed) {
-      sendJson(
-        res,
-        403,
-        errorBody(verdict.reason ?? 'This session is not allowed.', 'cap_exceeded', 'permission_error'),
-      );
-      return;
-    }
-    // Record BEFORE the call. A crash mid-open must not leave a stake
-    // unaccounted for: over-counting costs the user a refusal they could
-    // undo in Settings, under-counting costs them MOR.
+    // The ledger is kept for what it SHOWS, not for what it forbids: Settings
+    // reports what has been opened today, and "Last external use" is how a user
+    // answers "did that really go through Morpheus". Recorded before the call,
+    // so a crash mid-open cannot leave a stake unaccounted for.
     const provisional: SpendRecord = {
       at: Date.now(),
       stakeMor: quote.stakeMor,

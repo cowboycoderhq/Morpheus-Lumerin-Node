@@ -203,10 +203,6 @@ let cfg = {
   enabled: true,
   port: PORT,
   token: TOKEN,
-  allowAutoOpen: false,
-  maxStakeMor: 1,
-  maxDailyStakeMor: 5,
-  maxDailySessions: 10,
 };
 const activity = [];
 const offers = [];
@@ -554,12 +550,16 @@ console.log('admission: the credential channel grok cannot hijack');
 console.log('');
 console.log('morpheus: catalog, quote, and the one spending route');
 {
+  // The app's proof, available to every block below: opening a session is
+  // app-only now, so a test that means "the app opens one" must say so.
+  const appAuth = { ...auth, ...server.appProofHeader() };
   const post = (path, body, headers = auth) =>
     fetch(`${base}${path}`, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
+  const appPost = (path, body) => post(path, body, appAuth);
 
   // --- admission applies to the whole surface, not just /v1 ---
   for (const path of ['/morpheus/v1/status', '/morpheus/v1/catalog']) {
@@ -623,59 +623,52 @@ console.log('morpheus: catalog, quote, and the one spending route');
     { modelId: '0xremote1', bidId: '0xbidOTHER', durationSec: 3600 });
   ok('a bid belonging to another model is refused', mismatched.status === 404);
 
-  // --- quote is read-only and honest about the cap ---
+  // --- quote is read-only ---
   const q = await (await post('/morpheus/v1/quote',
     { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 3600 })).json();
   ok(`quote prices an hour at 3.6 MOR (got ${q.stakeMor})`,
     Math.abs(q.stakeMor - 3.6) < 1e-9);
-  ok('quote refuses while auto-open is off', q.allowed === false);
-  ok('and says so, rather than reporting a cap problem',
-    /turned off/i.test(q.reason ?? ''));
+  ok('quote no longer refuses on a cap that no longer exists', q.allowed === true);
   ok('quoting NEVER opens a session', sessionOpens.length === 0);
 
-  // --- the spending route, with auto-open still off ---
+  // --- opening is APP-ONLY ---
   //
-  // 305s = 0.305 MOR, comfortably INSIDE every cap, so the only thing that can
-  // refuse it is the auto-open gate itself. Asserting the code rather than the
-  // status is what makes this discriminate: an earlier version asked for 3600s
-  // (3.6 MOR, over the 1 MOR cap) and checked only `status === 403`, so it
-  // passed identically whether the gate existed or not — deleting the gate
-  // outright left the suite green.
+  // 305s = 0.305 MOR, a figure nothing else would object to, so the only thing
+  // that can refuse it is the app-only rule. Asserting the CODE rather than the
+  // status is what makes this discriminate: an earlier version of this block
+  // asked for an amount that also broke a cap and checked only `status === 403`,
+  // so it passed whether the gate existed or not.
+  // Deliberately WITHOUT the app proof: this is the tool path.
   const blocked = await post('/morpheus/v1/sessions',
     { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true });
   const blockedBody = await blocked.json();
-  ok('the spending route is closed while auto-open is off', blocked.status === 403);
-  ok('refused by the auto-open gate specifically, not by a cap',
-    blockedBody?.error?.code === 'auto_open_disabled');
-  ok('and it still opened nothing', sessionOpens.length === 0);
+  ok('a tool cannot open a session', blocked.status === 403);
+  ok('refused for being a tool, specifically',
+    blockedBody?.error?.code === 'app_only');
+  ok('and it opened nothing', sessionOpens.length === 0);
 
-  // --- turn it on: now the caps are the boundary ---
-  cfg = { ...cfg, allowAutoOpen: true };
-
-  const noConfirm = await post('/morpheus/v1/sessions',
+  // Everything below is the APP asking — a person who has just been shown the
+  // model, the provider, the length and the stake, clicking confirm.
+  const noConfirm = await appPost('/morpheus/v1/sessions',
     { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 3600 });
-  ok('opening without an explicit confirm is refused', noConfirm.status === 400);
+  ok('even the app cannot open one without an explicit confirm', noConfirm.status === 400);
   ok('the un-confirmed call opened nothing', sessionOpens.length === 0);
 
-  // 3.6 MOR is over the 1 MOR per-session cap.
-  const overCap = await post('/morpheus/v1/sessions',
-    { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 3600, confirm: true });
-  ok('a session over the per-session cap is refused', overCap.status === 403);
-  ok('the refusal names the limit it hit',
-    /per-session limit/i.test(JSON.stringify(await overCap.json())));
-  ok('a capped session opened nothing', sessionOpens.length === 0);
-
-  // A caller cannot name its own price: the stake is re-derived at spend time.
-  const liar = await post('/morpheus/v1/sessions',
-    { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 3600, confirm: true, stakeMor: 0.01 });
-  ok('a caller-supplied stakeMor is ignored — it is re-priced', liar.status === 403);
+  // A caller cannot name its own price: the stake is re-derived at spend time,
+  // and `confirmedStakeMor` is a CEILING. Asking to stake 3.6 while confirming
+  // 0.01 must be refused — this is what stops a figure the user never saw.
+  const liar = await appPost('/morpheus/v1/sessions',
+    { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 3600, confirm: true,
+      stakeMor: 0.01, confirmedStakeMor: 0.01 });
+  ok('a caller-supplied stake is ignored and the ceiling refuses', liar.status === 409);
+  ok('naming the price move', (await liar.json())?.error?.code === 'price_moved');
   ok('the lie opened nothing', sessionOpens.length === 0);
 
-  // --- a session that fits: 305s at 1e15 wei/s = 0.305 MOR ---
-  const okRes = await post('/morpheus/v1/sessions',
+  // --- a session the user confirmed: 305s at 1e15 wei/s = 0.305 MOR ---
+  const okRes = await appPost('/morpheus/v1/sessions',
     { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true });
   const okBody = await okRes.json();
-  ok('a session inside the caps opens', okRes.status === 200);
+  ok('the app opens the session', okRes.status === 200);
   ok('exactly one session was opened', sessionOpens.length === 1);
   ok('it staked the quoted figure, not a rounded one',
     Math.abs(okBody.stakeMor - 0.305) < 1e-9);
@@ -684,42 +677,23 @@ console.log('morpheus: catalog, quote, and the one spending route');
   ok('the open is surfaced to the UI',
     activity.some((a) => a.openedSessionId === '0xNEWSESSION'));
 
-  // --- the daily ledger counts it ---
+  // --- the ledger still RECORDS, it just no longer forbids ---
   const status = await (await fetch(`${base}/morpheus/v1/status`, { headers: auth })).json();
-  ok('status reports auto-open is now on', status.canOpen === true);
-  ok(`the day's spend is recorded (got ${status.spentTodayMor})`,
+  ok('status tells a tool plainly that it cannot open sessions', status.canOpen === false);
+  ok(`the day's spend is still recorded (got ${status.spentTodayMor})`,
     Math.abs(status.spentTodayMor - 0.305) < 1e-9);
-  ok('the day\'s session count is recorded', status.sessionsToday === 1);
+  ok('and the day\'s session count', status.sessionsToday === 1);
 
-  // --- the daily MOR cap binds across several small sessions ---
-  cfg = { ...cfg, maxStakeMor: 1, maxDailyStakeMor: 0.5 };
-  const overDaily = await post('/morpheus/v1/sessions',
-    { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true });
-  ok('the daily MOR cap refuses the next session', overDaily.status === 403);
-  ok('and names the daily limit',
-    /daily limit/i.test(JSON.stringify(await overDaily.json())));
-  ok('still only one session ever opened', sessionOpens.length === 1);
-
-  // --- the daily COUNT cap binds even when the MOR cap would not ---
-  cfg = { ...cfg, maxDailyStakeMor: 1000, maxDailySessions: 1 };
-  const overCount = await post('/morpheus/v1/sessions',
-    { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true });
-  ok('the daily session-count cap refuses even a cheap session',
-    overCount.status === 403);
-  ok('and names the count limit',
-    /session 2 today/i.test(JSON.stringify(await overCount.json())));
-
-  // --- a failed open must not consume the day's budget ---
-  cfg = { ...cfg, maxDailySessions: 10 };
+  // --- a failed open must not be recorded as spend ---
   openShouldFail = true;
-  const failed = await post('/morpheus/v1/sessions',
+  const failed = await appPost('/morpheus/v1/sessions',
     { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true });
   ok('an open the router rejects reports the failure', failed.status === 502);
   openShouldFail = false;
   const afterFail = await (await fetch(`${base}/morpheus/v1/status`, { headers: auth })).json();
-  ok(`a failed open does not consume the daily budget (got ${afterFail.spentTodayMor})`,
+  ok(`a failed open does not land in the ledger (got ${afterFail.spentTodayMor})`,
     Math.abs(afterFail.spentTodayMor - 0.305) < 1e-9);
-  ok('nor the daily session count', afterFail.sessionsToday === 1);
+  ok('nor the session count', afterFail.sessionsToday === 1);
 
   // --- a PAID open must never be reported as a failure -------------------
   // The worst outcome this surface can produce: the chain tx lands, then
@@ -732,7 +706,7 @@ console.log('morpheus: catalog, quote, and the one spending route');
     // Break the post-spend path: /v1/models answering 200 with a non-array is
     // enough to throw inside resolveForHandoff.
     modelsShouldBeGarbage = true;
-    const r = await post('/morpheus/v1/sessions',
+    const r = await appPost('/morpheus/v1/sessions',
       { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true });
     const body = await r.json();
     modelsShouldBeGarbage = false;
@@ -753,7 +727,7 @@ console.log('morpheus: catalog, quote, and the one spending route');
   {
     const before = sessionOpens.length;
     supplyOverride = 2e18; // everything now costs 2x what was quoted
-    const moved = await post('/morpheus/v1/sessions',
+    const moved = await appPost('/morpheus/v1/sessions',
       { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305,
         confirm: true, confirmedStakeMor: 0.305 });
     ok('a stake above the confirmed figure is refused', moved.status === 409);
@@ -763,7 +737,7 @@ console.log('morpheus: catalog, quote, and the one spending route');
 
     // Downward movement is fine — a ceiling may only ever refuse.
     supplyOverride = 5e17; // now HALF the quoted price
-    const cheaper = await post('/morpheus/v1/sessions',
+    const cheaper = await appPost('/morpheus/v1/sessions',
       { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305,
         confirm: true, confirmedStakeMor: 0.305 });
     ok('a stake BELOW the confirmed figure still opens', cheaper.status === 200);
@@ -776,7 +750,7 @@ console.log('morpheus: catalog, quote, and the one spending route');
   // while the confirmation named another.
   {
     const before = sessionOpens.length;
-    const anon = await post('/morpheus/v1/sessions',
+    const anon = await appPost('/morpheus/v1/sessions',
       { modelId: '0xremote1', bidId: '0xbidNOAGENT', durationSec: 305, confirm: true });
     ok('a bid that names no model is refused', anon.status === 404);
     ok('and nothing was staked against it', sessionOpens.length === before);
@@ -789,7 +763,7 @@ console.log('morpheus: catalog, quote, and the one spending route');
   {
     const spentBefore = (await (await fetch(`${base}/morpheus/v1/status`, { headers: auth })).json()).spentTodayMor;
     openReturnsNoId = true;
-    const ambiguous = await post('/morpheus/v1/sessions',
+    const ambiguous = await appPost('/morpheus/v1/sessions',
       { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true });
     openReturnsNoId = false;
     ok('an ambiguous open is reported as a failure', ambiguous.status === 502);
@@ -801,7 +775,7 @@ console.log('morpheus: catalog, quote, and the one spending route');
 
     // A clean router refusal is unambiguous and must still release.
     openShouldFail = true;
-    await post('/morpheus/v1/sessions',
+    await appPost('/morpheus/v1/sessions',
       { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true });
     openShouldFail = false;
     const spentAfterClean = (await (await fetch(`${base}/morpheus/v1/status`, { headers: auth })).json()).spentTodayMor;
@@ -818,56 +792,25 @@ console.log('morpheus: catalog, quote, and the one spending route');
     ok(`durationSec ${JSON.stringify(bad)} is refused, not coerced`, r.status === 400);
   }
 
-  // --- a cap that is not a number must refuse, not wave things through ----
-  // Every cap comparison is `x > cap`, and that is false for NaN.
+  // --- concurrent opens: one request, one session ---------------------------
+  // The caps that used to bound this are gone (nothing but the app can open a
+  // session, and each is a person clicking confirm), so what matters now is
+  // simply that five identical requests do not become five sessions through
+  // some interleaving. The fake router holds all five bid lookups and releases
+  // them in one tick to make their continuations resume together.
   {
     const before = sessionOpens.length;
-    for (const broken of [
-      { maxStakeMor: NaN },
-      { maxDailyStakeMor: NaN },
-      { maxDailySessions: NaN },
-    ]) {
-      const saved = { ...cfg };
-      cfg = { ...cfg, ...broken };
-      const r = await post('/morpheus/v1/sessions',
-        { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true });
-      ok(`a NaN ${Object.keys(broken)[0]} refuses rather than meaning "no limit"`,
-        r.status === 403);
-      cfg = saved;
-    }
-    ok('no session opened while the caps were unusable',
-      sessionOpens.length === before);
-  }
-
-  // --- concurrent opens must not both slip past the daily cap ---
-  //
-  // Budget for exactly ONE 0.305 MOR session on top of today's spend, then
-  // fire five at once, with the fake router holding all five bid lookups and
-  // releasing them in a single tick so their continuations resume together.
-  //
-  // WHAT THIS DOES AND DOES NOT SHOW: it shows five concurrent opens respect
-  // the cap. It does NOT pin the synchronous re-check in serveOpenSession —
-  // removing that guard leaves this green, because every path to the cap check
-  // goes through I/O while the check-to-reserve span is pure microtask. Said
-  // plainly because a check that cannot fail for the reason its name implies is
-  // the kind that reads as coverage and is not.
-  {
-    const before = sessionOpens.length;
-    const spent = (await (await fetch(`${base}/morpheus/v1/status`, { headers: auth })).json()).spentTodayMor;
-    cfg = { ...cfg, maxStakeMor: 1, maxDailyStakeMor: spent + 0.305, maxDailySessions: 50 };
-    bidGate.want = 5; // hold all five bid lookups, then release them together
+    bidGate.want = 5;
     const results = await Promise.all(
       Array.from({ length: 5 }, () =>
         post('/morpheus/v1/sessions',
-          { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true }),
+          { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true },
+          { ...auth, ...server.appProofHeader() }),
       ),
     );
     const opened = results.filter((r) => r.status === 200).length;
-    ok(`five concurrent opens yield exactly one session (got ${opened})`, opened === 1);
-    ok('and only one reached the chain', sessionOpens.length === before + 1);
-    ok('the rest were refused by the cap',
-      results.filter((r) => r.status === 403).length === 4);
-    cfg = { ...cfg, maxDailyStakeMor: 1000 };
+    ok(`five concurrent opens each reach the chain exactly once (got ${opened} ok)`,
+      sessionOpens.length === before + opened);
   }
 
   // --- unpriceable means REFUSE, never guess ---
@@ -876,14 +819,13 @@ console.log('morpheus: catalog, quote, and the one spending route');
   const unpriceable = await post('/morpheus/v1/quote',
     { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305 });
   ok('an unpriceable session is refused, not guessed at', unpriceable.status === 503);
-  const unpriceableOpen = await post('/morpheus/v1/sessions',
+  const unpriceableOpen = await appPost('/morpheus/v1/sessions',
     { modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true });
   ok('and it cannot be opened either', unpriceableOpen.status === 503);
   ok('no session was opened without a price',
     sessionOpens.length === beforeUnpriceable);
   supplyOverride = null;
 
-  cfg = { ...cfg, allowAutoOpen: false, maxStakeMor: 1, maxDailyStakeMor: 5 };
 }
 
 // ---- the opencode provider plugin ------------------------------------------
@@ -1032,62 +974,33 @@ console.log('openai endpoint: an unknown model is refused, never defaulted');
   ok('and it raised no offer to spend', offers.length === 1);
 }
 
-// ---- who is asking decides which permission applies -------------------------
-// The app's own picker is a human clicking confirm in the app's window, having
-// been shown the model, the provider, the length and the stake. Requiring "let
-// outside tools spend on their own" for THAT was a mistake: it is a different
-// permission, and granting it to use a dialog in this app would have handed a
-// tool the right to spend unattended.
+// ---- opening is reserved to this app, with no setting to change it ---------
+// A tool holding the bearer key can read the catalog, price a session and be
+// refused into asking for one. It cannot open one, so there is no unattended
+// spending to bound — which is why the caps and the permission toggle are gone
+// rather than merely defaulted off.
 console.log('');
-console.log('openai endpoint: the app opening a session vs a tool doing it');
+console.log('openai endpoint: only the app can open a session');
 {
-  cfg = { ...cfg, allowAutoOpen: false };
-  await server.sync();
-
   const open = (extra) =>
     fetch(`${base}/morpheus/v1/sessions`, {
       method: 'POST',
       headers: { ...auth, 'content-type': 'application/json', ...extra },
-      body: JSON.stringify({ modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 3600, confirm: true }),
+      body: JSON.stringify({ modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 305, confirm: true }),
     });
 
   const tool = await open({});
-  ok('a tool is refused while the switch is off', tool.status === 403);
-  ok('and told which permission it lacks',
-    (await tool.json()).error?.code === 'auto_open_disabled');
+  ok('a tool with a valid key is refused', tool.status === 403);
+  ok('and told it is an app-only route', (await tool.json()).error?.code === 'app_only');
 
-  // Forgery: the header exists, the value is wrong. A token holder can guess
-  // the name — the value never leaves the process.
+  // The header name is guessable; the value is a per-process key that has never
+  // been written anywhere a token holder could read.
   const forged = await open({ 'x-morpheus-app': 'not-the-real-key' });
-  ok('a guessed proof header is still refused', forged.status === 403);
+  ok('a guessed proof value is refused', forged.status === 403);
 
-  const proof = server.appProofHeader();
-  const app = await open(proof);
-  // Assert the REASON, not the status: this request also trips the spend cap
-  // (3600s at this bid is 3.6 MOR against a 1 MOR ceiling), and an earlier
-  // version of this check read that refusal as a permission refusal.
-  const appBody = await app.json();
-  ok('the app is not blocked by the tool permission',
-    appBody.error?.code !== 'auto_open_disabled');
-
-  // Everything else still applies to both. The proof says who is asking; it
-  // does not say "skip the safety rails".
-  const noConfirm = await fetch(`${base}/morpheus/v1/sessions`, {
-    method: 'POST',
-    headers: { ...auth, 'content-type': 'application/json', ...proof },
-    body: JSON.stringify({ modelId: '0xremote1', bidId: '0xbidCHEAP', durationSec: 3600 }),
-  });
-  ok('the app still cannot open one without an explicit confirm',
-    noConfirm.status === 400);
-
-  cfg = { ...cfg, maxStakeMor: 0.0001 };
-  await server.sync();
-  const capped = await open(proof);
-  ok('and the spend caps still bite for the app', capped.status === 403);
-  ok('naming the cap, not the permission',
-    (await capped.json()).error?.code === 'cap_exceeded');
-  cfg = { ...cfg, maxStakeMor: 1 };
-  await server.sync();
+  const app = await open(server.appProofHeader());
+  ok('the app itself is not refused',
+    (await app.json())?.error?.code !== 'app_only');
 }
 
 await server.stop();
