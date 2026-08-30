@@ -3,8 +3,8 @@ name: CI-CD
 # 
 # Branch Strategy:
 #   • dev: Build and test only (no deployment)
-#   • test: Build, test, and deploy to AWS DEV environment (Titan dev + Morpheus dev consumer node)
-#   • main: Build, test, create release, and deploy to AWS PRD environment (Titan lmn + Morpheus prd consumer/provider nodes)
+#   • test: Build, test, and deploy to AWS DEV (Titan dev + Morpheus C-Node + Morpheus P-Node + SecretVM test)
+#   • main: Build, test, create release, and deploy to AWS PRD (Titan lmn + Morpheus C/P-Nodes + SecretVM prod)
 #
 # Key Features:
 #   • Optimized Docker builds with GitHub Actions caching
@@ -206,8 +206,9 @@ jobs:
       tee_image_name: ${{ steps.gen_tag_name.outputs.tee_image_name }}
       artifacts_base_url: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.gen_tag_name.outputs.tag_name }}
       # Proxy-router "anchor" the desktop app downloads its bundled router from.
-      # On main this is always vX.Y.0 (the minor's proxy baseline); on test/dev
-      # it is the current self build (router executables are always built there).
+      # On main this is always vX.Y.0 (the minor's proxy baseline). On test,
+      # full (proxy-changed) builds self-anchor; UI-only builds reuse the last
+      # known good -test release that published router binaries.
       anchor_vfull: ${{ steps.gen_tag_name.outputs.anchor_vfull }}
       anchor_tag: ${{ steps.gen_tag_name.outputs.anchor_tag }}
       anchor_artifacts_base_url: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.gen_tag_name.outputs.anchor_tag }}
@@ -223,6 +224,7 @@ jobs:
         shell: bash
         env:
           PROXY_CHANGED: ${{ needs.changes.outputs.proxy }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           IMAGE_NAME="ghcr.io/morpheusais/morpheus-lumerin-node"
           VMAJ_NEW=7
@@ -280,10 +282,32 @@ jobs:
               [ "$GITHUB_EVENT_NAME" = "pull_request" ] && RNAME=pr${GITHUB_REF_NAME%/merge}
               VTAG=v${VFULL}-${RNAME}
               BUMP="prerelease"
-              # test/dev always build their own router executables, so the app
-              # anchors to this same prerelease build (self-contained).
-              ANCHOR_VFULL=${VFULL}
-              ANCHOR_TAG=${VTAG}
+              if [ "${PROXY_CHANGED}" = "true" ] || [ "$GITHUB_REF_NAME" != "test" ]; then
+                  # Full prerelease / non-test branches build their own router
+                  # executables and self-anchor.
+                  ANCHOR_VFULL=${VFULL}
+                  ANCHOR_TAG=${VTAG}
+              else
+                  # UI-only on test: same idea as main's vX.Y.0 — do not rebuild
+                  # router/docker/TEE; point the desktop app at the last known
+                  # good -test release that published router binaries.
+                  ANCHOR_TAG=""
+                  while read -r cand; do
+                      has_router=$(gh release view "$cand" --json assets \
+                        --jq '[.assets[].name | select(contains("morpheus-router"))] | length' 2>/dev/null || echo 0)
+                      if [ "${has_router:-0}" -gt 0 ]; then
+                          ANCHOR_TAG=$cand
+                          break
+                      fi
+                  done < <(git tag -l "v[0-9]*-test" | sort -V -r)
+
+                  if [ -z "$ANCHOR_TAG" ]; then
+                      echo "❌ UI-only test release needs a last-known-good -test release with router binaries" >&2
+                      exit 1
+                  fi
+                  ANCHOR_VFULL=$(echo "$ANCHOR_TAG" | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+                  BUMP="prerelease (UI-only, proxy anchored to ${ANCHOR_TAG})"
+              fi
           fi
 
           # Output variables for use in subsequent jobs environment
@@ -304,7 +328,7 @@ jobs:
     name: Test Proxy Router Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test' || github.ref == 'refs/heads/dev')) ||
         (github.event_name == 'workflow_dispatch') 
@@ -351,7 +375,7 @@ jobs:
     name: Build & Push Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/')|| github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
@@ -453,7 +477,7 @@ jobs:
     name: Build & Push TEE Docker Image
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/cicd/')|| github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
@@ -565,60 +589,103 @@ jobs:
           echo "rootfs_tdx_sha256=$SECRETVM_ROOTFS_TDX_SHA256" >> $GITHUB_OUTPUT
           echo "rootfs_sev_url=${SECRETVM_ROOTFS_SEV_URL:-}" >> $GITHUB_OUTPUT
           echo "rootfs_sev_sha256=${SECRETVM_ROOTFS_SEV_SHA256:-}" >> $GITHUB_OUTPUT
-          echo "sev_registry_url=${SECRETVM_SEV_REGISTRY_URL:-https://raw.githubusercontent.com/scrtlabs/secretvm-verify/main/artifacts_registry/sev.json}" >> $GITHUB_OUTPUT
+          echo "tdx_registry_url=${SECRETVM_TDX_REGISTRY_URL:-https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/tdx.csv}" >> $GITHUB_OUTPUT
+          echo "sev_registry_url=${SECRETVM_SEV_REGISTRY_URL:-https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/sev.json}" >> $GITHUB_OUTPUT
           echo "sev_registry_vm_type=${SECRETVM_SEV_REGISTRY_VM_TYPE:-prod}" >> $GITHUB_OUTPUT
+          echo "verify_npm_version=${SECRETVM_VERIFY_NPM_VERSION:-0.13.0}" >> $GITHUB_OUTPUT
 
           # legacy aliases retained so older steps continue to compile
           echo "rootfs_url=$SECRETVM_ROOTFS_TDX_URL" >> $GITHUB_OUTPUT
           echo "rootfs_sha256=$SECRETVM_ROOTFS_TDX_SHA256" >> $GITHUB_OUTPUT
 
-      - name: Cache SecretVM rootfs
+      - name: Cache SecretVM artifacts
         id: cache-rootfs
         uses: actions/cache@v5
         with:
           path: /tmp/secretvm-artifacts
-          key: secretvm-${{ steps.secretvm-config.outputs.release }}-${{ steps.secretvm-config.outputs.rootfs_variant }}-tdx-sev
+          key: secretvm-${{ steps.secretvm-config.outputs.release }}-${{ steps.secretvm-config.outputs.rootfs_variant }}-reg-${{ steps.secretvm-config.outputs.verify_npm_version }}
 
-      - name: Download SecretVM rootfs (TDX + SEV)
-        if: steps.cache-rootfs.outputs.cache-hit != 'true'
+      - name: Fetch SecretVM registries + optional rootfs
+        id: secretvm-artifacts
         run: |
           mkdir -p /tmp/secretvm-artifacts
+          set -euo pipefail
 
-          echo "⬇️  Downloading SecretVM TDX rootfs (${{ steps.secretvm-config.outputs.release }})..."
-          TDX_FILE="/tmp/secretvm-artifacts/${{ steps.secretvm-config.outputs.rootfs_variant }}-tdx.iso"
-          curl -L --retry 3 --retry-delay 5 -o "$TDX_FILE" \
-            "${{ steps.secretvm-config.outputs.rootfs_tdx_url }}"
+          TDX_REG_URL="${{ steps.secretvm-config.outputs.tdx_registry_url }}"
+          SEV_REG_URL="${{ steps.secretvm-config.outputs.sev_registry_url }}"
+          TDX_REG_FILE="/tmp/secretvm-artifacts/tdx.csv"
+          SEV_REG_FILE="/tmp/secretvm-artifacts/sev.json"
 
-          TDX_ACTUAL_SHA=$(sha256sum "$TDX_FILE" | cut -d' ' -f1)
+          echo "⬇️  Fetching TDX registry from $TDX_REG_URL..."
+          curl -fsSL --retry 3 --retry-delay 5 -o "$TDX_REG_FILE" "$TDX_REG_URL"
+          echo "⬇️  Fetching SEV registry from $SEV_REG_URL..."
+          curl -fsSL --retry 3 --retry-delay 5 -o "$SEV_REG_FILE" "$SEV_REG_URL"
+
           TDX_EXPECTED_SHA="${{ steps.secretvm-config.outputs.rootfs_tdx_sha256 }}"
-          if [ -n "$TDX_EXPECTED_SHA" ]; then
-            echo "$TDX_EXPECTED_SHA  $TDX_FILE" | sha256sum -c -
-            echo "✅ SecretVM TDX rootfs downloaded and verified" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️  No expected SHA256 configured — TDX rootfs hash: \`$TDX_ACTUAL_SHA\`" >> $GITHUB_STEP_SUMMARY
-            echo "   PIN THIS in .github/tee/secretvm.env as SECRETVM_ROOTFS_TDX_SHA256" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "   TDX rootfs sha256: \`$TDX_ACTUAL_SHA\`" >> $GITHUB_STEP_SUMMARY
+          SEV_EXPECTED_SHA="${{ steps.secretvm-config.outputs.rootfs_sev_sha256 }}"
+          RELEASE="${{ steps.secretvm-config.outputs.release }}"
+          export TDX_EXPECTED_SHA SEV_EXPECTED_SHA RELEASE
 
-          if [ -n "${{ steps.secretvm-config.outputs.rootfs_sev_url }}" ]; then
-            echo "⬇️  Downloading SecretVM SEV rootfs (${{ steps.secretvm-config.outputs.release }})..."
-            SEV_FILE="/tmp/secretvm-artifacts/${{ steps.secretvm-config.outputs.rootfs_variant }}-sev.iso"
-            curl -L --retry 3 --retry-delay 5 -o "$SEV_FILE" \
-              "${{ steps.secretvm-config.outputs.rootfs_sev_url }}"
+          # Cross-check pins against secretvm-verify registries (npm/PyPI data/).
+          python3 - <<'PY'
+          import csv, json, os, sys
+          tdx_pin = os.environ["TDX_EXPECTED_SHA"].lower().removeprefix("0x")
+          sev_pin = os.environ["SEV_EXPECTED_SHA"].lower().removeprefix("0x")
+          release = os.environ["RELEASE"]
+          with open("/tmp/secretvm-artifacts/tdx.csv", newline="") as f:
+              rows = list(csv.DictReader(f))
+          tdx_ok = any(
+              r.get("artifacts_ver") == release
+              and r.get("vm_type") == "prod"
+              and (r.get("rootfs_data") or "").lower().removeprefix("0x") == tdx_pin
+              for r in rows
+          )
+          if not tdx_ok:
+              print(f"ERROR: TDX pin {tdx_pin} not found in tdx.csv for prod/{release}", file=sys.stderr)
+              sys.exit(1)
+          sev = json.load(open("/tmp/secretvm-artifacts/sev.json"))
+          sev_ok = any(
+              e.get("artifacts_ver") == release
+              and e.get("vm_type") == "prod"
+              and (e.get("rootfs_hash") or "").lower().removeprefix("0x") == sev_pin
+              for e in sev
+          )
+          if not sev_ok:
+              print(f"ERROR: SEV pin {sev_pin} not found in sev.json for prod/{release}", file=sys.stderr)
+              sys.exit(1)
+          print(f"✅ Pins match secretvm-verify registries for prod/{release}")
+          PY
 
-            SEV_ACTUAL_SHA=$(sha256sum "$SEV_FILE" | cut -d' ' -f1)
-            SEV_EXPECTED_SHA="${{ steps.secretvm-config.outputs.rootfs_sev_sha256 }}"
-            if [ -n "$SEV_EXPECTED_SHA" ]; then
-              echo "$SEV_EXPECTED_SHA  $SEV_FILE" | sha256sum -c -
-              echo "✅ SecretVM SEV rootfs downloaded and verified" >> $GITHUB_STEP_SUMMARY
+          # Optional ISO download (legacy GitHub releases). Prefer pin when 404.
+          TDX_FILE="/tmp/secretvm-artifacts/${{ steps.secretvm-config.outputs.rootfs_variant }}-tdx.iso"
+          ROOTFS_MODE="pin"
+          if curl -fsSL --retry 2 --retry-delay 3 -o "$TDX_FILE" \
+              "${{ steps.secretvm-config.outputs.rootfs_tdx_url }}"; then
+            ACTUAL=$(sha256sum "$TDX_FILE" | cut -d' ' -f1)
+            if [ "$ACTUAL" = "$TDX_EXPECTED_SHA" ]; then
+              ROOTFS_MODE="iso"
+              echo "✅ TDX rootfs ISO downloaded and matches pin" >> $GITHUB_STEP_SUMMARY
             else
-              echo "⚠️  No expected SHA256 configured — SEV rootfs hash: \`$SEV_ACTUAL_SHA\`" >> $GITHUB_STEP_SUMMARY
-              echo "   PIN THIS in .github/tee/secretvm.env as SECRETVM_ROOTFS_SEV_SHA256" >> $GITHUB_STEP_SUMMARY
+              echo "⚠️  TDX ISO sha mismatch (got $ACTUAL); using pin for RTMR3" >> $GITHUB_STEP_SUMMARY
+              rm -f "$TDX_FILE"
             fi
-            echo "   SEV rootfs sha256: \`$SEV_ACTUAL_SHA\`" >> $GITHUB_STEP_SUMMARY
           else
-            echo "ℹ️  SEV rootfs URL not configured — skipping SEV download" >> $GITHUB_STEP_SUMMARY
+            echo "ℹ️  TDX rootfs ISO unavailable; using pinned SHA for RTMR3" >> $GITHUB_STEP_SUMMARY
+            rm -f "$TDX_FILE"
           fi
+
+          SEV_REG_SHA=$(sha256sum "$SEV_REG_FILE" | cut -d' ' -f1)
+          TDX_REG_SHA=$(sha256sum "$TDX_REG_FILE" | cut -d' ' -f1)
+          echo "rootfs_mode=$ROOTFS_MODE" >> $GITHUB_OUTPUT
+          echo "sev_registry_path=$SEV_REG_FILE" >> $GITHUB_OUTPUT
+          echo "tdx_registry_path=$TDX_REG_FILE" >> $GITHUB_OUTPUT
+          echo "sev_registry_sha256=$SEV_REG_SHA" >> $GITHUB_OUTPUT
+          echo "tdx_registry_sha256=$TDX_REG_SHA" >> $GITHUB_OUTPUT
+          echo "📋 secretvm-verify@${{ steps.secretvm-config.outputs.verify_npm_version }} registries fetched" >> $GITHUB_STEP_SUMMARY
+          echo "   TDX: \`$TDX_REG_URL\`" >> $GITHUB_STEP_SUMMARY
+          echo "   SEV: \`$SEV_REG_URL\`" >> $GITHUB_STEP_SUMMARY
+          echo "   TDX rootfs sha256 (pin): \`$TDX_EXPECTED_SHA\`" >> $GITHUB_STEP_SUMMARY
+          echo "   SEV rootfs sha256 (pin): \`$SEV_EXPECTED_SHA\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Generate deployed compose with immutable digest
         id: generate-compose
@@ -642,11 +709,19 @@ jobs:
       - name: Compute RTMR3 (Intel TDX)
         id: compute-rtmr3
         run: |
+          TDX_PIN="${{ steps.secretvm-config.outputs.rootfs_tdx_sha256 }}"
           ROOTFS_FILE="/tmp/secretvm-artifacts/${{ steps.secretvm-config.outputs.rootfs_variant }}-tdx.iso"
-          RTMR3=$(python3 proxy-router/scripts/compute-rtmr3.py \
-            /tmp/docker-compose.tee.deployed.yml \
-            "$ROOTFS_FILE" \
-            --json)
+          if [ -f "$ROOTFS_FILE" ]; then
+            RTMR3=$(python3 proxy-router/scripts/compute-rtmr3.py \
+              /tmp/docker-compose.tee.deployed.yml \
+              "$ROOTFS_FILE" \
+              --json)
+          else
+            RTMR3=$(python3 proxy-router/scripts/compute-rtmr3.py \
+              /tmp/docker-compose.tee.deployed.yml \
+              --rootfs-sha256="$TDX_PIN" \
+              --json)
+          fi
 
           RTMR3_HEX=$(echo "$RTMR3" | python3 -c "import sys,json; print(json.load(sys.stdin)['rtmr3'])")
           COMPOSE_HASH=$(echo "$RTMR3" | python3 -c "import sys,json; print(json.load(sys.stdin)['compose_sha256'])")
@@ -657,26 +732,12 @@ jobs:
           echo "   compose sha256: \`$COMPOSE_HASH\`" >> $GITHUB_STEP_SUMMARY
           echo "   rootfs sha256:  \`$ROOTFS_HASH\`" >> $GITHUB_STEP_SUMMARY
 
-      - name: Fetch SecretVM SEV artifact registry
-        id: sev-registry
-        if: steps.secretvm-config.outputs.rootfs_sev_url != ''
-        run: |
-          REGISTRY_URL="${{ steps.secretvm-config.outputs.sev_registry_url }}"
-          REGISTRY_FILE="/tmp/secretvm-artifacts/sev.json"
-          echo "⬇️  Fetching SEV artifact registry from $REGISTRY_URL..."
-          curl -L --retry 3 --retry-delay 5 -o "$REGISTRY_FILE" "$REGISTRY_URL"
-          REGISTRY_SHA=$(sha256sum "$REGISTRY_FILE" | cut -d' ' -f1)
-          echo "registry_path=$REGISTRY_FILE" >> $GITHUB_OUTPUT
-          echo "registry_sha256=$REGISTRY_SHA" >> $GITHUB_OUTPUT
-          echo "📋 SEV registry sha256: \`$REGISTRY_SHA\`" >> $GITHUB_STEP_SUMMARY
-          echo "   URL: \`$REGISTRY_URL\`" >> $GITHUB_STEP_SUMMARY
-
       - name: Compute SEV-SNP measurement (per template)
         id: compute-sev
-        if: steps.secretvm-config.outputs.rootfs_sev_url != ''
+        if: steps.secretvm-config.outputs.sev_registry_url != ''
         run: |
           SEV_OUT=$(python3 proxy-router/scripts/compute-sev-measurement.py \
-            --registry "${{ steps.sev-registry.outputs.registry_path }}" \
+            --registry "${{ steps.secretvm-artifacts.outputs.sev_registry_path }}" \
             --vm-type "${{ steps.secretvm-config.outputs.sev_registry_vm_type }}" \
             --artifacts-ver "${{ steps.secretvm-config.outputs.release }}" \
             --compose /tmp/docker-compose.tee.deployed.yml \
@@ -803,7 +864,7 @@ jobs:
               --arg ovmf "${{ steps.compute-sev.outputs.sev_ovmf_hash }}" \
               --arg cmdline "${{ steps.compute-sev.outputs.sev_kernel_cmdline }}" \
               --arg registry_url "${{ steps.secretvm-config.outputs.sev_registry_url }}" \
-              --arg registry_sha "${{ steps.sev-registry.outputs.registry_sha256 }}" \
+              --arg registry_sha "${{ steps.secretvm-artifacts.outputs.sev_registry_sha256 }}" \
               --arg small   "${{ steps.compute-sev.outputs.sev_measurement_small }}" \
               --arg medium  "${{ steps.compute-sev.outputs.sev_measurement_medium }}" \
               --arg large   "${{ steps.compute-sev.outputs.sev_measurement_large }}" \
@@ -1070,11 +1131,130 @@ jobs:
             exit 1
           fi
 
+  Deploy-SecretVM-Prod:
+    name: Deploy TEE Image to SecretVM (prod)
+    if: |
+      github.ref == 'refs/heads/main' &&
+      (needs.changes.outputs.proxy == 'true' || github.event_name == 'workflow_dispatch')
+    needs:
+      - changes
+      - Generate-Tag
+      - GHCR-Build-and-Push-TEE
+    runs-on: ubuntu-latest
+    environment: main
+    steps:
+      - name: Download deployed compose artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: docker-compose-tee-deployed-${{ needs.Generate-Tag.outputs.tag_name }}
+          path: /tmp
+
+      - name: Deploy to SecretVM prod instance
+        env:
+          SECRETVM_API_KEY: ${{ secrets.SECRETVM_API_KEY }}
+          SECRETVM_PROD_VM_UUID: ${{ secrets.SECRETVM_PROD_VM_UUID }}
+          SECRETVM_PROD_ENV_B64: ${{ secrets.SECRETVM_PROD_ENV }}
+        run: |
+          if [ -z "$SECRETVM_API_KEY" ] || [ -z "$SECRETVM_PROD_VM_UUID" ] || [ -z "$SECRETVM_PROD_ENV_B64" ]; then
+            echo "⏭️  SecretVM prod secrets not configured — skipping deploy" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          npm install --global secretvm-cli
+
+          echo "$SECRETVM_PROD_ENV_B64" | base64 -d > /tmp/secretvm-prod.env
+
+          echo "🚀 Updating SecretVM prod instance ${SECRETVM_PROD_VM_UUID:0:8}..." >> $GITHUB_STEP_SUMMARY
+
+          secretvm-cli -k "$SECRETVM_API_KEY" vm edit "$SECRETVM_PROD_VM_UUID" \
+            --docker-compose /tmp/docker-compose.tee.deployed.yml \
+            --env /tmp/secretvm-prod.env
+
+          rm -f /tmp/secretvm-prod.env
+
+          echo "✅ SecretVM prod instance updated with new TEE image" >> $GITHUB_STEP_SUMMARY
+          echo "   Compose: \`docker-compose-tee-deployed-${{ needs.Generate-Tag.outputs.tag_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "   Expected RTMR3: \`${{ needs.GHCR-Build-and-Push-TEE.outputs.rtmr3 }}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Verify attestation after deploy
+        env:
+          SECRETVM_API_KEY: ${{ secrets.SECRETVM_API_KEY }}
+          SECRETVM_PROD_VM_UUID: ${{ secrets.SECRETVM_PROD_VM_UUID }}
+          EXPECTED_RTMR3: ${{ needs.GHCR-Build-and-Push-TEE.outputs.rtmr3 }}
+        run: |
+          if [ -z "$SECRETVM_API_KEY" ] || [ -z "$SECRETVM_PROD_VM_UUID" ] || [ -z "$EXPECTED_RTMR3" ]; then
+            echo "⏭️  Skipping attestation verify (missing secrets or RTMR3)" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          echo "⏳ Waiting for VM to reboot with new image..." >> $GITHUB_STEP_SUMMARY
+
+          # vm attestation returns raw TDX quote hex; extract RTMR3 from known offset
+          # TDX Quote v4: 48-byte header + TD Report Body
+          # RTMR3 at body offset 472 bytes (48 bytes long)
+          RTMR3_HEX_START=$(( (48 + 472) * 2 ))
+          RTMR3_HEX_LEN=96
+
+          MAX_ATTEMPTS=12
+          SLEEP_SECS=30
+          MATCHED=false
+
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            echo "  Attestation poll attempt $i/$MAX_ATTEMPTS..."
+
+            RAW_QUOTE=$(secretvm-cli -k "$SECRETVM_API_KEY" vm attestation "$SECRETVM_PROD_VM_UUID" 2>/dev/null) || true
+
+            LIVE_RTMR3=$(echo "$RAW_QUOTE" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              raw = data.get('result', '')
+              rtmr3 = raw[$RTMR3_HEX_START:$RTMR3_HEX_START+$RTMR3_HEX_LEN]
+              if len(rtmr3) == $RTMR3_HEX_LEN:
+                  print(rtmr3)
+              else:
+                  print('')
+          except:
+              print('')
+          " 2>/dev/null)
+
+            if [ -n "$LIVE_RTMR3" ]; then
+              echo "  Got RTMR3: ${LIVE_RTMR3:0:16}..."
+
+              if [ "$LIVE_RTMR3" = "$EXPECTED_RTMR3" ]; then
+                MATCHED=true
+                echo "🎉 **RTMR3 MATCH** — attestation verified!" >> $GITHUB_STEP_SUMMARY
+                echo "   Live RTMR3:     \`$LIVE_RTMR3\`" >> $GITHUB_STEP_SUMMARY
+                echo "   Expected RTMR3: \`$EXPECTED_RTMR3\`" >> $GITHUB_STEP_SUMMARY
+                break
+              else
+                echo "  RTMR3 mismatch (VM may still be rebooting)"
+                echo "    live:     $LIVE_RTMR3"
+                echo "    expected: $EXPECTED_RTMR3"
+              fi
+            else
+              echo "  No attestation data yet (VM may still be starting)"
+            fi
+
+            if [ "$i" -lt "$MAX_ATTEMPTS" ]; then
+              sleep $SLEEP_SECS
+            fi
+          done
+
+          if [ "$MATCHED" = false ]; then
+            echo "⚠️ **RTMR3 mismatch after ${MAX_ATTEMPTS} attempts** (${SLEEP_SECS}s × ${MAX_ATTEMPTS} = $(( SLEEP_SECS * MAX_ATTEMPTS ))s)" >> $GITHUB_STEP_SUMMARY
+            echo "   Live RTMR3:     \`${LIVE_RTMR3:-unavailable}\`" >> $GITHUB_STEP_SUMMARY
+            echo "   Expected RTMR3: \`$EXPECTED_RTMR3\`" >> $GITHUB_STEP_SUMMARY
+            echo "   This may indicate the VM is still rebooting, or there is a genuine mismatch." >> $GITHUB_STEP_SUMMARY
+            echo "   Check manually: \`secretvm-cli vm attestation $SECRETVM_PROD_VM_UUID\`" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
   Build-Service-Executables:
     name: Build Service Executables
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
-      !(github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.proxy != 'true') &&
+      !(github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test') && needs.changes.outputs.proxy != 'true') &&
       (
         (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true') 
@@ -1505,9 +1685,9 @@ jobs:
     # so existing TCP sessions are closed promptly. The ECS service and its task
     # continue to run; we are only manipulating LB membership.
     #
-    # `!cancelled()` + explicit result checks let this run on `test` (where both
-    # P-Node jobs are skipped — no dev provider node) while still requiring BOTH
-    # provider rolls to SUCCEED on `main` before the C-Node is touched.
+    # `!cancelled()` + explicit result checks: on `test`, P-Node-1 deploys DEV
+    # provider and P-Node-2 is skipped (HA is prd-only); on `main`, BOTH provider
+    # rolls must SUCCEED before the C-Node is touched.
     name: Drain Morpheus C-Node from NLB
     if: |
       !cancelled() &&
@@ -1632,8 +1812,8 @@ jobs:
     # NOTE on `needs` + skipped dependencies:
     # GitHub Actions' default job condition is implicit `success()`, which returns
     # false when ANY needed job was skipped. Both P-Node jobs are main-only (see their
-    # own `if`), so on a `test` deploy `Deploy-to-Morpheus-P-Node` and
-    # `Deploy-to-Morpheus-P-Node-2` are always skipped. Without an explicit `if` that
+    # own `if`), so on a `test` deploy `Deploy-to-Morpheus-P-Node-2` is skipped
+    # (HA is prd-only) while P-Node-1 deploys DEV. Without an explicit `if` that
     # tolerates those skips, the C-Node deploy gets skipped too — which is exactly what
     # bit us on the first v7 test run: the drain job ran and deregistered the C-Node,
     # then the actual deploy silently skipped, leaving dev without a replacement task.
@@ -2121,21 +2301,51 @@ jobs:
           fi
 
           FUNCTION_NAME="${ENV}-routed-sessions-sweep"
-          # deploy_cutoff mode (default): the Lambda derives cutoff from the C-Node
-          # service deployments[0].updatedAt + rehydration + safety, then closes
-          # OPEN rows older than that. release_tag only annotates error_reason.
+          CLUSTER_NAME="ecs-${ENV}-morpheus-engine"
+          SERVICE_NAME="svc-${ENV}-router"
+          # Must match Lambda DEFAULT_REHYDRATION_SECS / DEFAULT_SAFETY_SECS
+          # (02-morpheus_c_node/.terragrunt/06_routed_sessions_sweep.tf).
+          REHYDRATION_SECS=90
+          SAFETY_SECS=120
+          SKEW_BUFFER_SECS=15
+
+          # deploy_cutoff mode (default): the Lambda derives cutoff from the
+          # C-Node PRIMARY deployment updatedAt + rehydration + safety, then
+          # closes OPEN rows older than that. release_tag only annotates
+          # error_reason.
           PAYLOAD="{\"release_tag\":\"${BUILDTAG}\"}"
 
-          # This job starts seconds after the C-Node deploy settles, but the
-          # Lambda's cutoff = deployments[0].updatedAt + 90s rehydration + 120s
-          # safety (~210s ahead) and it REFUSES a future cutoff. So the first
-          # invoke almost always lands before the cutoff and no-ops with a 400.
-          # Retry with backoff until the cutoff has passed (or the budget is
-          # exhausted) so the sweep actually runs. Budget: 10 * 30s = ~5 min,
-          # comfortably past the ~210s cutoff. Only the future-cutoff case is
-          # retried; any other status (200 / SWEEP_MAX_ROWS / error) is terminal.
-          MAX_ATTEMPTS=10
-          SLEEP_SECS=30
+          # Proactive wait: the Lambda REFUSES a future cutoff (would close
+          # fresh sessions). Invoking immediately after C-Node settle almost
+          # always 400s for ~updatedAt+210s, and the old 10×30s retry budget
+          # was barely enough — leaving zombies OPEN long enough to reopen/
+          # failover-storm MOR. Sleep until the same cutoff the Lambda will
+          # derive, then invoke (small retry loop only for clock skew).
+          echo "🔎 Resolving C-Node PRIMARY updatedAt from ${CLUSTER_NAME}/${SERVICE_NAME}..."
+          UPDATED_AT=$(aws ecs describe-services \
+            --cluster "$CLUSTER_NAME" \
+            --services "$SERVICE_NAME" \
+            --query 'services[0].deployments[?status==`PRIMARY`]|[0].updatedAt' \
+            --output text)
+          if [ -z "$UPDATED_AT" ] || [ "$UPDATED_AT" = "None" ]; then
+            echo "⚠️ Could not resolve PRIMARY updatedAt; falling back to fixed ${REHYDRATION_SECS}+${SAFETY_SECS}s wait."
+            sleep $((REHYDRATION_SECS + SAFETY_SECS + SKEW_BUFFER_SECS))
+          else
+            echo "📌 PRIMARY updatedAt: ${UPDATED_AT}"
+            UPDATED_EPOCH=$(date -d "$UPDATED_AT" +%s)
+            CUTOFF_EPOCH=$((UPDATED_EPOCH + REHYDRATION_SECS + SAFETY_SECS + SKEW_BUFFER_SECS))
+            NOW_EPOCH=$(date +%s)
+            WAIT_SECS=$((CUTOFF_EPOCH - NOW_EPOCH))
+            if [ "$WAIT_SECS" -gt 0 ]; then
+              echo "⏳ Waiting ${WAIT_SECS}s for sweep cutoff (updatedAt + ${REHYDRATION_SECS}s + ${SAFETY_SECS}s + ${SKEW_BUFFER_SECS}s skew)..."
+              sleep "$WAIT_SECS"
+            else
+              echo "✅ Cutoff already in the past (${WAIT_SECS}s); invoking immediately."
+            fi
+          fi
+
+          MAX_ATTEMPTS=5
+          SLEEP_SECS=20
           STATUS=""
           BODY=""
           FUNCTION_ERROR=""
@@ -2171,8 +2381,7 @@ jobs:
               break
             fi
 
-            # Retry ONLY the "future cutoff" 400 — we just deployed and need to
-            # wait for the cutoff to pass. Everything else is a final result.
+            # Retry ONLY residual "future cutoff" 400 (clock skew / ECS lag).
             if [ "$STATUS" = "400" ] && echo "$BODY" | grep -qi "in the future"; then
               if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
                 echo "⏳ Cutoff not reached yet; sleeping ${SLEEP_SECS}s before retry."
@@ -2188,6 +2397,7 @@ jobs:
             echo ""
             echo "- **Function:** \`${FUNCTION_NAME}\`"
             echo "- **Release tag:** \`${BUILDTAG}\`"
+            echo "- **PRIMARY updatedAt:** \`${UPDATED_AT:-unknown}\`"
             echo "- **Handler statusCode:** \`${STATUS:-unknown}\`"
             if [ -n "$BODY" ]; then
               echo ""
@@ -2212,18 +2422,17 @@ jobs:
 
   Deploy-to-Morpheus-P-Node:
     name: Deploy to Morpheus Provider via GitHub
-    # First half of the one-at-a-time provider roll (P-Node-1, then P-Node-2).
-    # Main/prd only — there is no dev provider node. This NO LONGER depends on the
-    # C-Node drain: with two independent on-chain providers serving the same models,
-    # the C-Node stays live during provider rolls and the API Gateway fails traffic
-    # over to the surviving provider. The drain now runs AFTER both providers, right
-    # before the C-Node roll (see Drain-Morpheus-C-Node).
+    # P-Node-1 roll. On `test` → DEV provider (ecs-dev-morpheus-provider). On `main` →
+    # PRD provider (first half of the one-at-a-time HA roll; P-Node-2 follows).
+    # Does NOT depend on the C-Node drain: the C-Node stays live during provider
+    # rolls so API Gateway failover can keep traffic flowing. Drain runs AFTER
+    # providers, right before the C-Node roll (see Drain-Morpheus-C-Node).
     if: |
       github.repository == 'MorpheusAIs/Morpheus-Lumerin-Node' &&
       (needs.changes.outputs.proxy == 'true' || github.event_name == 'workflow_dispatch') &&
       (
-        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-        (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true' && github.event.inputs.create_deployment == 'true' && github.ref == 'refs/heads/main')
+        (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.build_all_os == 'true' && github.event.inputs.create_deployment == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test'))
       )
     needs:
       - changes
@@ -2250,8 +2459,17 @@ jobs:
           BUILDTAG=${{ needs.Generate-Tag.outputs.tag_name }}
           BUILDIMAGE=${{ needs.Generate-Tag.outputs.image_name }}
           
-          # Provider node only exists in production environment
-          ENV="prd"
+          # Determine environment based on branch (same mapping as C-Node)
+          if [ "${{ github.ref_name }}" == "test" ]; then
+            ENV="dev"
+            HEALTH_ENDPOINT="https://providerapi.dev.mor.org/healthcheck"
+          elif [ "${{ github.ref_name }}" == "main" ]; then
+            ENV="prd"
+            HEALTH_ENDPOINT="https://providerapi.mor.org/healthcheck"
+          else
+            echo "❌ Unsupported branch for provider deployment: ${{ github.ref_name }}"
+            exit 1
+          fi
           
           echo "🚀 Deploying to Morpheus Provider AWS - Environment: $ENV"
           echo "📦 Container Image: $BUILDIMAGE:$BUILDTAG"
@@ -2393,9 +2611,7 @@ jobs:
             sleep $REMAINING
           fi
           
-          # Provider node health endpoint
-          HEALTH_ENDPOINT="https://providerapi.mor.org/healthcheck"
-          
+          # HEALTH_ENDPOINT set above from branch → env mapping
           echo "🔍 Verifying deployment version at: $HEALTH_ENDPOINT"
           
           # Wait for the service to be reachable and verify version
@@ -3147,16 +3363,16 @@ jobs:
         id: mode
         run: |
           # "full" = router/docker/TEE/executables were built in this run and are
-          # attached to THIS release. "ui-only" = a UI/CLI patch on main where the
-          # router stays at the anchor (vX.Y.0) and is NOT re-attached here.
-          if [ "${{ github.ref }}" != "refs/heads/main" ] || \
-             [ "${{ needs.changes.outputs.proxy }}" = "true" ] || \
-             [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "full=true" >> "$GITHUB_OUTPUT"
-            echo "Release mode: FULL"
-          else
+          # attached to THIS release. "ui-only" = a UI/CLI patch on main or test
+          # where the router stays at the anchor and is NOT re-attached here.
+          if { [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/test" ]; } && \
+             [ "${{ needs.changes.outputs.proxy }}" != "true" ] && \
+             [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
             echo "full=false" >> "$GITHUB_OUTPUT"
             echo "Release mode: UI-ONLY (router anchored to ${{ needs.Generate-Tag.outputs.anchor_tag }})"
+          else
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "Release mode: FULL"
           fi
 
       - name: Generate release notes

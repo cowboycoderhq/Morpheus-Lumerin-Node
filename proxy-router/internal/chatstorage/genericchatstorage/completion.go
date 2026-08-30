@@ -482,3 +482,12 @@ func NewAiEngineErrorResponse(statusCode int, providerModelError interface{}) *A
 		StatusCode:         statusCode,
 	}
 }
+
+// HTTPStatusCode returns the upstream status code when known, otherwise 400
+// (the historical default for provider model errors).
+func (e *AiEngineErrorResponse) HTTPStatusCode() int {
+	if e.StatusCode >= 400 && e.StatusCode <= 599 {
+		return e.StatusCode
+	}
+	return 400
+}

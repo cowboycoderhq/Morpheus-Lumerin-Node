@@ -30,7 +30,7 @@ import (
 
 var WALLET_PRIVATE_KEY = lib.MustStringToHexString("") // Set this to a valid private key to run the test.
 
-var DIAMOND_CONTRACT_ADDR = lib.MustStringToAddress("0x6e4d0B775E3C3b02683A6F277Ac80240C4aFF930")
+var DIAMOND_CONTRACT_ADDR = lib.MustStringToAddress("0xA328196f2438DADA5ab729E39388D86896c27c85")
 var MOR_CONTRACT_ADDR = lib.MustStringToAddress("0x5C80Ddd187054E1E4aBBfFCD750498e81d34FfA3")
 var BLOCKSCOUT_API_URL = "https://base-sepolia.blockscout.com/api/v2"
 var ETH_LEGACY_TX = false

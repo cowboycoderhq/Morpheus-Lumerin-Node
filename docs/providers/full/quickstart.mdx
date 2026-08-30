@@ -3,7 +3,7 @@ title: "Full P-Node quickstart"
 description: "Run a standalone Morpheus provider proxy-router pointing at your own AI model."
 audience: ["provider-full"]
 product: ["proxy-router"]
-last_verified: "v7.5.0"
+last_verified: "v7.6.0"
 source: "docs/02-provider-setup.md"
 ---
 
@@ -22,7 +22,7 @@ This page covers a **non-TEE provider** running on your own infrastructure. For 
   <Step title="Get the software">
     <Tabs>
       <Tab title="Release binary">
-        The proxy-router ships as a **standalone binary**. Download the **latest** one for your platform from [Releases](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/releases). Mainnet builds have no suffix; testnet builds end in `-test`. Asset names look like (version will differ):
+        The proxy-router ships as a **standalone binary** (not a zip archive). Download the **latest** `*-morpheus-router-*` asset for your platform from [Releases](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/releases). Mainnet builds have no suffix; testnet builds end in `-test`. Asset names look like (version will differ):
 
         | Platform | File |
         |----------|------|
@@ -118,7 +118,7 @@ Run from the working directory (so the relative config and data paths resolve):
 
 ## Validate
 
-- `http://localhost:8082/swagger/index.html` should render.
+- `http://localhost:8082/swagger/index.html` should render. Authenticated routes need **Authorize** with your `.cookie` credentials ([API auth](/reference/api-auth)).
 - `./data/` directory contains logs.
 - The proxy-router log should include:
   ```

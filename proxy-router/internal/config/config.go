@@ -67,6 +67,7 @@ type Config struct {
 		ModelsConfigPath           string        `env:"MODELS_CONFIG_PATH" flag:"models-config-path" validate:"omitempty"`
 		ModelsConfigContent        string        `env:"MODELS_CONFIG_CONTENT" flag:"models-config-content" validate:"omitempty" desc:"content of the models config file"`
 		RatingConfigPath           string        `env:"RATING_CONFIG_PATH" flag:"rating-config-path" validate:"omitempty" desc:"path to the rating config file"`
+		RatingConfigContent        string        `env:"RATING_CONFIG_CONTENT" flag:"rating-config-content" validate:"omitempty" desc:"content of the rating config file"`
 		CookieFilePath             string        `env:"COOKIE_FILE_PATH" flag:"cookie-file-path" validate:"omitempty" desc:"path to the cookie file"`
 		CookieContent              string        `env:"COOKIE_CONTENT" flag:"cookie-content" validate:"omitempty" desc:"content of the cookie file"`
 		AuthConfigFilePath         string        `env:"AUTH_CONFIG_FILE_PATH" flag:"auth-config-file-path" validate:"omitempty"`
@@ -78,6 +79,12 @@ type Config struct {
 		ModelHealthCheckInterval   time.Duration `env:"MODEL_HEALTH_CHECK_INTERVAL" flag:"model-health-check-interval" validate:"omitempty,duration" desc:"how often to probe configured models with a test prompt, result is cached between runs"`
 		ModelHealthCheckTimeout    time.Duration `env:"MODEL_HEALTH_CHECK_TIMEOUT" flag:"model-health-check-timeout" validate:"omitempty,duration" desc:"per-model health probe timeout"`
 		ModelHealthCheckProbeDelay time.Duration `env:"MODEL_HEALTH_CHECK_PROBE_DELAY" flag:"model-health-check-probe-delay" validate:"omitempty,duration" desc:"pause between per-model health probes so many-model providers don't burst their upstream and trip rate limits"`
+		ModelHealthMaxConsecErrors int           `env:"MODEL_HEALTH_MAX_CONSECUTIVE_ERRORS" flag:"model-health-max-consecutive-errors" validate:"omitempty,gte=1" desc:"consecutive session prompt failures after which a model is immediately reported unhealthy (or degraded when every failure was upstream rate limiting), without waiting for the next scheduled probe"`
+		// SessionHealthPolicy is the consumer-side strictness towards provider
+		// model health self-reports when opening a session by model ID.
+		// Single-bid opens always force permissive (healthPolicySingleBid is
+		// fixed to "permissive") so single-provider models remain usable.
+		SessionHealthPolicy string `env:"SESSION_HEALTH_POLICY" flag:"session-health-policy" validate:"omitempty,oneof=permissive preferred strict" desc:"model health strictness when opening a session by model: permissive (default; skip only providers self-reporting unhealthy/tee_unverified/no_model_configured), preferred (when any provider reports healthy or degraded, skip providers with unknown/missing reports; otherwise fall back to permissive), strict (only try providers reporting healthy); opens with a single candidate bid always use permissive"`
 	}
 	System struct {
 		Enable           bool   `env:"SYS_ENABLE"              flag:"sys-enable" desc:"enable system level configuration adjustments"`
@@ -228,6 +235,12 @@ func (cfg *Config) SetDefaults() {
 	if cfg.Proxy.ModelHealthCheckProbeDelay == 0 {
 		cfg.Proxy.ModelHealthCheckProbeDelay = 2 * time.Second
 	}
+	if cfg.Proxy.ModelHealthMaxConsecErrors == 0 {
+		cfg.Proxy.ModelHealthMaxConsecErrors = 3
+	}
+	if cfg.Proxy.SessionHealthPolicy == "" {
+		cfg.Proxy.SessionHealthPolicy = "permissive"
+	}
 
 	// IPFS
 	if cfg.IPFS.Address == "" {
@@ -248,6 +261,23 @@ func (cfg *Config) SetDefaults() {
 	cfg.Proxy.RatingConfigPath = filepath.FromSlash(cfg.Proxy.RatingConfigPath)
 	cfg.Proxy.CookieFilePath = filepath.FromSlash(cfg.Proxy.CookieFilePath)
 	cfg.Proxy.AuthConfigFilePath = filepath.FromSlash(cfg.Proxy.AuthConfigFilePath)
+
+	// Resolve relative auth paths against the process working directory once at
+	// startup. Without this, /auth/cookie/path may re-join a path that is already
+	// absolute and produce invalid Windows paths (issue #792).
+	cfg.Proxy.CookieFilePath = mustAbsPath(cfg.Proxy.CookieFilePath)
+	cfg.Proxy.AuthConfigFilePath = mustAbsPath(cfg.Proxy.AuthConfigFilePath)
+}
+
+func mustAbsPath(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	return abs
 }
 
 // GetSanitized returns a copy of the config with sensitive data removed
@@ -289,6 +319,8 @@ func (cfg *Config) GetSanitized() interface{} {
 	publicCfg.Proxy.ModelHealthCheckInterval = cfg.Proxy.ModelHealthCheckInterval
 	publicCfg.Proxy.ModelHealthCheckTimeout = cfg.Proxy.ModelHealthCheckTimeout
 	publicCfg.Proxy.ModelHealthCheckProbeDelay = cfg.Proxy.ModelHealthCheckProbeDelay
+	publicCfg.Proxy.ModelHealthMaxConsecErrors = cfg.Proxy.ModelHealthMaxConsecErrors
+	publicCfg.Proxy.SessionHealthPolicy = cfg.Proxy.SessionHealthPolicy
 
 	publicCfg.System.Enable = cfg.System.Enable
 	publicCfg.System.LocalPortRange = cfg.System.LocalPortRange

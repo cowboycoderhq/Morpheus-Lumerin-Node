@@ -4541,6 +4541,11 @@ const docTemplate = `{
                 "failover": {
                     "type": "boolean"
                 },
+                "omitProvider": {
+                    "description": "OmitProvider excludes a provider from bid selection, e.g. one whose\nbackend just failed a prompt (impaired provider failover).",
+                    "type": "string",
+                    "example": "0x1234567890abcdef1234567890abcdef12345678"
+                },
                 "sessionDuration": {
                     "type": "integer"
                 }

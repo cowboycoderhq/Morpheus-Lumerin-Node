@@ -25,6 +25,20 @@ type BackendTEEVerifier interface {
 	FastVerifyBackend(ctx context.Context, modelID string) error
 }
 
+// ModelHealthTracker receives live health signals from real session traffic
+// so the model health self-report reflects failures immediately instead of
+// waiting for the next scheduled probe sweep (implemented by
+// modelhealth.Checker).
+type ModelHealthTracker interface {
+	ReportPromptSuccess(modelID common.Hash)
+	// ReportPromptFailure records a failed prompt; upstreamStatus is the HTTP
+	// status returned by the model backend (0 when the failure never got an
+	// HTTP response, e.g. a transport error). An all-429 failure streak flips
+	// the model to degraded instead of unhealthy.
+	ReportPromptFailure(modelID common.Hash, upstreamStatus int)
+	ReportTeeFailure(modelID common.Hash)
+}
+
 // ModelTagsProvider fetches blockchain model tags for TEE tag detection.
 type ModelTagsProvider interface {
 	GetModelTags(ctx context.Context, modelID common.Hash) ([]string, error)
@@ -42,6 +56,7 @@ type ProxyReceiver struct {
 	sessionRepo       *sessionrepo.SessionRepositoryCached
 	backendVerifier   BackendTEEVerifier
 	modelTagsProvider ModelTagsProvider
+	modelHealth       ModelHealthTracker
 }
 
 func NewProxyReceiver(privateKeyHex, publicKeyHex lib.HexString, sessionStorage *storages.SessionStorage, aiEngine *aiengine.AiEngine, chainID *big.Int, modelConfigLoader *config.ModelConfigLoader, blockchainService BidGetter, sessionRepo *sessionrepo.SessionRepositoryCached) *ProxyReceiver {
@@ -66,6 +81,45 @@ func (s *ProxyReceiver) SetModelTagsProvider(p ModelTagsProvider) {
 	s.modelTagsProvider = p
 }
 
+func (s *ProxyReceiver) SetModelHealthTracker(t ModelHealthTracker) {
+	s.modelHealth = t
+}
+
+// isBackendFaultStatus reports whether an upstream error status indicates a
+// problem with the model backend (or its configuration/billing) rather than
+// with the consumer's request. Client-fault statuses (bad payload, too large,
+// unprocessable) must not count towards the consecutive failure streak,
+// otherwise a misbehaving consumer could flip a healthy model to unhealthy.
+func isBackendFaultStatus(status int) bool {
+	switch status {
+	case 400, 403, 413, 422:
+		return false
+	}
+	return true
+}
+
+// trackPromptResult feeds the outcome of a real session prompt into the model
+// health tracker. engineErrStatus is the upstream HTTP status captured from
+// an AiEngineErrorResponse (0 when the backend never returned an error
+// response).
+func (s *ProxyReceiver) trackPromptResult(modelID common.Hash, transportErr error, engineErrStatus int, gotEngineErr bool) {
+	if s.modelHealth == nil {
+		return
+	}
+	if transportErr != nil {
+		s.modelHealth.ReportPromptFailure(modelID, 0)
+		return
+	}
+	if gotEngineErr {
+		if isBackendFaultStatus(engineErrStatus) {
+			s.modelHealth.ReportPromptFailure(modelID, engineErrStatus)
+		}
+		// client-fault errors count neither as failure nor success
+		return
+	}
+	s.modelHealth.ReportPromptSuccess(modelID)
+}
+
 func (s *ProxyReceiver) isTeeModel(ctx context.Context, modelID common.Hash) bool {
 	if s.modelTagsProvider == nil {
 		return false
@@ -84,7 +138,7 @@ func (s *ProxyReceiver) isTeeModel(ctx context.Context, modelID common.Hash) boo
 
 // handleSessionError is a helper function to log errors and return consistent output
 func handleError(err error, message string, sourceLog lib.ILogger) (int, int, int, error) {
-	wrappedErr := lib.WrapError(fmt.Errorf(message), err)
+	wrappedErr := lib.WrapError(fmt.Errorf("%s", message), err)
 	sourceLog.Error(wrappedErr)
 	return 0, 0, 0, wrappedErr
 }
@@ -180,6 +234,7 @@ func (s *ProxyReceiver) createCompletionCallback(
 	outputTokens *int,
 	promptTokens int,
 	sendResponse SendResponse,
+	engineErr *engineErrCapture,
 ) genericchatstorage.CompletionCallback {
 	// Track accumulated content for streaming responses. Reasoning ("thinking")
 	// tokens are accumulated separately and folded into completion_tokens so
@@ -189,6 +244,10 @@ func (s *ProxyReceiver) createCompletionCallback(
 
 	return func(ctx context.Context, completion genericchatstorage.Chunk, aiEngineErrorResponse *genericchatstorage.AiEngineErrorResponse) error {
 		if aiEngineErrorResponse != nil {
+			if engineErr != nil {
+				engineErr.got = true
+				engineErr.status = aiEngineErrorResponse.StatusCode
+			}
 			marshalledResponse, err := json.Marshal(aiEngineErrorResponse)
 			if err != nil {
 				return err
@@ -294,6 +353,13 @@ func (s *ProxyReceiver) createCompletionCallback(
 	}
 }
 
+// engineErrCapture records whether the backend returned an error response
+// during a prompt and with which upstream HTTP status (0 when unknown).
+type engineErrCapture struct {
+	got    bool
+	status int
+}
+
 // recordActivity records the session activity
 func (s *ProxyReceiver) recordActivity(ctx context.Context, session *sessionrepo.SessionModel, startTime int64, sourceLog lib.ILogger) {
 	activity := storages.PromptActivity{
@@ -356,6 +422,9 @@ func (s *ProxyReceiver) SessionPrompt(ctx context.Context, requestID string, use
 
 	if s.backendVerifier != nil && session.IsTee() {
 		if verifyErr := s.backendVerifier.FastVerifyBackend(ctx, session.ModelID().Hex()); verifyErr != nil {
+			if s.modelHealth != nil {
+				s.modelHealth.ReportTeeFailure(session.ModelID())
+			}
 			return handleError(verifyErr, "LLM TEE verification failed", sourceLog)
 		}
 	}
@@ -376,7 +445,8 @@ func (s *ProxyReceiver) SessionPrompt(ctx context.Context, requestID string, use
 	}
 
 	// Create completion callback
-	cb := s.createCompletionCallback(ctx, startTime, userPubKey, requestID, sourceLog, &ttftMs, &inputTokens, &outputTokens, promptTokens, sendResponse)
+	engineErr := &engineErrCapture{}
+	cb := s.createCompletionCallback(ctx, startTime, userPubKey, requestID, sourceLog, &ttftMs, &inputTokens, &outputTokens, promptTokens, sendResponse, engineErr)
 
 	// Process request with appropriate adapter method
 	if audioTranscriptionReq != nil {
@@ -392,6 +462,8 @@ func (s *ProxyReceiver) SessionPrompt(ctx context.Context, requestID string, use
 		sourceLog.Infof("Processing chat completion request")
 		err = adapter.Prompt(ctx, chatReq, cb)
 	}
+
+	s.trackPromptResult(session.ModelID(), err, engineErr.status, engineErr.got)
 
 	if err != nil {
 		return handleError(err, "failed to prompt", sourceLog)
@@ -417,6 +489,9 @@ func (s *ProxyReceiver) SessionRequest(ctx context.Context, msgID string, reqID 
 
 	if s.backendVerifier != nil && s.isTeeModel(ctx, bid.ModelAgentId) {
 		if err := s.backendVerifier.FastVerifyBackend(ctx, modelID); err != nil {
+			if s.modelHealth != nil {
+				s.modelHealth.ReportTeeFailure(bid.ModelAgentId)
+			}
 			log.Errorf("LLM TEE verification failed for model %s: %s", modelID, err)
 			return nil, fmt.Errorf("LLM TEE verification failed: %w", err)
 		}

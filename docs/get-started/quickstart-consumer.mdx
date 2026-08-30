@@ -3,14 +3,14 @@ title: "Consumer quickstart"
 description: "The 5-minute path from zero to chatting with a remote model: download, fund a wallet, open a session, prompt."
 audience: ["consumer"]
 product: ["proxy-router", "ui-desktop"]
-last_verified: "v7.5.0"
+last_verified: "v7.7.0"
 ---
 
 This is the shortest path to chat with a remote model on Morpheus. For a full walk-through (including the optional local-only model and cleanup), see [Consumer install](/consumers/quickstart).
 
 <Steps>
   <Step title="Download a release">
-    Grab the latest package for your OS from the [GitHub releases page](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/releases). Mainnet builds have no suffix; testnet builds end in `-test`. Asset names look like (version will differ):
+    Grab the latest **Desktop Application** for your OS from the [GitHub releases page](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/releases). Current releases ship installers (`.dmg` / `.AppImage` / portable `.exe`) — not a zip archive and not `mor-launch`. Mainnet builds have no suffix; testnet builds end in `-test`. Asset names look like (version will differ):
 
     | OS | File |
     |----|------|
@@ -43,7 +43,7 @@ This is the shortest path to chat with a remote model on Morpheus. For a full wa
     </Tabs>
   </Step>
   <Step title="Let the app fetch its components">
-    On every OS, the first launch (and the first launch after an update) shows a **Starting services** screen. The app downloads the components it needs — the proxy-router, the AI runtime (`llama.cpp`), the local demo model (`tinyllama`), and an IPFS node — verifying what is already present and skipping anything it already has. It then starts each service and shows per-item status.
+    On every OS, the first launch (and the first launch after an update) shows a **Starting services** screen. The app downloads the proxy-router first (required), then optional local AI / IPFS pieces, and starts the **Proxy Router** before optional services so onboarding is not blocked if local tinyllama or IPFS fails.
 
     One item, **Container Runtime** (Docker), is only *detected*, never installed: it is required solely for containerized agent features. If a service fails or you don't need it — no Docker installed, for example — click **Skip** to continue into the app; **Retry** re-runs the failed steps.
   </Step>

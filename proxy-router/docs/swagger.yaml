@@ -926,6 +926,12 @@ definitions:
         type: boolean
       failover:
         type: boolean
+      omitProvider:
+        description: |-
+          OmitProvider excludes a provider from bid selection, e.g. one whose
+          backend just failed a prompt (impaired provider failover).
+        example: 0x1234567890abcdef1234567890abcdef12345678
+        type: string
       sessionDuration:
         type: integer
     type: object

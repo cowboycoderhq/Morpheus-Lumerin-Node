@@ -166,6 +166,31 @@ export class Orchestrator {
     await this.resetState()
     this.emitStateUpdate()
 
+    // --- Downloads: proxy-router is required; AI / IPFS are best-effort ---
+    await this.downloadProxyRouter()
+    await this.downloadOptionalAiRuntime()
+    await this.downloadOptionalAiModel()
+    await this.downloadOptionalIpfs()
+
+    // --- Startup: proxy-router first (required for UI/onboarding) ---
+    // Local AI, IPFS, and Docker are optional. The proxy only *points at*
+    // localhost AI/IPFS in config; it does not need them running to boot,
+    // open sessions, or serve remote Morpheus models. Each of these used to be
+    // able to take the WHOLE app down with it — the readiness gate required
+    // aiRuntime too, so a local-AI download/start failure (network, disk, an
+    // architecture mismatch, antivirus quarantine) meant the app sat on
+    // "Connecting to the Morpheus network" forever with no error, exactly the
+    // same failure shape the IPFS port collision produced before that was
+    // fixed. Nothing but the proxy-router gates readiness now.
+    await this.startProxyRouter()
+    this.emitStateUpdate()
+
+    await this.startOptionalService('ipfs', () => this.ensureIpfsProcess())
+    await this.startOptionalService('aiRuntime', () => this.ensureAiRuntimeProcess())
+    await this.startOptionalService('containerRuntime', () => this.ensureContainerRuntimeProcess())
+  }
+
+  private async downloadProxyRouter() {
     if (this.cfg.proxyRouter.downloadUrl) {
       await downloadFile(
         this.cfg.proxyRouter.downloadUrl,
@@ -180,197 +205,161 @@ export class Orchestrator {
         this.log.scope('Proxy-router download')
       )
     }
-
     this.proxyDownloadState.status = 'success'
     this.emitStateUpdate()
+  }
 
-    if (this.cfg.aiRuntime.downloadUrl && this.cfg.aiRuntime.extractPath) {
-      if (isInstalled(this.cfg.aiRuntime.runPath)) {
-        this.log.info(
-          'AI runtime already installed, skipping download',
-          resolveAppDataPath(this.cfg.aiRuntime.runPath!)
+  private async downloadOptionalAiRuntime() {
+    try {
+      if (this.cfg.aiRuntime.downloadUrl && this.cfg.aiRuntime.extractPath) {
+        if (isInstalled(this.cfg.aiRuntime.runPath)) {
+          this.log.info(
+            'AI runtime already installed, skipping download',
+            resolveAppDataPath(this.cfg.aiRuntime.runPath!)
+          )
+        } else {
+          // A half-extracted tree is worse than none: it makes the guard above
+          // lie. Clear it so the re-extract starts clean.
+          const stale = resolveAppDataPath(this.cfg.aiRuntime.extractPath)
+          if (fs.existsSync(stale)) {
+            this.log.info(`AI runtime is present but incomplete — re-installing: ${stale}`)
+            await fs.remove(stale).catch((e) => this.log.error('Failed to clear', e))
+          }
+
+          await downloadFile(
+            this.cfg.aiRuntime.downloadUrl,
+            resolveAppDataPath(this.cfg.aiRuntime.fileName),
+            (progress) => {
+              this.aiRuntimeDownloadState.status = progress.status
+              this.aiRuntimeDownloadState.progress = progress.progress
+              this.aiRuntimeDownloadState.error = progress.error
+              this.emitStateUpdate()
+              this.log.info(`Downloading ai-runtime: ${progress.bytesDownloaded} bytes`)
+            },
+            this.log.scope('Ai-runtime download')
+          )
+
+          this.log.info(`unzipping ai runtime`)
+          await extractFile(
+            resolveAppDataPath(this.cfg.aiRuntime.fileName),
+            resolveAppDataPath(this.cfg.aiRuntime.extractPath),
+            (progress) => {
+              this.aiRuntimeDownloadState.status =
+                progress.status === 'error' ? 'error' : 'unzipping'
+              this.aiRuntimeDownloadState.progress = progress.progress
+              this.aiRuntimeDownloadState.error = progress.error
+              this.emitStateUpdate()
+              this.log.info(`Extracting ai-runtime`, progress)
+            }
+          )
+        }
+      }
+      this.aiRuntimeDownloadState.status = 'success'
+    } catch (err) {
+      this.log.error('Optional AI runtime download failed; continuing', err)
+      this.aiRuntimeDownloadState.status = 'error'
+      this.aiRuntimeDownloadState.error = (err as Error)?.message ?? String(err)
+    }
+    this.emitStateUpdate()
+  }
+
+  private async downloadOptionalAiModel() {
+    try {
+      // Anyone who ran an earlier build has the superseded TinyLlama .gguf
+      // sitting in app-data, and nothing will ever load it again — the model
+      // filename is what the downloader keys on. Reclaim the ~460MB rather
+      // than silently leaving it on their disk forever.
+      for (const stale of ['./services/ai-model.gguf', './services/ai-model.llvm']) {
+        const stalePath = resolveAppDataPath(stale)
+        if (
+          stalePath !== resolveAppDataPath(this.cfg.aiModel.fileName) &&
+          fs.existsSync(stalePath)
+        ) {
+          this.log.info(`Removing superseded AI model: ${stalePath}`)
+          await fs.remove(stalePath).catch((err) => this.log.error('Failed to remove', err))
+        }
+      }
+
+      if (this.cfg.aiModel.downloadUrl) {
+        await downloadFile(
+          this.cfg.aiModel.downloadUrl,
+          resolveAppDataPath(this.cfg.aiModel.fileName),
+          (progress) => {
+            this.aiModelDownloadState.status = progress.status
+            this.aiModelDownloadState.progress = progress.progress
+            this.aiModelDownloadState.error = progress.error
+            this.emitStateUpdate()
+            this.log.info(`Downloading ai-model: ${progress.bytesDownloaded} bytes`)
+          },
+          this.log.scope('Ai-model download')
         )
-        this.aiRuntimeDownloadState.status = 'success'
-        this.emitStateUpdate()
-      } else {
-        // A half-extracted tree is worse than none: it makes the guard above lie.
-        // Clear it so the re-extract starts clean.
-        const stale = resolveAppDataPath(this.cfg.aiRuntime.extractPath)
-        if (fs.existsSync(stale)) {
-          this.log.info(`AI runtime is present but incomplete — re-installing: ${stale}`)
-          await fs.remove(stale).catch((e) => this.log.error('Failed to clear', e))
+      }
+      this.aiModelDownloadState.status = 'success'
+    } catch (err) {
+      this.log.error('Optional AI model download failed; continuing', err)
+      this.aiModelDownloadState.status = 'error'
+      this.aiModelDownloadState.error = (err as Error)?.message ?? String(err)
+    }
+    this.emitStateUpdate()
+  }
+
+  private async downloadOptionalIpfs() {
+    try {
+      if (
+        this.cfg.ipfs.downloadUrl &&
+        this.cfg.ipfs.extractPath &&
+        !isInstalled(this.cfg.ipfs.runPath)
+      ) {
+        // Both extractors early-return when the destination already exists. So
+        // without this removal, a broken IPFS tree (e.g. one extracted by the
+        // old mode-dropping code, leaving a non-executable binary) would be
+        // re-DOWNLOADED — ~30MB — and then not extracted at all, repairing
+        // nothing and orphaning the archive on disk. The aiRuntime path already
+        // does this; the IPFS one never did.
+        const staleIpfs = resolveAppDataPath(this.cfg.ipfs.extractPath)
+        if (fs.existsSync(staleIpfs)) {
+          this.log.info(`IPFS is present but not usable — re-installing: ${staleIpfs}`)
+          await fs.remove(staleIpfs).catch((e) => this.log.error('Failed to clear', e))
         }
 
         await downloadFile(
-          this.cfg.aiRuntime.downloadUrl,
-          resolveAppDataPath(this.cfg.aiRuntime.fileName),
+          this.cfg.ipfs.downloadUrl,
+          resolveAppDataPath(this.cfg.ipfs.fileName),
           (progress) => {
-            this.aiRuntimeDownloadState.status = progress.status
-            this.aiRuntimeDownloadState.progress = progress.progress
-            this.aiRuntimeDownloadState.error = progress.error
+            this.ipfsDownloadState.status = progress.status
+            this.ipfsDownloadState.progress = progress.progress
+            this.ipfsDownloadState.error = progress.error
             this.emitStateUpdate()
-            this.log.info(`Downloading ai-runtime: ${progress.bytesDownloaded} bytes`)
+            this.log.info(`Downloading ipfs: ${progress.bytesDownloaded} bytes`)
           },
-          this.log.scope('Ai-runtime download')
+          this.log.scope('IPFS node download')
         )
 
-        this.log.info(`unzipping ai runtime`)
-
+        this.log.info(`unzipping ipfs`)
         await extractFile(
-          resolveAppDataPath(this.cfg.aiRuntime.fileName),
-          resolveAppDataPath(this.cfg.aiRuntime.extractPath),
+          resolveAppDataPath(this.cfg.ipfs.fileName),
+          resolveAppDataPath(this.cfg.ipfs.extractPath),
           (progress) => {
-            this.aiRuntimeDownloadState.status = progress.status === 'error' ? 'error' : 'unzipping'
-            this.aiRuntimeDownloadState.progress = progress.progress
-            this.aiRuntimeDownloadState.error = progress.error
+            this.ipfsDownloadState.status = progress.status === 'error' ? 'error' : 'unzipping'
+            this.ipfsDownloadState.progress = progress.progress
+            this.ipfsDownloadState.error = progress.error
             this.emitStateUpdate()
-            this.log.info(`Extracting ai-runtime`, progress)
+            this.log.info(`Extracting ipfs: ${progress.status} ${progress.progress}`)
           }
         )
       }
+      this.ipfsDownloadState.status = 'success'
+    } catch (err) {
+      this.log.error('Optional IPFS download failed; continuing', err)
+      this.ipfsDownloadState.status = 'error'
+      this.ipfsDownloadState.error = (err as Error)?.message ?? String(err)
     }
-
-    this.aiRuntimeDownloadState.status = 'success'
     this.emitStateUpdate()
+  }
 
-    // Anyone who ran an earlier build has the superseded TinyLlama .gguf sitting
-    // in app-data, and nothing will ever load it again — the model filename is
-    // what the downloader keys on. Reclaim the ~460MB rather than silently
-    // leaving it on their disk forever.
-    for (const stale of ['./services/ai-model.gguf', './services/ai-model.llvm']) {
-      const stalePath = resolveAppDataPath(stale)
-      if (stalePath !== resolveAppDataPath(this.cfg.aiModel.fileName) && fs.existsSync(stalePath)) {
-        this.log.info(`Removing superseded AI model: ${stalePath}`)
-        await fs.remove(stalePath).catch((err) => this.log.error('Failed to remove', err))
-      }
-    }
-
-    if (this.cfg.aiModel.downloadUrl) {
-      await downloadFile(
-        this.cfg.aiModel.downloadUrl,
-        resolveAppDataPath(this.cfg.aiModel.fileName),
-        (progress) => {
-          this.aiModelDownloadState.status = progress.status
-          this.aiModelDownloadState.progress = progress.progress
-          this.aiModelDownloadState.error = progress.error
-          this.emitStateUpdate()
-          this.log.info(`Downloading ai-model: ${progress.bytesDownloaded} bytes`)
-        },
-        this.log.scope('Ai-model download')
-      )
-    }
-    this.aiModelDownloadState.status = 'success'
-    this.emitStateUpdate()
-
-    if (
-      this.cfg.ipfs.downloadUrl &&
-      this.cfg.ipfs.extractPath &&
-      !isInstalled(this.cfg.ipfs.runPath)
-    ) {
-      await downloadFile(
-        this.cfg.ipfs.downloadUrl,
-        resolveAppDataPath(this.cfg.ipfs.fileName),
-        (progress) => {
-          this.ipfsDownloadState.status = progress.status
-          this.ipfsDownloadState.progress = progress.progress
-          this.ipfsDownloadState.error = progress.error
-          this.emitStateUpdate()
-          this.log.info(`Downloading ipfs: ${progress.bytesDownloaded} bytes`)
-        },
-        this.log.scope('IPFS node download')
-      )
-
-      // Both extractors early-return when the destination already exists. So
-      // without this removal, a broken IPFS tree (e.g. one extracted by the old
-      // mode-dropping code, leaving a non-executable binary) would be
-      // re-DOWNLOADED — ~30MB — and then not extracted at all, repairing
-      // nothing and orphaning the archive on disk. The aiRuntime branch above
-      // already does this; the IPFS branch never did.
-      const staleIpfs = resolveAppDataPath(this.cfg.ipfs.extractPath)
-      if (fs.existsSync(staleIpfs)) {
-        this.log.info(`IPFS is present but not usable — re-installing: ${staleIpfs}`)
-        await fs.remove(staleIpfs).catch((e) => this.log.error('Failed to clear', e))
-      }
-
-      this.log.info(`unzipping ipfs`)
-
-      await extractFile(
-        resolveAppDataPath(this.cfg.ipfs.fileName),
-        resolveAppDataPath(this.cfg.ipfs.extractPath),
-        (progress) => {
-          this.ipfsDownloadState.status = progress.status === 'error' ? 'error' : 'unzipping'
-          this.ipfsDownloadState.progress = progress.progress
-          this.ipfsDownloadState.error = progress.error
-          this.emitStateUpdate()
-          this.log.info(`Extracting ipfs: ${progress.status} ${progress.progress}`)
-        }
-      )
-    }
-    this.ipfsDownloadState.status = 'success'
-    this.emitStateUpdate()
-
-    if (!this.ipfsProcess) {
-      this.ipfsProcess = await ProcessFactory({
-        name: 'ipfs',
-        command: resolveAppDataPath(this.cfg.ipfs.runPath),
-        args: this.cfg.ipfs.runArgs,
-        log: this.log.scope('IPFS'),
-        redirectProcessOutput: true,
-        probe: this.cfg.ipfs.probe,
-        ports: this.cfg.ipfs.ports,
-        onStateChange: () => this.emitStateUpdate()
-      })
-    }
-
-    // One service failing must not abort the pipeline. This used to be a bare
-    // `await ipfsProcess.start()`: when IPFS threw, aiRuntime.start() below was
-    // never reached, so the AI runtime sat at 'pending' forever — which the
-    // setup UI reads as "still working", i.e. an eternal spinner with no error
-    // and no way to retry. It also meant the AI binary never got its
-    // chmod-before-spawn, so a bad install could never even repair itself.
-    //
-    // A failed start() has ALREADY recorded state='stopped' + the real error on
-    // its own ManagedProcess, which is what the UI escalates on. Swallowing the
-    // throw here loses nothing and makes each service's failure visible instead
-    // of silently fatal to everything downstream.
-    await this.ipfsProcess.start().catch((err) => this.log.error('IPFS failed to start', err))
-    this.emitStateUpdate()
-
-    if (!this.aiRuntimeProcess) {
-      this.aiRuntimeProcess = await ProcessFactory({
-        name: 'aiRuntime',
-        command: resolveAppDataPath(this.cfg.aiRuntime.runPath),
-        args: this.cfg.aiRuntime.runArgs,
-        log: this.log.scope('Ai-runtime'),
-        redirectProcessOutput: false,
-        probe: this.cfg.aiRuntime.probe,
-        ports: this.cfg.aiRuntime.ports,
-        onStateChange: () => this.emitStateUpdate()
-      })
-    }
-
-    await this.aiRuntimeProcess
-      .start()
-      .catch((err) => this.log.error('AI runtime failed to start', err))
-    this.emitStateUpdate()
-
-    // Container runtime
-    if (!this.containerRuntimeProcess) {
-      this.containerRuntimeProcess = await ProcessFactory({
-        probe: this.cfg.containerRuntime.probe,
-        onStateChange: () => this.emitStateUpdate(),
-        log: this.log.scope('Container-runtime')
-      })
-    }
-
-    await this.containerRuntimeProcess.start().catch(this.log.error)
-    this.emitStateUpdate()
-
-    // Proxy router
-
+  private async startProxyRouter() {
     const proxyFolder = path.dirname(resolveAppDataPath(this.cfg.proxyRouter.runPath))
 
-    // writting local config files if not exist
     await this.writeEnvFile(path.join(proxyFolder, '.env'), this.cfg.proxyRouter.env ?? {})
     await this.writeModelsConfigFile(
       path.join(proxyFolder, 'models-config.json'),
@@ -381,6 +370,11 @@ export class Orchestrator {
       this.cfg.proxyRouter.ratingConfig
     )
 
+    await this.ensureProxyRouterProcess()
+    await this.proxyRouterProcess!.start()
+  }
+
+  private async ensureProxyRouterProcess() {
     if (!this.proxyRouterProcess) {
       this.proxyRouterProcess = await ProcessFactory({
         name: 'proxyRouter',
@@ -393,20 +387,83 @@ export class Orchestrator {
         onStateChange: () => this.emitStateUpdate()
       })
     }
+  }
 
-    await this.proxyRouterProcess
-      .start()
-      .catch((err) => this.log.error('Proxy router failed to start', err))
+  private async ensureIpfsProcess() {
+    if (!this.ipfsProcess) {
+      this.ipfsProcess = await ProcessFactory({
+        name: 'ipfs',
+        command: resolveAppDataPath(this.cfg.ipfs.runPath),
+        args: this.cfg.ipfs.runArgs,
+        log: this.log.scope('IPFS'),
+        redirectProcessOutput: true,
+        probe: this.cfg.ipfs.probe,
+        ports: this.cfg.ipfs.ports,
+        onStateChange: () => this.emitStateUpdate()
+      })
+    }
+  }
+
+  private async ensureAiRuntimeProcess() {
+    if (!this.aiRuntimeProcess) {
+      this.aiRuntimeProcess = await ProcessFactory({
+        name: 'aiRuntime',
+        command: resolveAppDataPath(this.cfg.aiRuntime.runPath),
+        args: this.cfg.aiRuntime.runArgs,
+        log: this.log.scope('Ai-runtime'),
+        redirectProcessOutput: false,
+        probe: this.cfg.aiRuntime.probe,
+        ports: this.cfg.aiRuntime.ports,
+        onStateChange: () => this.emitStateUpdate()
+      })
+    }
+  }
+
+  private async ensureContainerRuntimeProcess() {
+    if (!this.containerRuntimeProcess) {
+      this.containerRuntimeProcess = await ProcessFactory({
+        probe: this.cfg.containerRuntime.probe,
+        onStateChange: () => this.emitStateUpdate(),
+        log: this.log.scope('Container-runtime')
+      })
+    }
+  }
+
+  private async startOptionalService(
+    name: string,
+    ensure: () => Promise<void>
+  ): Promise<void> {
+    try {
+      await ensure()
+      const processMap: Record<string, Process | undefined> = {
+        ipfs: this.ipfsProcess,
+        aiRuntime: this.aiRuntimeProcess,
+        containerRuntime: this.containerRuntimeProcess
+      }
+      // One service failing must not abort the pipeline or block another. This
+      // used to be a bare `await ipfsProcess.start()` inline: when IPFS threw,
+      // aiRuntime.start() below was never reached, so the AI runtime sat at
+      // 'pending' forever — which the setup UI reads as "still working", i.e.
+      // an eternal spinner with no error and no way to retry. It also meant
+      // the AI binary never got its chmod-before-spawn, so a bad install could
+      // never even repair itself.
+      //
+      // A failed start() has ALREADY recorded state='stopped' + the real error
+      // on its own ManagedProcess, which is what the UI escalates on.
+      // Swallowing the throw here loses nothing and makes each service's
+      // failure visible instead of silently fatal to everything downstream.
+      await processMap[name]?.start()
+    } catch (err) {
+      this.log.error(`Optional service ${name} failed to start; continuing`, err)
+    }
     this.emitStateUpdate()
   }
 
   /**
-   * Kill any service still running from a previous, crashed run of this app.
-   * Runs once per app launch, before anything is spawned.
+   * Find a free port for IPFS starting from its configured default, and rewrite
+   * every reference to it in the live config. Idempotent and safe to call once
+   * per startup. If the default is already free, nothing changes.
    */
-  // Find a free port for IPFS starting from its configured default, and rewrite
-  // every reference to it in the live config. Idempotent and safe to call once
-  // per startup. If the default is already free, nothing changes.
   private async resolveIpfsPort() {
     const ipfs = this.cfg.ipfs
     if (!ipfs?.probe?.url) return
@@ -447,6 +504,10 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Kill any service still running from a previous, crashed run of this app.
+   * Runs once per app launch, before anything is spawned.
+   */
   private async reapOrphanedServices() {
     if (this.orphansReaped) return
     this.orphansReaped = true
@@ -477,18 +538,36 @@ export class Orchestrator {
   }
 
   public async restartService(service: keyof OrchestratorConfig) {
-    const processMap = {
+    // Ensure the process object exists even if the prior pipeline never
+    // reached this service (e.g. aborted before proxy-router was created).
+    try {
+      if (service === 'proxyRouter') await this.ensureProxyRouterProcess()
+      else if (service === 'aiRuntime') await this.ensureAiRuntimeProcess()
+      else if (service === 'ipfs') await this.ensureIpfsProcess()
+      else if (service === 'containerRuntime') await this.ensureContainerRuntimeProcess()
+      else {
+        this.log.error(`Service ${service} is not restartable`)
+        return
+      }
+    } catch (err) {
+      this.log.error(`Failed to prepare service ${service} for restart`, err)
+      this.emitStateUpdate()
+      return
+    }
+
+    const processMap: Partial<Record<keyof OrchestratorConfig, Process | undefined>> = {
       proxyRouter: this.proxyRouterProcess,
       aiRuntime: this.aiRuntimeProcess,
-      ipfs: this.ipfsProcess
+      ipfs: this.ipfsProcess,
+      containerRuntime: this.containerRuntimeProcess
     }
-    const process: Process | undefined = processMap[service]
+    const process = processMap[service]
     if (!process) {
       this.log.error(`Service ${service} not found`)
       return
     }
 
-    // Only restart managed processes
+    // Only restart managed processes (container runtime is probe-only / external)
     if (process.isExternal()) {
       this.log.warn(`Cannot restart external service ${service}`)
       return
@@ -503,33 +582,24 @@ export class Orchestrator {
       this.emitStateUpdate()
     }
 
-    // If the original startAll pipeline aborted before reaching downstream
-    // services (e.g. IPFS failed, so containerRuntime + proxyRouter were
-    // never started), resume the pipeline now that this service is healthy.
+    // Resume optional services that may still be pending after a proxy restart.
     // startAll is idempotent: downloads check fs.exists, and each process's
     // start() short-circuits when already running.
-    if (process.getState() === 'running' && !this.allServicesRunning()) {
+    if (process.getState() === 'running' && !this.requiredServicesRunning()) {
       this.log.info(
-        `Service ${service} restarted; resuming startup pipeline for any downstream services still pending`
+        `Service ${service} restarted; resuming startup pipeline for any remaining services`
       )
       try {
         await this.startAll()
       } catch (err) {
         this.log.error('Resume after restart failed', err)
-        // Don't rethrow — the explicit restart did succeed; downstream
-        // failures are surfaced via the per-service state.
       }
     }
   }
 
-  private allServicesRunning(): boolean {
-    const all = [
-      this.ipfsProcess,
-      this.aiRuntimeProcess,
-      this.containerRuntimeProcess,
-      this.proxyRouterProcess
-    ]
-    return all.every((p) => p?.getState() === 'running')
+  /** Proxy-router is the only service required for the UI / onboarding to work. */
+  private requiredServicesRunning(): boolean {
+    return this.proxyRouterProcess?.getState() === 'running'
   }
 
   async ping(service: keyof OrchestratorConfig): Promise<boolean> {
@@ -568,6 +638,16 @@ export class Orchestrator {
       ],
       startup: [
         {
+          id: 'proxyRouter',
+          name: 'Proxy Router',
+          status: this.proxyRouterProcess?.getState() ?? 'pending',
+          error: this.proxyRouterProcess?.getError(),
+          stderrOutput: this.proxyRouterProcess?.getOutput(),
+          ports: this.cfg.proxyRouter.ports,
+          isExternal: this.proxyRouterProcess?.isExternal(),
+          probeAttempts: this.proxyRouterProcess?.getProbeAttempts()
+        },
+        {
           id: 'ipfs',
           name: 'IPFS',
           status: this.ipfsProcess?.getState() ?? 'pending',
@@ -595,16 +675,6 @@ export class Orchestrator {
           stderrOutput: this.containerRuntimeProcess?.getOutput(),
           isExternal: this.containerRuntimeProcess?.isExternal(),
           probeAttempts: this.containerRuntimeProcess?.getProbeAttempts()
-        },
-        {
-          id: 'proxyRouter',
-          name: 'Proxy Router',
-          status: this.proxyRouterProcess?.getState() ?? 'pending',
-          error: this.proxyRouterProcess?.getError(),
-          stderrOutput: this.proxyRouterProcess?.getOutput(),
-          ports: this.cfg.proxyRouter.ports,
-          isExternal: this.proxyRouterProcess?.isExternal(),
-          probeAttempts: this.proxyRouterProcess?.getProbeAttempts()
         }
       ],
       orchestratorStatus
@@ -612,46 +682,20 @@ export class Orchestrator {
   }
 
   private calculateOrchestratorStatus(): OrchestratorStatus {
-    // Check for any errors in downloads
-    const hasDownloadErrors = [
-      this.proxyDownloadState,
-      this.aiRuntimeDownloadState,
-      this.aiModelDownloadState,
-      this.ipfsDownloadState
-    ].some((item) => item.status === 'error')
-
-    // Check for any errors in startup processes.
-    // Container Runtime (Docker) AND IPFS are intentionally EXCLUDED — both are
-    // optional. Docker a non-technical user won't have; IPFS is only used by the
-    // PROVIDER "host/upload your own model" feature, never by the consumer chat/
-    // staking flow (the proxy-router runs healthy without it). IPFS also
-    // defaults to a commonly-taken port (5001); making it block the gate meant a
-    // port conflict froze the entire app with no error. Its state is still
-    // reported to the UI, but an IPFS error must not fail the whole app.
-    const hasStartupErrors = [this.aiRuntimeProcess, this.proxyRouterProcess].some((process) =>
-      process?.getError()
-    )
-
-    if (hasDownloadErrors || hasStartupErrors) {
+    // Proxy-router download/start is required. Optional service failures must
+    // not block the UI — local AI / IPFS / Docker are best-effort. This used to
+    // gate on aiRuntime too (and on ALL FOUR download states, including the
+    // ones the surrounding comments already called optional) — an unhandled
+    // aiModel/ipfs download exception, or a healthy-but-slow local AI runtime,
+    // could take the WHOLE app to 'error' or leave it at 'initializing'
+    // forever. Nothing but the proxy-router gates readiness now; that is also
+    // what every download/start path above is now structured to guarantee —
+    // each optional one is try/caught and cannot propagate.
+    if (this.proxyDownloadState.status === 'error' || this.proxyRouterProcess?.getError()) {
       return 'error'
     }
 
-    // Check if all downloads are complete
-    const allDownloadsComplete = [
-      this.proxyDownloadState,
-      this.aiRuntimeDownloadState,
-      this.aiModelDownloadState,
-      this.ipfsDownloadState
-    ].every((item) => item.status === 'success')
-
-    // Check if all REQUIRED processes are running. Container Runtime (Docker)
-    // and IPFS are optional (see above) and deliberately not part of the
-    // readiness gate, so the app reaches 'ready' whether or not they are up.
-    const allProcessesRunning = [this.aiRuntimeProcess, this.proxyRouterProcess].every(
-      (process) => process?.getState() === 'running'
-    )
-
-    if (allDownloadsComplete && allProcessesRunning) {
+    if (this.proxyDownloadState.status === 'success' && this.requiredServicesRunning()) {
       return 'ready'
     }
 

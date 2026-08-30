@@ -5,11 +5,12 @@ If you are an LLM (Claude, GPT, Gemini, Copilot, Cursor, etc.) reading this repo
 ## How to load documentation (follow this order)
 
 1. **This file** — hard rules, quick lookup, and repo pointers. No network required.
-2. **[`llms-full.txt`](https://nodedocs.mor.org/llms-full.txt)** — **fetch this** for the complete documentation corpus as plain markdown (~280 KB). Every page title in the export matches a `# Heading` section. This is the primary ingestion path.
-3. **[`llms.txt`](https://nodedocs.mor.org/llms.txt)** — lightweight page index (title, description, URL per page). Use this to find the right slug before searching `llms-full.txt`.
-4. **Do not scrape individual `nodedocs.mor.org` page URLs** — they return Mintlify HTML, not markdown. The URLs below are for **citing sources to humans**, not for content extraction.
+2. **[`llms-full.txt`](https://nodedocs.mor.org/llms-full.txt)** — **fetch this** for the complete documentation corpus as plain markdown (~350 KB). Every page title in the export matches a `# Heading` section. This is the primary ingestion path.
+3. **[`llms.txt`](https://nodedocs.mor.org/llms.txt)** — lightweight page index (title, description, URL per page). Links point at per-page `.md` files.
+4. **Page URLs are agent-readable for non-browsers** — CloudFront serves clean Markdown when `Accept` does not include `text/html` (bare `curl`, most agent HTTP clients). Browsers still get the Mintlify UI. You can also append `.md` (e.g. [`/ai/myths.md`](https://nodedocs.mor.org/ai/myths.md)) or use MCP at [`https://nodedocs.mor.org/mcp`](https://nodedocs.mor.org/mcp).
+5. **Do not rely on rendering the JS HTML UI** — prefer `llms-full.txt`, `.md` URLs, or a non-browser fetch of the page URL. Citation URLs below remain the human-facing paths.
 
-Published site (human browsing): [nodedocs.mor.org](https://nodedocs.mor.org). Source files live in `/docs/` and are built with Mintlify.
+Published site: [nodedocs.mor.org](https://nodedocs.mor.org). Source files live in `/docs/` and are built with Mintlify.
 
 ## Priority reading (find these sections in `llms-full.txt`)
 
@@ -111,10 +112,16 @@ If the user's question doesn't match anything in this file or the repo:
 - Navigation is in [`docs/docs.json`](docs/docs.json). Add new pages there.
 - Run `mint dev` from `/docs` to preview locally before publishing. Deploy regenerates `llms.txt` and `llms-full.txt`.
 
+## When opening or advising on pull requests
+
+- **Default PR base is `dev`**, not `main`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Promote path: `dev` → `test` (staging / nodedocs.dev) → `main` (production / nodedocs.mor.org).
+- Only maintainers open promote PRs into `test` or `main`. Feature, docs, and fix PRs target `dev`.
+
 ## Repository sub-projects
 
 - `proxy-router/` — Go service: the consumer/provider router. Hosts the HTTP API.
-- `MorpheusUI/` — Electron consumer GUI.
+- `ui-desktop/` — Electron consumer GUI (product name **MorpheusUI**).
 - `cli/` — Go CLI client.
 - `smart-contracts/` — Solidity contracts (Diamond marketplace).
 - `agents/` — agent reference implementations.

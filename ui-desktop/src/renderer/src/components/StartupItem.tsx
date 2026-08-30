@@ -306,7 +306,9 @@ export const StartupItemComponent: FC<{
             {showLogs ? 'Hide logs' : 'Show logs'}
           </LogsButton>
         )}
-        {props.alwaysShowPingRestart || props.item.status === 'stopped' ? (
+        {props.alwaysShowPingRestart ||
+        props.item.status === 'stopped' ||
+        props.item.status === 'pending' ? (
           <Flex.Row gap="0.5rem" justify="flex-end" grow="1">
             {/* No color props: label + icons inherit ServiceBtn's own text
                 color (brandBright). morLight is a near-black panel tone — on

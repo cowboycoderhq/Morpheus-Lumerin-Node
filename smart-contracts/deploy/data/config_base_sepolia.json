@@ -1,14 +1,14 @@
 {
   "MOR": "0x5C80Ddd187054E1E4aBBfFCD750498e81d34FfA3",
-  "fundingAccount": "0x19ec1E4b714990620edf41fE28e9a1552953a7F4",
+  "fundingAccount": "0x94C58f682A9A518EfF83c7B53F3738294bB0F357",
   "providerMinStake": "200000000000000000",
   "modelMinStake": "100000000000000000",
   "marketplaceBidFee": "300000000000000000",
   "marketplaceMinBidPricePerSecond": "5000000000000000",
   "marketplaceMaxBidPricePerSecond": "20000000000000000000",
   "delegateRegistry": "0x00000000000000447e69651d841bD8D104Bed493",
-  "owner": "0x1FE04BC15Cf2c5A2d41a0b3a96725596676eBa1E",
-  "lumerinProtocol": "0x6e4d0B775E3C3b02683A6F277Ac80240C4aFF930",
+  "owner": "0x94C58f682A9A518EfF83c7B53F3738294bB0F357",
+  "lumerinProtocol": "0xA328196f2438DADA5ab729E39388D86896c27c85",
   "pools": [
     {
       "payoutStart": 1707393600,
