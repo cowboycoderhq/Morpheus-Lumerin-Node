@@ -91,7 +91,20 @@ const HEARTBEAT_MS = 5000;
 // This watchdog does not care WHY. If the whole picture — every status, every
 // download's progress — is byte-identical for this long, setup is not
 // progressing and the user is owed the truth and a button.
-// 8 minutes, not 3.
+// 4 minutes.
+//
+// This was 3, which sat BELOW proxy-router's real cold start (~3m35s, measured
+// twice), so the watchdog cried stall ~35s before success on every healthy
+// launch. It went to 8 as a blind backstop while the detector could not tell
+// working from wedged.
+//
+// The detector can tell now: startup entries carry probeAttempts, so a service
+// that is polling moves the fingerprint every second and CANNOT trip this
+// timer no matter how slow it is. The number therefore stops being a race
+// against startup time and becomes what it always should have been — how long
+// a genuinely frozen pipeline may sit there before we say so.
+//
+// SUPERSEDED REASONING BELOW (kept because the 8 was deliberate, not a guess):
 //
 // 3 minutes was chosen without measuring the thing it watches. proxy-router's
 // real cold start on a clean install is ~3m35s (measured twice: 3m34s, 3m35s),
@@ -109,7 +122,7 @@ const HEARTBEAT_MS = 5000;
 // byte-identical tick to tick. Plumbing a probe-attempt counter through
 // StartupItem is the real fix and is tracked separately; until then this
 // number only needs to sit above any legitimate startup, not to be precise.
-const STALL_MS = 8 * 60 * 1000;
+const STALL_MS = 4 * 60 * 1000;
 
 /**
  * A fingerprint of everything that would change if anything were happening.
@@ -118,9 +131,19 @@ const STALL_MS = 8 * 60 * 1000;
  * slowly must not look identical to one that has stopped, or a thin connection
  * would be told setup had stalled.
  */
-const progressFingerprint = (services: LoadingState): string =>
+export const progressFingerprint = (services: LoadingState): string =>
   JSON.stringify({
-    startup: services.startup.map((s) => [s.id, s.status, s.error ?? '']),
+    // By ATTEMPTS, not just status — the same rule the download arm has always
+    // followed, finally applied to the arm that needed it. `status` sits at
+    // 'starting' from a service's first probe to its last, so on status alone a
+    // service that is coming up is byte-identical to one that is wedged. The
+    // probe counter is the only field here that moves while it works.
+    startup: services.startup.map((s) => [
+      s.id,
+      s.status,
+      s.error ?? '',
+      s.probeAttempts ?? 0,
+    ]),
     // By PROGRESS, not just status: a download inching along on a thin
     // connection must not look identical to one that has stopped dead.
     download: services.download.map((d) => [d.name, d.status, d.progress]),

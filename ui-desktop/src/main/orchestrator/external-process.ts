@@ -8,7 +8,7 @@ import { Pinger, Process, ProcessState, StateInfo } from './process'
 
 export type ExternalProcessParams = {
   pinger?: Pinger
-  onStateChange?: (stateInfo: StateInfo) => void
+  onStateChange?: (stateInfo?: StateInfo) => void
   healthCheckIntervalMs?: number
   log?: LogFunctions
 }
@@ -20,7 +20,7 @@ export class ExternalProcess implements Process {
   private pinger?: Pinger
   private error: string | null = null
   private log?: LogFunctions
-  private onStateChange?: (stateInfo: StateInfo) => void
+  private onStateChange?: (stateInfo?: StateInfo) => void
   private healthCheckTimer: NodeJS.Timeout | null = null
 
   constructor(params: ExternalProcessParams) {
@@ -62,6 +62,11 @@ export class ExternalProcess implements Process {
     this.log?.info('external process monitoring stopped')
     this.setState('stopped', 'Monitoring stopped')
     this.monitoringState = 'stopped'
+  }
+
+  /** Probe attempts so far — a service that is genuinely coming up moves this. */
+  getProbeAttempts(): number {
+    return this.pinger?.getAttempts?.() ?? 0
   }
 
   async ping(timeoutMs: number = 3000): Promise<void> {

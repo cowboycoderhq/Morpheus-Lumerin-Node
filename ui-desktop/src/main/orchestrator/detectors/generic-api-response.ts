@@ -9,6 +9,15 @@ type Params = {
   timeout?: number
   pollInterval?: number
   log?: LogFunctions
+  /**
+   * Called once per poll attempt, with the attempt number (1-based).
+   *
+   * This is the ONLY evidence that a service which has not answered yet is
+   * nonetheless making progress. Without it a service that is genuinely coming
+   * up is indistinguishable from one that is wedged: both sit at
+   * status 'starting' and report nothing, tick after tick.
+   */
+  onAttempt?: (attempt: number) => void
 }
 
 const DEFAULT_TIMEOUT = 10000
@@ -21,6 +30,9 @@ export class GenericApiResponseDetector {
   private timeout: number
   private pollInterval: number
   private log: LogFunctions | null
+  private onAttempt: ((attempt: number) => void) | null
+  /** Total poll attempts across every ping() this detector has run. */
+  private attempts = 0
 
   constructor(params: Params) {
     this.url = params.url
@@ -29,6 +41,11 @@ export class GenericApiResponseDetector {
     this.timeout = params.timeout ?? DEFAULT_TIMEOUT
     this.pollInterval = params.pollInterval ?? DEFAULT_POLL_INTERVAL
     this.log = params.log ?? null
+    this.onAttempt = params.onAttempt ?? null
+  }
+
+  getAttempts(): number {
+    return this.attempts
   }
 
   async ping(timeoutMs?: number, signal?: AbortSignal): Promise<void> {
@@ -45,9 +62,22 @@ export class GenericApiResponseDetector {
     const aborted = () =>
       signal?.aborted ? new Error('aborted') : undefined
 
+    let attempt = 0
+
     while (Date.now() - startTime < timeout) {
       const preAbort = aborted()
       if (preAbort) throw preAbort
+
+      // Report BEFORE the request, not after: a request that hangs for its full
+      // per-attempt timeout is exactly when the UI most needs to know somebody
+      // is still trying.
+      attempt++
+      this.attempts++
+      try {
+        this.onAttempt?.(attempt)
+      } catch {
+        /* a progress listener must never break the probe */
+      }
 
       try {
         const res = await this.request(this.url, this.method)

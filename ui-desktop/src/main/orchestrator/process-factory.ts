@@ -14,7 +14,13 @@ export const ProcessFactory = async (
     method: params.probe.method,
     timeout: params.probe.timeout,
     pollInterval: params.probe.interval,
-    log: log
+    log: log,
+    // Re-emit on every poll attempt. Without this the counter would advance in
+    // main and the renderer would never see it: state is pushed on CHANGE, and
+    // "still starting" is precisely the case where nothing else changes. The
+    // callback ignores its argument, exactly like every other onStateChange
+    // caller — the point is the emit, not the payload.
+    onAttempt: () => params.onStateChange?.()
     // responseRegexp: probeConfig.responseRegexp,
   })
 
