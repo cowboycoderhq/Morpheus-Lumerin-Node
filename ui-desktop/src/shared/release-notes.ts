@@ -30,6 +30,45 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    // Written for someone coming from 1.1.1, which they DID receive — so this
+    // one leads with what changed rather than re-teaching the feature. The
+    // 1.1.1 entry below still carries the full introduction for anyone who
+    // skipped it.
+    version: '1.1.2',
+    headline: 'Terminal sessions, minus the friction.',
+    items: [
+      {
+        title: 'One switch, not four',
+        body:
+          'Turning on the OpenAI-compatible endpoint is now the whole setup. The permission toggles and the spend caps are gone: nothing but this app can open a session, so there was no unattended spending left to bound. Every session is still you, looking at a price, clicking confirm.',
+      },
+      {
+        title: 'Ask again and the window comes back',
+        body:
+          'Closing an offer used to buy five minutes of silence, so the app appeared to work only once. It frees the model immediately now, and if a dialog really is already open the terminal says so instead of saying nothing.',
+      },
+      {
+        title: 'A fresh offer is a fresh dialog',
+        body:
+          'Leaving a completed session on screen no longer means the next request shows you the last one’s “Open in grok”.',
+      },
+      {
+        title: 'Setup that stops tells you why',
+        body:
+          'If installation stops making progress, you get the step it was waiting on, the error, and the app’s own log with one button to copy it — instead of a spinner that never ends.',
+      },
+      {
+        title: 'Install grok from Settings',
+        body:
+          'A button, next to the one for opencode, running the installer x.ai documents.',
+      },
+    ],
+    actions: [
+      { kind: 'pin-models', label: 'Pin my models' },
+      { kind: 'install-grok', label: 'Install grok' },
+    ],
+  },
+  {
     // Carries 1.1.0's items as well as its own fixes: for most testers this is
     // the FIRST notice they will see (1.1.0's never appeared), and a note that
     // assumes they read the previous one would tell them about repairs to
