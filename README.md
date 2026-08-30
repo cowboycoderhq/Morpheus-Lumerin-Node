@@ -48,10 +48,20 @@ You will need both **MOR** (for stake / fees / session payment) and **ETH on BAS
 
 ## Quickstart
 
+The linked pages below are the official Morpheus docs — accurate for wallet
+setup, staking, and how the network works, regardless of which fork built
+your binary. **The "download from GitHub releases" step they describe does
+NOT apply to this fork**: this repo's only release
+([`desktop-v7.5.0-cc.1`](https://github.com/cowboycoderhq/Morpheus-Lumerin-Node/releases/tag/desktop-v7.5.0-cc.1))
+predates everything below, carries no desktop-app asset at all, and its
+`proxy-router` binaries predate the model-health and attestation work this
+branch just merged in from upstream. Build from source instead — it is the
+one path on this fork that is actually current.
+
 | Role | Start here |
 |------|-----------|
-| Consumer (chat) | [Consumer quickstart](https://nodedocs.mor.org/get-started/quickstart-consumer) |
-| Provider (host your own model) | [Provider quickstart](https://nodedocs.mor.org/get-started/quickstart-provider) |
+| Consumer (chat) | [`yarn app`](#build-the-desktop-app-from-source), then the [Consumer quickstart](https://nodedocs.mor.org/get-started/quickstart-consumer) from "Onboard" onward |
+| Provider (host your own model) | `cd proxy-router && make build`, then the [Provider quickstart](https://nodedocs.mor.org/get-started/quickstart-provider) from "Configure" onward |
 | TEE provider (SecretVM) | [SecretVM quickstart](https://nodedocs.mor.org/providers/full/secretvm-quickstart) |
 | Resale provider | [Resale overview](https://nodedocs.mor.org/providers/resale/overview) |
 | Prosumer / agent | [Prosumer overview](https://nodedocs.mor.org/prosumers/overview) |
