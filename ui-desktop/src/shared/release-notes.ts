@@ -30,6 +30,28 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.1.3',
+    headline: 'The setup freeze was never a freeze.',
+    items: [
+      {
+        title: 'Switching away no longer stops the app',
+        body:
+          'Setup takes a few minutes, so people switched to another window while they waited — and macOS stopped drawing this one. The spinner froze mid-turn and the app looked dead while it was in perfect health. It keeps running in the background now.',
+      },
+      {
+        title: 'A broken screen says so',
+        body:
+          'An error while drawing used to blank the whole app silently, with nothing written down. Now it shows what happened, records it, and offers a reload.',
+      },
+      {
+        title: 'No more early false alarm',
+        body:
+          '“Setup stopped making progress” could appear about half a minute before setup finished normally. It now waits well past a real slow start.',
+      },
+    ],
+    actions: [{ kind: 'pin-models', label: 'Pin my models' }],
+  },
+  {
     // Written for someone coming from 1.1.1, which they DID receive — so this
     // one leads with what changed rather than re-teaching the feature. The
     // 1.1.1 entry below still carries the full introduction for anyone who
