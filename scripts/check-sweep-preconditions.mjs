@@ -70,6 +70,29 @@
 //     line an agent lifts and a reader skims — so it has to carry its own
 //     qualifier. This is what catches the CLAUDE.md case above.
 //
+// WHAT IS IN SCOPE, AND THE THREE THINGS THAT USED TO BE STRUCTURALLY INVISIBLE
+// -----------------------------------------------------------------------------
+// Scope is per UNIT, not per file. Three categories could not produce a finding
+// at any wording, which meant `PASS: 0` was never evidence about them:
+//
+//   * GO SOURCE. A string the program PRINTS is read by a user in a terminal, a
+//     log file or a support paste — the one place this claim family reaches
+//     someone who never chose to read documentation. Printed strings in the
+//     scanned Go packages are now in scope; comments in the same file stay INFO,
+//     because their reader is already inside the code.
+//   * FRONTMATTER OUTSIDE docs/ai/**. `description:` was cut as its own unit
+//     "because an agent quotes it alone", then judged at the tier of the
+//     directory it sat in — so the same fragment was simultaneously held to
+//     travel alone and to be discharged by a paragraph it never travels with.
+//     Frontmatter now carries the assertion-dictating tier everywhere.
+//   * smart-contracts/docs/**. In SCAN_ROOTS but never in IN_SCOPE, so every
+//     claim in it was listed forever and could fail nothing. It is hand-written
+//     prose an integrator reads and cites; neither exclusion reason applied.
+//
+// Mermaid node labels joined the frontmatter tier for the same structural
+// reason — see DICTATES_ASSERTIONS, which also records where the line is drawn
+// and what was measured before drawing it.
+//
 // WHY THE SELF-TEST LOOKS LIKE THAT
 // ---------------------------------
 // The previous self-test called classify() directly on hand-typed strings. It
@@ -90,23 +113,92 @@ const ROOT = process.argv.find((a) => a.startsWith('--root='))?.slice(7)
 const SHOW_INFO = process.argv.includes('--info');
 
 // ---------------------------------------------------------------- scope ----
+// Scope is decided per UNIT, not per file, because one file can hold prose with
+// two different readers. A Go file is the case that forced it: a string the
+// program PRINTS and a comment beside it are not read by the same person.
+//
 // Prose a human or an agent reads as guidance. Deliberately NOT included, and
 // why (they are reported under --info so the enumeration stays complete):
 //   verify/**            audit records of what was true at a past commit
-//   proxy-router/docs/** generated swagger; a schema field describing the
-//                        mechanism, not an instruction to the reader
-//   *.go, *.sol, *.ts    source comments; same reason
-const IN_SCOPE = (rel) =>
+//   proxy-router/docs/** generated swagger, three generated copies of the
+//                        @Description annotations; `swag init` would overwrite
+//                        an edit made there, so the annotation is the editable
+//                        site and the copies are not
+//   Go COMMENTS          read by whoever is already editing that file, who has
+//                        the surrounding code; INFO, like the swagger copies
+//   *.sol, *.ts          source comments; same reason
+const PROSE_IN_SCOPE = (rel) =>
   (rel.startsWith(`docs${sep}`) && /\.mdx?$/.test(rel))
   || rel.startsWith(`.cursor${sep}rules${sep}`)
+  // smart-contracts/docs/** is hand-written prose an integrator reads and cites
+  // — an RFP and a runbook, not generated output. It was in SCAN_ROOTS but never
+  // in scope, so every claim in it was INFO forever: scanned, listed, and unable
+  // to fail anything. Neither exclusion reason above applies to it.
+  || rel.startsWith(`smart-contracts${sep}docs${sep}`)
   || ['README.md', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md'].includes(rel);
 
-// Files that dictate what an AI assistant ASSERTS, rather than describing a
+// Go packages whose printed strings are scanned. Bounded to the packages that
+// can print about this subject at all, so the walk stays cheap and the
+// enumeration stays readable.
+const GO_SOURCE_ROOTS = [
+  `proxy-router${sep}internal${sep}blockchainapi`,
+  `proxy-router${sep}internal${sep}proxyctl`,
+];
+const IS_SCANNED_GO = (rel) =>
+  /\.go$/.test(rel) && GO_SOURCE_ROOTS.some((r) => rel === r || rel.startsWith(r + sep));
+
+// `kind` may be a sub-unit kind ("frontmatter/bold-lead"); scope and tier are
+// decided by the kind it was cut from.
+const baseKind = (k) => String(k ?? 'para').split('/')[0];
+
+// A string the program prints is read by a user — in a terminal, in a log file,
+// in a support paste pasted into a chat. It is a page with a smaller frame, not
+// a lesser one, and it is the one instance of this claim family a user meets
+// without having chosen to read documentation at all. So printed strings in the
+// scanned Go packages are IN scope; comments in the very same file are not.
+const IN_SCOPE = (rel, kind) =>
+  PROSE_IN_SCOPE(rel) || (baseKind(kind) === 'go-log-string' && IS_SCANNED_GO(rel));
+
+// Text that dictates what an AI assistant ASSERTS, rather than describing a
 // mechanism to a human. In these, a bare "it is swept back" is itself a
 // violation: the assistant will repeat it unconditionally, and the reader of
 // that answer is told to do nothing without ever seeing the condition.
-const DICTATES_ASSERTIONS = (rel) =>
-  ['AGENTS.md', 'CLAUDE.md'].includes(rel)
+//
+// FRONTMATTER CARRIES THIS TIER WHEREVER IT APPEARS, not only under docs/ai/**.
+// units() already cuts one unit per frontmatter key "because an agent quotes
+// `description:` alone" — and that is precisely the definition of assertion-
+// dictating text: a fragment consumed detached from the body that would qualify
+// it. Mintlify emits `description:` as the page's <meta name="description">, so
+// it is what a search result shows, what a link preview shows, and what a
+// scraper lifts as the page summary; none of those carry the paragraph three
+// screens down. Conceding that for unit-splitting while withholding it for tier
+// was incoherent: it said the fragment travels alone AND that a qualifier
+// elsewhere on the page discharges it. It cannot be both.
+//
+// A MERMAID NODE LABEL CARRIES IT TOO, for the same structural reason and no
+// other. The header above already concedes that a mermaid label "is read in
+// isolation"; units() enforces it by cutting one unit per mermaid line. Inside a
+// rendered diagram there is no adjacent sentence a qualifier could live in — the
+// box is a graphic object — and an end-to-end flow diagram is not a component
+// inventory, it is a promise about the reader's own money: a box reading
+// "6. StakeClaimer auto-sweep after releaseAt" tells them step 6 happens to
+// them. Measured before adopting: across the 21 fenced mermaid blocks in this
+// repo it produces exactly one finding, the diagram the previous pass missed
+// while fixing its twin in docs/ai/.
+//
+// It stops there, and the stopping rule is not taste. Frontmatter and mermaid
+// labels are rendered into places that REMOVE the page — a <meta> tag, a search
+// snippet, a link preview, a box in an image. A table row, a heading and a list
+// item are still on the page, with prose either side, which is exactly the case
+// CLAIM_WINDOW already handles. Also measured: extending the tier to table rows,
+// headings, list items and callouts as well surfaces nothing further in this
+// corpus, so there is no evidence for it and it would only make a human page's
+// bare mechanism description fail — the thing this checker deliberately calls
+// INFO ("a component is not falsified by not running").
+const DICTATES_ASSERTIONS = (rel, kind) =>
+  baseKind(kind) === 'frontmatter'
+  || baseKind(kind) === 'mermaid-line'
+  || ['AGENTS.md', 'CLAUDE.md'].includes(rel)
   || rel.startsWith(`.cursor${sep}rules${sep}`)
   || rel.startsWith(`docs${sep}ai${sep}`);   // the whole agent-facing tree: these
                                              // pages declare themselves the
@@ -118,10 +210,16 @@ const SCAN_ROOTS = ['docs', '.cursor', 'README.md', 'AGENTS.md', 'CLAUDE.md', 'C
   // The @Description annotations in this package ARE the /blockchain/stakes/on-hold
   // text a user reads in Swagger UI; proxy-router/docs/{docs.go,swagger.json,
   // swagger.yaml} are three generated copies of them. Scanned so the enumeration
-  // names the file that can actually be edited. Out of IN_SCOPE, so INFO only:
-  // a Go comment is not a page, and `swag init` would overwrite a fix made in
-  // the generated copies.
-  'proxy-router/internal/blockchainapi'];
+  // names the file that can actually be edited, and the generated copies stay out
+  // of scope because `swag init` would overwrite a fix made in them.
+  //
+  // Within this package the two Go unit kinds part company: a PRINTED string is
+  // in scope (see IN_SCOPE), a comment is INFO.
+  'proxy-router/internal/blockchainapi',
+  // Where the claimer is CONSTRUCTED and started. Fact 1 of this checker is a
+  // claim about this file, so the file has to be readable by the checker that
+  // makes it.
+  'proxy-router/internal/proxyctl'];
 
 // ------------------------------------------------------------- matchers ----
 // The subject: is this unit talking about the day-locked-stake sweep at all?
@@ -153,6 +251,13 @@ const EXCULPATORY = [
   ['WITHOUT_ACTION', /\bwithout\b[^.;:]{0,40}?\b(manual|intervention|action|calling)\b/i],
   ['ON_ITS_OWN',     /\bon its own\b|\bby itself\b/i],
   ['HANDS_OFF',      /\bhands-?off\b/i],
+  // "anyone running a router never calls it by hand" is an exculpation, and it
+  // was invisible: `by hand` existed only as a Class S cue, where it means the
+  // opposite ("you have to call it by hand"). So the one phrasing that both
+  // smart-contracts/docs sites used to over-promise in tripped nothing. Measured
+  // when added: exactly one new finding in the whole corpus, and it converts two
+  // reverts that previously passed into failures.
+  ['NEVER_BY_HAND',  /\bnever\b[^.;:]{0,50}?\bby hand\b|\bnever\s+(has|have|need|needs)\s+to\s+(call|claim|submit|invoke|run|withdraw)\b/i],
 ];
 
 // Class A — ASSERTS THE SWEEP HAPPENS, with no exculpatory clause. For a human
@@ -360,9 +465,119 @@ function classify(body, { agentFile }) {
   return { verdict: 'info', cues, missing: missing.join(','), why: 'describes the mechanism; no exculpatory clause' };
 }
 
+// ------------------------------------------------------------- go units ----
+// Go prose has two readers, so it gets two unit kinds:
+//
+//   go-log-string  a literal the program PRINTS. A user meets it in a terminal,
+//                  a log file or a support paste. IN_SCOPE.
+//   go-comment     read by whoever is already editing the file. INFO.
+//
+// Splitting them is the whole point: collapsing the two would either let a bad
+// log line pass as "just a comment" or turn every stale comment into a blocking
+// violation, and the second is how a gate gets switched off.
+//
+// goMask blanks every string body and comment body in place, preserving offsets,
+// so a `(` inside a string cannot unbalance the statement scan and a `//` inside
+// a string cannot start a comment. Offsets survive, so the mask and the original
+// index the same bytes.
+function goMask(text) {
+  const out = text.split('');
+  const strings = [], comments = [];
+  const n = text.length;
+  const blank = (a, b) => { for (let k = a; k < b && k < n; k++) if (out[k] !== '\n') out[k] = ' '; };
+  let i = 0;
+  while (i < n) {
+    const c = text[i];
+    if (c === '/' && text[i + 1] === '/') {
+      let j = text.indexOf('\n', i); if (j < 0) j = n;
+      comments.push({ start: i, end: j, value: text.slice(i + 2, j) });
+      blank(i, j); i = j; continue;
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      let j = text.indexOf('*/', i + 2); j = j < 0 ? n : j + 2;
+      comments.push({ start: i, end: j, value: text.slice(i + 2, j - 2), block: true });
+      blank(i, j); i = j; continue;
+    }
+    if (c === '"') {
+      let j = i + 1, v = '';
+      while (j < n && text[j] !== '"' && text[j] !== '\n') {
+        if (text[j] === '\\') { v += ' '; j += 2; continue; }
+        v += text[j]; j++;
+      }
+      const end = Math.min(j + 1, n);
+      strings.push({ start: i, end, value: v });
+      blank(i, end); i = end; continue;
+    }
+    if (c === '`') {                              // raw string, may span lines
+      let j = text.indexOf('`', i + 1); if (j < 0) j = n - 1;
+      strings.push({ start: i, end: j + 1, value: text.slice(i + 1, j) });
+      blank(i, j + 1); i = j + 1; continue;
+    }
+    if (c === "'") {                              // rune literal
+      let j = i + 1;
+      while (j < n && text[j] !== "'" && text[j] !== '\n') { if (text[j] === '\\') { j += 2; continue; } j++; }
+      const end = Math.min(j + 1, n);
+      blank(i, end); i = end; continue;
+    }
+    i++;
+  }
+  return { masked: out.join(''), strings, comments };
+}
+
+// Calls whose string arguments reach a person: the logger, and the error text
+// that gets wrapped up to an HTTP response or printed on exit.
+const GO_PRINTS = /\.\s*(Infof?|Warnf?|Warningf?|Errorf?|Debugf?|Fatalf?|Panicf?|Printf?|Println)\s*\(|\b(fmt\.Errorf|fmt\.Printf|fmt\.Println|errors\.New)\s*\(/g;
+
+function goUnits(text) {
+  const { masked, strings, comments } = goMask(text);
+  // line number for a byte offset, without rescanning the file each time
+  const starts = [0];
+  for (let k = 0; k < text.length; k++) if (text[k] === '\n') starts.push(k + 1);
+  const lineOf = (off) => {
+    let lo = 0, hi = starts.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= off) lo = mid; else hi = mid - 1; }
+    return lo + 1;
+  };
+
+  const out = [];
+
+  // printed strings: one unit per call statement, all its literals joined, so a
+  // wrapped Warnf("... " + "...") is one thing a user reads, not two fragments.
+  GO_PRINTS.lastIndex = 0;
+  let m;
+  while ((m = GO_PRINTS.exec(masked)) !== null) {
+    const open = masked.indexOf('(', m.index);
+    if (open < 0) continue;
+    let depth = 0, close = masked.length;
+    for (let k = open; k < masked.length; k++) {
+      if (masked[k] === '(') depth++;
+      else if (masked[k] === ')') { depth--; if (depth === 0) { close = k; break; } }
+    }
+    const lits = strings.filter((st) => st.start > open && st.end <= close + 1).map((st) => st.value);
+    if (!lits.length) continue;
+    out.push({ kind: 'go-log-string', start: lineOf(open), end: lineOf(close), lines: [lits.join(' ')] });
+    GO_PRINTS.lastIndex = close;
+  }
+
+  // comments: contiguous // lines are one block; a /* */ is one on its own
+  let cur = null;
+  const flush = () => { if (cur && cur.lines.some((l) => l.trim())) out.push(cur); cur = null; };
+  for (const c of comments) {
+    const ln = lineOf(c.start);
+    if (c.block) { flush(); out.push({ kind: 'go-comment', start: ln, end: lineOf(c.end), lines: [c.value] }); continue; }
+    if (cur && ln === cur.end + 1) { cur.lines.push(c.value); cur.end = ln; continue; }
+    flush();
+    cur = { kind: 'go-comment', start: ln, end: ln, lines: [c.value] };
+  }
+  flush();
+
+  return out.sort((a, b) => a.start - b.start);
+}
+
 // ---------------------------------------------------------------- units ----
 // Split a document into the spans a reader can encounter on their own.
-function units(text) {
+function units(text, ext = 'md') {
+  if (ext === 'go') return goUnits(text);
   const lines = text.split('\n');
   const out = [];
   let cur = null;
@@ -469,15 +684,18 @@ function scan(root) {
     const rel = relative(root, abs);
     let text; try { text = readFileSync(abs, 'utf8'); } catch { continue; }
     scanned++;
-    const inScope = IN_SCOPE(rel);
-    if (inScope) scannedInScope++;
+    // File-level count, kept as the coarse "did the walk reach real prose"
+    // signal the pipeline leg asserts on. Per-unit scope is decided below.
+    if (PROSE_IN_SCOPE(rel)) scannedInScope++;
     if (!SUBJECT.test(text)) continue;
+    const ext = abs.slice(abs.lastIndexOf('.') + 1).toLowerCase();
 
-    for (const u of units(text)) {
+    for (const u of units(text, ext)) {
       for (const su of subUnits(u)) {
         const body = su.body;
         if (!SUBJECT.test(body)) continue;
-        const c = classify(body, { agentFile: DICTATES_ASSERTIONS(rel) });
+        const inScope = IN_SCOPE(rel, su.kind);
+        const c = classify(body, { agentFile: DICTATES_ASSERTIONS(rel, su.kind) });
         if (!c) continue;
 
         const rec = {
@@ -513,6 +731,10 @@ const SYNTHETIC_CASES = [
   ['violation', false, 'it does make the second call for you: its StakeClaimer sweeps matured stake automatically, so a manual claim is not required'],
   ['violation', false, 'the proxy-router sweeps it automatically every 10 minutes; you may also call `withdrawUserStakes` yourself'],
   ['violation', false, 'the StakeClaimer sweeps it back automatically. The wait is the day-lock, not a manual claim step.'],
+  // "never ... by hand" is an exculpation, not a requirement. Class S owns the
+  // words `by hand`; before NEVER_BY_HAND this sentence tripped nothing at all.
+  ['violation', false, 'The proxy-router auto-sweeps matured on-hold rows every 10 minutes, so anyone running a router never calls it by hand.'],
+  ['clean',     false, 'The proxy-router auto-sweeps matured on-hold rows every 10 minutes, but only while that router is running and only for the wallet it holds, so its operator never calls it by hand for their own stake; with the router off, or for stake held against a different wallet, nothing sweeps until a proxy-router holding that wallet runs - starting one claims it immediately on startup - and the manual call is the alternative.'],
   // one condition is not enough - the other case still strands the reader
   ['violation', false, 'a running proxy-router sweeps matured stake, so manual `withdrawUserStakes` is not required'],
   ['violation', false, 'the StakeClaimer withdraws only for its own wallet, so a manual claim is not required'],
@@ -535,6 +757,15 @@ const SYNTHETIC_CASES = [
   ['clean',     false, 'the StakeClaimer sweeps matured stake, so manual `withdrawUserStakes` is not required - but only while your own node is running and only for the wallet it holds; with the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs - starting one claims matured stake immediately on startup - and the manual call is the alternative'],
   ['clean',     true,  'Held stakes past their lock are auto-claimed back for you while your own node is running - with it stopped, or for stakes held against a different wallet, nothing sweeps until a proxy-router holding that wallet runs: starting one claims it immediately on startup, and the manual on-chain call is the alternative.'],
   ['clean',     false, 'A **running** proxy-router claims matured on-hold stakes automatically via its StakeClaimer, and only for its own wallet. There is no HTTP endpoint; manual claiming is the alternative. When the node is off or the stake belongs to another wallet, nothing sweeps until a proxy-router holding that wallet runs - starting one claims matured stake immediately on startup - so starting that node and the manual call are the two routes.'],
+
+  // CLAIM_WINDOW, and ONLY CLAIM_WINDOW. A 1,071-character unit with no bolded
+  // lead: the claim is at character 0 and its qualifier starts at 763, so the
+  // qualifier is real but does not travel with the claim. Removing the 600-char
+  // bound turns this into `clean` and changes nothing else in the suite - which
+  // is how it was verified to be the only case pinning that bound. Before this
+  // case, deleting CLAIM_WINDOW passed the self-test 41/41 (checked against
+  // 253a0f74, so the hole predates the widening).
+  ['violation', false, 'The StakeClaimer sweeps matured stake back to your wallet automatically, so no manual `withdrawUserStakes` call is needed. The on-hold queue is a per-user array on the Diamond and each row carries an amount and a release time. Rows are popped as they are withdrawn, so the array stays short in practice and the bounded loop is cheap. The read side is a view call that takes an iteration cap, and the write side pops every row that has matured. A row that has not matured is skipped rather than reverted, so a call that finds nothing due is a no-op. The amount in a row is computed from the seconds actually consumed in the final UTC day of the session. None of that changes with how the session ended, and none of it depends on which key submits the transaction. That happens only while your own node is running and only for the wallet it holds; with the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs - starting one claims matured stake immediately on startup - and the manual call is the alternative.'],
 
   // a rule that FORBIDS the claim is not the claim (AGENTS.md ends this way)
   ['clean',     true,  'Whatever was locked is swept back by the consumer\'s own running proxy-router, and only for the wallet that node holds - with the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs: starting one claims matured stake immediately on startup, and calling `withdrawUserStakes` themselves is the alternative. Never state the sweep unconditionally, and never state the manual call as the only route.'],
@@ -671,6 +902,48 @@ const FIXTURE_TREE = {
     + 'With the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs: '
     + 'starting one claims matured stake immediately on startup, and the manual call is the alternative.\n',
 
+  // Go, both halves in ONE file: the PRINTED string is in scope, the comment
+  // above it is not. A mutation that collapses the two kinds breaks one of the
+  // two assertions whichever way it collapses them.
+  'proxy-router/internal/blockchainapi/fx_claimer.go':
+    'package blockchainapi\n\n'
+    + '// The StakeClaimer sweeps matured stake back to the wallet automatically, so\n'
+    + '// no manual withdrawUserStakes call is needed.\n'
+    + 'func (s *StakeClaimer) fx(ctx context.Context) {\n'
+    + '\ts.log.Infof("%s wei of matured stake is swept back to your wallet automatically, no manual claim needed", hold)\n'
+    + '}\n',
+
+  // the second Go root, and a log line whose defect is the sole-remedy face
+  'proxy-router/internal/proxyctl/fx_proxyctl.go':
+    'package proxyctl\n\n'
+    + 'func fx() {\n'
+    + '\tlog.Warnf("stake is on-hold and this node holds a different wallet; you have to claim it by hand")\n'
+    + '}\n',
+
+  // hand-written prose an integrator reads and cites, in a tree that used to be
+  // scanned-but-never-in-scope
+  'smart-contracts/docs/fx-rfp.md':
+    '# Fixture RFP\n\n'
+    + '5. **On-hold funds need a second transaction, but not a manual one.** The router auto-sweeps matured rows every 10 minutes, so anyone running a router never calls it by hand.\n',
+
+  // frontmatter in a NON-agent directory: still assertion-dictating, because a
+  // description is what a meta tag and a search snippet carry without the body
+  'docs/concepts/fx-frontmatter.mdx':
+    '---\n'
+    + 'title: Fixture\n'
+    + 'description: "The day-locked slice is swept back to your wallet by the StakeClaimer after releaseAt."\n'
+    + '---\n\n'
+    + '# Body\n\n'
+    + 'Only while your own node is running and only for the wallet it holds; otherwise nothing sweeps until a proxy-router holding that wallet runs - starting one claims it immediately on startup - and the manual call is the alternative.\n',
+
+  // a mermaid node in a NON-agent directory: same tier, same reason
+  'docs/concepts/fx-mermaid-node.mdx':
+    '# Fixture\n\n'
+    + '```mermaid\n'
+    + 'flowchart TB\n'
+    + '  Hold --> Claim["6. StakeClaimer auto-sweep after releaseAt"]\n'
+    + '```\n',
+
   // out of scope: same defect, must land in info and NEVER in violations
   'verify/fx-audit.md':
     '# Fixture audit\n\n'
@@ -683,8 +956,14 @@ const FIXTURE_EXPECTED = [
   '.cursor/rules/fx.mdc:3',
   'docs/ai/fx-agent.mdx:3',
   'docs/ai/fx-agent.mdx:8',
+  'docs/concepts/fx-frontmatter.mdx:3',
+  'docs/concepts/fx-mermaid-node.mdx:5',
   'docs/concepts/fx-mermaid.mdx:5',
   'docs/concepts/fx-note.mdx:3',
+  'proxy-router/internal/blockchainapi/fx_claimer.go:6',
+  'proxy-router/internal/proxyctl/fx_proxyctl.go:4',
+  'smart-contracts/docs/fx-rfp.md:3',
+  'smart-contracts/docs/fx-rfp.md:3/bold-lead',
 ];
 
 function writeTree(dir, tree) {
@@ -717,6 +996,27 @@ function legPipeline(fail) {
     // scope really is a filter, not decoration
     if (r.violations.some((v) => v.file.startsWith('verify'))) fail('pipeline: an out-of-scope file produced a VIOLATION');
     if (!r.info.some((v) => v.file.startsWith('verify'))) fail('pipeline: the out-of-scope file produced no INFO record either - it was not scanned');
+
+    // the Go split, both directions. Asserted separately from the expected-set
+    // comparison so the failure message says WHICH way it collapsed.
+    const goRel = 'proxy-router/internal/blockchainapi/fx_claimer.go'.split('/').join(sep);
+    if (!r.violations.some((v) => v.file === goRel && v.kind === 'go-log-string')) {
+      fail('pipeline: the printed Go string produced no violation - Go units, the Go roots or the Go scope leg is broken');
+    }
+    if (r.violations.some((v) => v.kind === 'go-comment')) fail('pipeline: a Go COMMENT was raised to a violation - the two Go readers were collapsed');
+    if (!r.info.some((v) => v.file === goRel && v.kind === 'go-comment')) fail('pipeline: the Go comment produced no INFO record - goUnits never cut a comment unit');
+
+    // frontmatter and mermaid carry the agent tier OUTSIDE docs/ai
+    const fmRel = 'docs/concepts/fx-frontmatter.mdx'.split('/').join(sep);
+    if (!r.violations.some((v) => v.file === fmRel && v.kind === 'frontmatter')) {
+      fail('pipeline: a frontmatter description outside docs/ai produced no violation - the frontmatter tier is gone');
+    }
+    const mmRel = 'docs/concepts/fx-mermaid-node.mdx'.split('/').join(sep);
+    if (!r.violations.some((v) => v.file === mmRel && v.kind === 'mermaid-line')) {
+      fail('pipeline: a mermaid node label outside docs/ai produced no violation - the mermaid tier is gone');
+    }
+    const scRel = 'smart-contracts/docs/fx-rfp.md'.split('/').join(sep);
+    if (!r.violations.some((v) => v.file === scRel)) fail('pipeline: smart-contracts/docs produced no violation - it is scanned but out of scope again');
     return got.length;
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
@@ -751,6 +1051,45 @@ function legWiring(fail) {
   for (const k of ['frontmatter', 'table-row', 'component']) {
     if (!kinds.includes(k)) fail(`wiring: units() no longer produces a "${k}" unit (got ${kinds.join(',')})`);
   }
+
+  // --- the three widened categories, asserted structurally ---
+  for (const r of ['smart-contracts/docs', 'proxy-router/internal/blockchainapi', 'proxy-router/internal/proxyctl']) {
+    if (!SCAN_ROOTS.includes(r)) fail(`wiring: SCAN_ROOTS no longer contains "${r}"`);
+  }
+  const rfp = join('smart-contracts', 'docs', 'inference-contract-enhancements-rfp.md');
+  if (!IN_SCOPE(rfp)) fail('wiring: smart-contracts/docs is scanned but out of scope again - it can no longer fail anything');
+  if (IN_SCOPE(join('proxy-router', 'docs', 'swagger.json'))) fail('wiring: generated swagger became IN scope - a fix there would be overwritten by `swag init`');
+
+  const goFile = join('proxy-router', 'internal', 'blockchainapi', 'stake_claimer.go');
+  if (!IN_SCOPE(goFile, 'go-log-string')) fail('wiring: a printed Go string is out of scope - the Go leg is disabled');
+  if (IN_SCOPE(goFile, 'go-comment')) fail('wiring: a Go COMMENT is in scope - the two Go readers were collapsed');
+  if (IN_SCOPE(join('proxy-router', 'internal', 'lib', 'x.go'), 'go-log-string')) fail('wiring: an unscanned Go package is in scope - GO_SOURCE_ROOTS lost its bound');
+
+  const human = join('docs', 'concepts', 'sessions-stake-close-recover.mdx');
+  if (!DICTATES_ASSERTIONS(human, 'frontmatter')) fail('wiring: frontmatter outside docs/ai lost the assertion-dictating tier');
+  if (!DICTATES_ASSERTIONS(human, 'frontmatter/bold-lead')) fail('wiring: a frontmatter SUB-unit lost the tier - baseKind() is broken');
+  if (!DICTATES_ASSERTIONS(human, 'mermaid-line')) fail('wiring: a mermaid node label outside docs/ai lost the assertion-dictating tier');
+  if (DICTATES_ASSERTIONS(human, 'para')) fail('wiring: an ordinary paragraph on a human page is being treated as agent-facing');
+  if (DICTATES_ASSERTIONS(human, 'table-row')) fail('wiring: the tier spread to table rows - a gate that fires on everything fires on nothing');
+
+  // goUnits must cut BOTH kinds out of one file, or the split above is theatre
+  const gu = goUnits('package p\n\n// swept back automatically, no manual claim needed\nfunc f() {\n\tlog.Infof("swept back automatically, no manual claim needed")\n}\n');
+  const gk = gu.map((x) => x.kind);
+  for (const k of ['go-comment', 'go-log-string']) {
+    if (!gk.includes(k)) fail(`wiring: goUnits() no longer produces a "${k}" unit (got ${gk.join(',') || 'nothing'})`);
+  }
+  // a `(` and a `//` inside a printed string must not derail the statement scan
+  const gm = goUnits('package p\nfunc f() {\n\tlog.Warnf("see http://x/y (bracketed) and more")\n}\n');
+  if (!gm.some((x) => x.kind === 'go-log-string' && x.lines[0].includes('bracketed'))) {
+    fail('wiring: goMask lost a string containing "//" or "(" - the mask is not masking');
+  }
+  if (gm.some((x) => x.kind === 'go-comment')) fail('wiring: goMask treated a "//" INSIDE a string literal as a comment');
+  // the extension filter has to admit .go at all
+  const goProbe = mkdtempSync(join(tmpdir(), 'sweep-go-'));
+  try {
+    writeFileSync(join(goProbe, 'a.go'), 'package p\n');
+    if (!walk(goProbe, []).some((p) => p.endsWith('a.go'))) fail('wiring: walk() no longer picks up .go');
+  } finally { rmSync(goProbe, { recursive: true, force: true }); }
 }
 
 function selftest() {
@@ -811,7 +1150,7 @@ function verifyFixtures() {
     } catch (e) { console.log(`FAIL  ${src}: cannot read source (${e && e.message})`); bad++; continue; }
 
     const ln = Number(lineS);
-    const live = units(doc).find((u) => u.start <= ln && (u.end ?? u.start) >= ln);
+    const live = units(doc, file.endsWith('.go') ? 'go' : 'md').find((u) => u.start <= ln && (u.end ?? u.start) >= ln);
     if (!live) { console.log(`FAIL  ${src}: no unit covers that line any more`); bad++; continue; }
     const liveBody = live.lines.join(' ');
     const same = liveBody === text;
