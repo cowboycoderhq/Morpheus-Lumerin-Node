@@ -651,12 +651,12 @@ const Dashboard = ({
             </StatText>
           </StatCard>
 
-          {/* Stake that closing a session EARLY time-locked. Rendered only when
-              there IS something locked — a permanent "0 MOR on hold" tile would
-              be noise, and this must read as an answer to "where did my MOR
-              go?", which is only a question when some went.
-              It sits next to Staked Balance deliberately: that is the tile a
-              user stares at when their MOR seems to have vanished. */}
+          {/* Stake that any close landing before releaseAt time-locked — not
+              only an early one. Rendered only when there IS something locked —
+              a permanent "0 MOR on hold" tile would be noise, and this must read
+              as an answer to "where did my MOR go?", which is only a question
+              when some went. It sits next to Staked Balance deliberately: that
+              is the tile a user stares at when their MOR seems to have vanished. */}
           {onHoldMor && (
             <StatCard data-testid="stakes-on-hold-tile">
               <StatIcon>
