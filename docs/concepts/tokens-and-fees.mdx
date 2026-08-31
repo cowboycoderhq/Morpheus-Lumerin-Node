@@ -37,8 +37,14 @@ In **pool mode**, the session duration is derived from the staked amount: the sy
   <Accordion title="Marketplace bid fee">
     Non-refundable fee charged on **every** `postModelBid`, not once: `0.3` MOR on Base
     mainnet, `0` on Base Sepolia — testnet bids are free. Read the live value with
-    `getBidFee()`; `config_base_sepolia.json:6` does not track it — it still lists
-    `300000000000000000`, which the live Sepolia contract does not charge.
+    `getBidFee()` — and both figures here are such a reading, taken 2026-08-31 (mainnet
+    block `50701626`, Sepolia block `46212156`), recorded under [Contract minimums](/providers/full/register-onchain#contract-minimums).
+    That reading settles the config-vs-docs disagreement, in the chain's favour:
+    `config_base_sepolia.json:6` still lists `300000000000000000` where the chain
+    returns `0`, so the **config is the stale artifact**, not this page. It went
+    stale when `906bb602` re-pointed `lumerinProtocol` at a different Diamond
+    without re-running `setMarketplaceBidFee` against it — the sole writer of the
+    stored fee (`Marketplace.sol:40-45`) — leaving it at its storage default.
     `config_base_mainnet.json:6` does match the live mainnet fee (and no deploy
     path reads that file, so it is not a source either way).
     Owner-settable via `setMarketplaceBidFee` (`Marketplace.sol:40`).
@@ -62,10 +68,15 @@ In **pool mode**, the session duration is derived from the staked amount: the sy
 The bid fee is charged on **every** `postModelBid`, not once — reposting during
 configuration adds a further fee each time. Both the fee and the stakes are
 owner-settable on chain; the figures above are what the deployed contracts return,
-not what the deploy configs say. No deploy path reads `config_base_mainnet.json`
+not what the deploy configs say. They were read on 2026-08-31 — `getBidFee()` and
+`getProviderMinimumStake()` on both networks, recorded with their block numbers
+under [Contract minimums](/providers/full/register-onchain#contract-minimums).
+Where chain and config differ, that reading settles it in the chain's favour: no
+deploy path reads `config_base_mainnet.json`
 (`deploy/helpers/config-parser.ts:20` hardcodes the Sepolia file), and
-`config_base_sepolia.json` still lists a bid fee of `300000000000000000` that the
-live Base Sepolia contract does not charge.
+`config_base_sepolia.json:6` still lists a bid fee of `300000000000000000` that
+the live Base Sepolia contract does not charge — a stale config, not a doc
+error.
 
 Plus you must approve at least that much MOR to the Diamond contract. See [Register on chain](/providers/full/register-onchain).
 

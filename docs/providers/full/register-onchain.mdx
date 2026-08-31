@@ -17,10 +17,37 @@ After your proxy-router is running, register on the BASE Diamond contract. **Pre
 
 | Item | Value (wei) | Display |
 |------|-------------|---------|
-| `providerMinStake` | `200000000000000000` (Base mainnet) · `200000000000000000` (Base Sepolia) | `0.2` MOR · `0.2` MOR |
+| `providerMinStake` | `200000000000000000` (Base mainnet) · `200000000000000000` (Base Sepolia) | `0.2` MOR · `0.2` MOR — `getProviderMinimumStake()` readings of 2026-08-31, below |
 | `modelMinStake` | `100000000000000000` (both) | `0.1` MOR |
-| `marketplaceBidFee` | `300000000000000000` (Base mainnet) · `0` (Base Sepolia) | `0.3` MOR · `0` — Base Sepolia bids are free; owner-settable via `setMarketplaceBidFee`, read live with `getBidFee()` |
+| `marketplaceBidFee` | `300000000000000000` (Base mainnet) · `0` (Base Sepolia) | `0.3` MOR · `0` — Base Sepolia bids are free; `getBidFee()` readings of 2026-08-31, below; owner-settable via `setMarketplaceBidFee`, so re-read before budgeting |
 | `bidMinPricePerSecond` | `10000000000` (Base mainnet — the deploy input is named `marketplaceMinBidPricePerSecond`; note that **no deploy path reads `config_base_mainnet.json`** — `deploy/helpers/config-parser.ts:20` hardcodes `deploy/data/config_base_sepolia.json` for every migration — so check the deployed contract for the live bound) | `0.00000001` MOR/sec — on Base Sepolia read `getMinMaxBidPricePerSecond()` for the live floor, `121052630917` wei/sec as of 2026-08-27; both bounds are owner-settable |
+
+<Note>
+**Read from the deployed contracts on 2026-08-31.** These are readings, not deploy
+inputs. Read-only `eth_call` against each network's Diamond:
+
+| Network | Block | `getBidFee()` | `getProviderMinimumStake()` |
+|---------|-------|---------------|-----------------------------|
+| Base mainnet (chain `8453`) | `50701626` | `300000000000000000` = `0.3` MOR | `200000000000000000` = `0.2` MOR |
+| Base Sepolia (chain `84532`) | `46212156` | `0` — bids are free | `200000000000000000` = `0.2` MOR |
+
+`config_base_mainnet.json:4,6` agrees with both mainnet readings. On Base Sepolia
+the stake agrees and **the bid fee does not**: `config_base_sepolia.json:6` lists
+`300000000000000000` where the chain returns `0`. The chain is the authority, so
+the config is the stale artifact and the pages saying Sepolia bids are free are
+correct.
+
+Why the config drifted, from git history: `906bb602` re-pointed
+`lumerinProtocol` at a different Diamond, changing only `fundingAccount`,
+`lumerinProtocol` and `owner`. `setMarketplaceBidFee` is the sole writer of the
+stored fee (`Marketplace.sol:40-45`) — `__Marketplace_init` (`:29-38`) never sets
+it, and only `1_full_protocol.migration.ts:117` calls it, on a protocol that
+migration deploys. Nothing applied it to the Diamond the config was re-pointed
+at, so `bidFee` sits at its storage default of zero.
+
+Both values are owner-settable and can change without a commit. Treat the block
+numbers as the expiry date on these figures and re-read before budgeting.
+</Note>
 
 ## What you'll need
 
