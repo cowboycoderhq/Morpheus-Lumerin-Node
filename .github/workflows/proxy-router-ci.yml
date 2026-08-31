@@ -1,0 +1,299 @@
+name: proxy-router CI
+
+# The proxy-router Go module has never been compiled or tested by CI.
+#
+# The nearby claim "CI runs no Go tests" is wrong and worth correcting, because
+# the corrected version is what makes this job necessary rather than redundant:
+# CI *does* run `go test` — at .github/actions/docker_test/action.yml:93 — but it
+# does so after `cd .github/actions/docker_test`, i.e. against a SEPARATE
+# throwaway module that exercises a running container's HTTP API. It never
+# compiles proxy-router/internal/... at all. So the accurate statement is that
+# the proxy-router module has no CI coverage, and a Go-test job existing
+# elsewhere in the tree is exactly why nobody noticed.
+#
+# Scope: this repository only, on every branch.
+#
+# Both jobs below carry:
+#     if: github.repository == 'cowboycoderhq/Morpheus-Lumerin-Node'
+#
+# THE LITERAL NAMES THIS REPOSITORY, NOT UPSTREAM — do not "correct" it to match
+# build.yml. build.yml guards 19 of its 21 jobs with the same expression naming
+# 'MorpheusAIs/Morpheus-Lumerin-Node'; the other two gate on github.ref instead,
+# so "every job in build.yml is repository-guarded" would be wrong — 19 of 21 is
+# the measured figure. But this workflow does not exist upstream. It was added
+# here and lives only here, so a guard carrying upstream's name matches nothing
+# anywhere the file is installed: it would not scope this workflow, it would
+# disable it. That was tried, and measured — both jobs went from 11 and 9
+# executed steps to a run reporting `steps: []`, skipped on this repository's
+# own pushes. A green tick that is green because it did not run is the failure
+# mode this whole suite exists to prevent, so the guard names the repository
+# that actually runs it.
+#
+# The guard sits on the JOBS, not the trigger, because `on:` accepts no `if:` —
+# a workflow cannot restrict itself by repository at the trigger level, which is
+# why build.yml expresses the repository half per-job and only the branch half in
+# `on:`. Ungated, this workflow ran on every branch of every fork, spending a
+# forker's Actions minutes on a suite they never added.
+#
+# Why guarded at all, when .github/workflows/opsec-check.yml is deliberately
+# UNGATED? Both comments object to the same thing — a guard naming a repository
+# that is not this one — and neither forbids naming this one: opsec-check needs
+# to run "on THIS fork's own pushes, not only on the upstream repo", which this
+# guard also delivers. They diverge only on OTHER people's forks, and the cost
+# decides it. opsec-check is an identity-leak backstop whose stated concern is
+# that nothing STOP it running, so extra copies of the tree cost nothing worth
+# saving. This is a build-and-test suite, and running it on a stranger's fork
+# spends their Actions minutes on a suite they never added. Guarding removes a
+# cost the leak scanner does not have.
+#
+# On a pull_request, github.repository is the BASE repository, so a pull request
+# opened from someone else's fork INTO this one still runs both jobs. The guard
+# excludes other people's own pushes and their fork-internal pull requests, not
+# their contributions here.
+#
+# build.yml's BRANCH restriction is deliberately not copied. It limits its push
+# trigger to main/test/dev/cicd/*; this stays on '**' because the proxy-router
+# module has no other CI coverage, and a feature branch is precisely where a
+# build or vet break should surface. Gating the repository fixes the fork
+# problem; gating the branches too would reopen the gap this workflow closes.
+#
+# Consequence, stated rather than hidden: on someone else's fork both jobs are
+# SKIPPED, not green — a skipped job reports no status it did not earn. A fork
+# contributor runs the same checks locally:
+#     cd proxy-router && go build ./... && go test ./...
+#     bash scripts/check-spec-fresh.sh
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# A superseded run is cancelled rather than left burning Actions minutes on a
+# commit nobody is waiting for. Same key as docs.yml:23-25 and build.yml:55-57.
+#
+# github.ref is safe to group on because push and pull_request occupy DISJOINT
+# ref namespaces: measured on this repository, the push run checks out
+# refs/remotes/origin/pr/docs-accuracy and the pull_request run checks out
+# refs/remotes/pull/1/merge. A group can therefore never span two branches or
+# two pull requests -- only successive events of the SAME kind on the same one,
+# which is exactly what should supersede.
+#
+# It deliberately does NOT collapse the push/pull_request pair that both fire
+# on one commit while a PR is open: two refs, two groups, both still run. That
+# is not pure waste -- they test different trees (branch head vs merge-with-
+# base), so one can be red while the other is green. Collapsing them would need
+# a key like `github.head_ref || github.ref_name`, which flattens a fork PR's
+# head branch onto a bare branch name and can then cancel a run on a DIFFERENT
+# branch that happens to share it. Not a trade worth making for this workflow.
+concurrency:
+  group: proxy-router-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  go:
+    name: proxy-router Go build, vet and tests
+    if: github.repository == 'cowboycoderhq/Morpheus-Lumerin-Node'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Matches the toolchain build.yml already uses and proxy-router/go.mod
+          # declares. A newer minor can add vet checks that fail existing code,
+          # which is a real signal but not one this job should discover by
+          # surprise on an unrelated push.
+          go-version: '1.25.x'
+          cache-dependency-path: proxy-router/go.sum
+
+      # ------------------------------------------------------------------
+      # The enforced set is DERIVED, not enumerated: `go list ./...` minus a
+      # short quarantine. A package added tomorrow is therefore covered on the
+      # day it lands, with nobody having to remember to add it. An enumerated
+      # allow-list is how a suite quietly stops covering the new code.
+      #
+      # QUARANTINE — four pre-existing failures, none introduced here. They are
+      # not hidden: the "known-broken" step below runs every one of them, and
+      # FAILS if any has started passing, so a quarantine cannot outlive the
+      # defect it names.
+      #
+      # The two guards in THIS step are narrower and are not that check: they
+      # only prove each entry still NAMES a package that `go list` returns and a
+      # test that exists exactly once. A name can resolve long after the defect
+      # behind it was fixed, which is why the staleness verdict lives below.
+      #
+      #   pkg  proxy-router/test
+      #        test/ai_engine_test.go:16 calls aiengine.NewAiEngine with the old
+      #        four-argument signature; the constructor now takes six. The
+      #        package does not compile, so it cannot be skipped test-by-test.
+      #   vet  internal/aiengine
+      #        prodia_sd.go:79 and prodia_sdxl.go:79 pass a non-constant format
+      #        string to fmt.Errorf. This is a `go vet` finding only — the
+      #        package's TESTS pass, and they are enforced below.
+      #   test TestRating (internal/blockchainapi/rating_test.go:13)
+      #        panics: index out of range [0] with length 0 at
+      #        internal/blockchainapi/service.go:343. The package's other four
+      #        tests are enforced.
+      #   test TestGetSet (internal/repositories/keychain/keychain_test.go:5)
+      #        asserts a value it never sets — the kc.Set call is commented out
+      #        — so it cannot pass on any platform.
+      # ------------------------------------------------------------------
+      - name: Resolve the enforced package set
+        working-directory: proxy-router
+        run: |
+          set -euo pipefail
+          QUARANTINED_PKGS='github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/test'
+          VET_QUARANTINED='github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/aiengine'
+          SKIPPED_TESTS='TestRating TestGetSet'
+
+          go list ./... | sort > /tmp/all.txt
+          printf '%s\n' $QUARANTINED_PKGS $VET_QUARANTINED | sort > /tmp/quarantine.txt
+
+          # A quarantine entry that no longer names a real package is a stale
+          # exclusion, and a stale exclusion is indistinguishable from a typo
+          # that silently drops a package from the enforced set. Fail on it.
+          comm -13 /tmp/all.txt /tmp/quarantine.txt > /tmp/stale.txt
+          if [ -s /tmp/stale.txt ]; then
+            echo "::error::quarantine names package(s) that no longer exist — remove them:"
+            sed 's/^/  /' /tmp/stale.txt
+            exit 1
+          fi
+          # Same for the skipped test names: once the test is deleted or renamed
+          # the skip is dead weight that would silently swallow a future test of
+          # the same name.
+          for t in $SKIPPED_TESTS; do
+            # `|| true` matters: grep exits 1 when it matches nothing, and under
+            # `set -e -o pipefail` that killed this step before it could print
+            # WHY — a nonzero exit with no message, which is the failure shape
+            # this whole workflow exists to stop producing.
+            n=$( { grep -rc "func ${t}(" --include='*_test.go' . 2>/dev/null || true; } | awk -F: '{s+=$2} END {print s+0}')
+            if [ "$n" -ne 1 ]; then
+              echo "::error::skipped test ${t} matches ${n} definitions (want exactly 1) — update the quarantine"
+              exit 1
+            fi
+          done
+
+          # Two enforced sets, because the two quarantines are different shapes.
+          #   test_pkgs  — everything except the package that will not compile
+          #                and the package whose vet finding is quarantined.
+          #                Run with go test's DEFAULT vet subset ON: printf,
+          #                atomic, bool and friends are part of what "the tests
+          #                pass" means, and turning vet off everywhere to
+          #                accommodate one package would drop that subset for
+          #                the other 42.
+          #   novet_pkgs — internal/aiengine, whose tests pass but whose printf
+          #                vet finding does not. Its tests stay enforced; only
+          #                the vet half is reported instead of enforced.
+          comm -23 /tmp/all.txt <(printf '%s\n' $QUARANTINED_PKGS $VET_QUARANTINED | sort) > /tmp/test_pkgs.txt
+          printf '%s\n' $VET_QUARANTINED > /tmp/novet_pkgs.txt
+          # An empty enforced set would make every step below pass by testing
+          # nothing — the exact shape of a gate that cannot fail.
+          test -s /tmp/test_pkgs.txt  || { echo "::error::enforced package set is empty"; exit 1; }
+          test -s /tmp/novet_pkgs.txt || { echo "::error::vet-off package set is empty"; exit 1; }
+          echo "module   : $(go list -m)"
+          echo "packages : $(wc -l < /tmp/all.txt) total, $(wc -l < /tmp/test_pkgs.txt) enforced with vet, $(wc -l < /tmp/novet_pkgs.txt) enforced with vet off"
+          echo "skipped  : $SKIPPED_TESTS"
+
+      - name: Build every package
+        working-directory: proxy-router
+        run: go build ./...
+
+      - name: Run the tests
+        working-directory: proxy-router
+        # `xargs < file`, not `xargs -a file`: -a is a GNU extension and these
+        # steps are also runnable on a developer's macOS box.
+        run: xargs go test -count=1 -skip '^(TestRating|TestGetSet)$' < /tmp/test_pkgs.txt
+
+      - name: Run internal/aiengine's tests with vet off
+        working-directory: proxy-router
+        # Its tests pass; its printf vet finding does not. Quarantining the
+        # whole package would have discarded passing tests to route around one
+        # vet line, so the exclusion is narrowed to the half that is broken —
+        # and that half is reported in the step below.
+        run: xargs go test -vet=off -count=1 < /tmp/novet_pkgs.txt
+
+      - name: Known-broken, reported — and the quarantine must still be real
+        working-directory: proxy-router
+        # Two jobs, and they are separate on purpose.
+        #
+        # REPORT: every quarantined defect is RUN and its output printed. A
+        # quarantined failure that nothing executes becomes a failure nobody can
+        # see, and the backlog then looks exactly like a clean tree.
+        #
+        # VERDICT: the exit code carries STALENESS, not the failures themselves.
+        # Green while every quarantined defect still reproduces; RED the moment
+        # one starts passing, because from then on the exclusion is silently
+        # dropping a package or a test from the enforced set. An earlier draft
+        # ended in `exit 0` under continue-on-error, so it was permanently green
+        # while its comment claimed it was expected to be red — a step whose
+        # colour carried no information. Self-retiring: the exclusion goes red the
+        # moment it stops being justified, so it cannot outlive its reason.
+        run: |
+          set +e
+          stale=''
+
+          echo "--- proxy-router/test — quarantined: does not compile (stale NewAiEngine call)"
+          go test ./test/... > /tmp/kb-pkg.log 2>&1; rc=$?
+          tail -20 /tmp/kb-pkg.log
+          [ "$rc" -eq 0 ] && stale="$stale pkg:proxy-router/test"
+
+          echo "--- internal/aiengine — quarantined: printf vet finding only; its TESTS are enforced above"
+          go vet -printf ./internal/aiengine/ > /tmp/kb-vet.log 2>&1; rc=$?
+          cat /tmp/kb-vet.log
+          [ "$rc" -eq 0 ] && stale="$stale vet:internal/aiengine"
+
+          echo "--- TestRating — quarantined: panics in rateBids"
+          go test -vet=off -count=1 -run '^TestRating$' ./internal/blockchainapi/ > /tmp/kb-rating.log 2>&1; rc=$?
+          tail -12 /tmp/kb-rating.log
+          [ "$rc" -eq 0 ] && stale="$stale test:TestRating"
+
+          echo "--- TestGetSet — quarantined: asserts a value it never sets"
+          go test -vet=off -count=1 -run '^TestGetSet$' ./internal/repositories/keychain/ > /tmp/kb-getset.log 2>&1; rc=$?
+          tail -12 /tmp/kb-getset.log
+          [ "$rc" -eq 0 ] && stale="$stale test:TestGetSet"
+
+          # Reported, never enforced: standalone `go vet` runs analysers that go
+          # test's default subset does not, so this is a wider view of the same
+          # tree and not a quarantine entry. It has no bearing on the verdict.
+          echo "--- go vet ./... (wider analyser set — reported only)"
+          go vet ./... 2>&1 | tail -25
+
+          if [ -n "$stale" ]; then
+            echo "::error::a quarantined defect now PASSES, so the exclusion is stale:$stale"
+            echo "Remove it from the 'Resolve the enforced package set' step so the package or test rejoins the enforced set."
+            exit 1
+          fi
+          echo "quarantine still real: 4 of 4 quarantined defects still reproduce"
+
+  spec-fresh:
+    name: OpenAPI spec matches the annotations
+    if: github.repository == 'cowboycoderhq/Morpheus-Lumerin-Node'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: proxy-router/go.sum
+
+      - name: Install swag
+        # PINNED. swag's output is not stable across versions, so an unpinned
+        # install turns this gate red on the day upstream releases — a failure
+        # about the tool wearing the costume of a failure about the spec.
+        # Bumping this pin means regenerating proxy-router/docs/ in the same
+        # commit; the gate will say so.
+        run: go install github.com/swaggo/swag/cmd/swag@v1.16.4
+
+      - name: Prove the detector fires before trusting its verdict
+        run: bash scripts/check-spec-fresh.sh --selftest
+
+      - name: proxy-router/docs must match `make swagger`'s own swag output
+        run: bash scripts/check-spec-fresh.sh

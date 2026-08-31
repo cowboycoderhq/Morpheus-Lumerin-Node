@@ -10,7 +10,7 @@ This is the shortest path to chat with a remote model on Morpheus. For a full wa
 
 <Steps>
   <Step title="Download a release">
-    Grab the latest **Desktop Application** for your OS from the [GitHub releases page](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/releases). Current releases ship installers (`.dmg` / `.AppImage` / portable `.exe`) — not a zip archive and not `mor-launch`. Mainnet builds have no suffix; testnet builds end in `-test`. Asset names look like (version will differ):
+    Grab the latest **Desktop Application** for your OS from the [GitHub releases page](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/releases). Current releases ship installers (`.dmg` / `.AppImage` / portable `.exe`) — not a zip archive and not `mor-launch`. The **release tag** carries a branch suffix for non-mainnet builds (`VTAG=v${VFULL}-${RNAME}`, `.github/workflows/build.yml:283`), but the **asset filenames do not** — they use the bare version (`build.yml:3027,3091,3155,3220,3305`). Identify a testnet build by the release it hangs under, not by the filename. Asset names look like (version will differ):
 
     | OS | File |
     |----|------|
@@ -43,9 +43,9 @@ This is the shortest path to chat with a remote model on Morpheus. For a full wa
     </Tabs>
   </Step>
   <Step title="Let the app fetch its components">
-    On every OS, the first launch (and the first launch after an update) shows a **Starting services** screen. The app downloads the proxy-router first (required), then optional local AI / IPFS pieces, and starts the **Proxy Router** before optional services so onboarding is not blocked if local tinyllama or IPFS fails.
+    On every OS, the first launch (and the first launch after an update) shows the setup wizard, titled **Setting up your AI assistant** (`SetupWizard.tsx:293`; it replaced the older developer-grade "Starting services…" list). The app downloads the proxy-router first (required), then optional local AI / IPFS pieces, and starts the **Proxy Router** before optional services so onboarding is not blocked if the local model or IPFS fails.
 
-    One item, **Container Runtime** (Docker), is only *detected*, never installed: it is required solely for containerized agent features. If a service fails or you don't need it — no Docker installed, for example — click **Skip** to continue into the app; **Retry** re-runs the failed steps.
+    The setup wizard does not display a card for Docker. Docker is checked in the background by the orchestrator for containerized agent features; its availability is never surfaced to the user in the wizard (per `phases.ts`).
   </Step>
   <Step title="Onboard the UI">
     In MorpheusUI, accept the terms, set a password, and either create a new wallet or recover an existing one with your mnemonic. Save the mnemonic somewhere safe.
@@ -54,7 +54,7 @@ This is the shortest path to chat with a remote model on Morpheus. For a full wa
     Send `MOR` and `ETH` on BASE to the wallet address shown in the lower-left of the UI. See [Networks and tokens](/get-started/networks-and-tokens).
   </Step>
   <Step title="Open a session and chat">
-    Click **Chat → Change Model**, pick a remote model, click **Open Session**, stake at least `5` MOR, and prompt away. To close early, expand the session line and click the **X** next to it.
+    Open **Chat → New chat**, pick a model from the **Marketplace** section, then on **Select payment method** set the **Session length** and click **Stake** — the stake follows from the length and the bid price, and prompt away. To close early, open the history drawer's **Sessions** tab, click **Close** next to the session and confirm.
   </Step>
 </Steps>
 

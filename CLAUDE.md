@@ -1,19 +1,24 @@
-# CLAUDE.md — Morpheus Lumerin desktop client (Aurora branch)
+# CLAUDE.md — Morpheus Lumerin desktop client (Aurora reskin lineage)
 
-You are on **`pr3-reskin`**, the current best version. It is pr2's function +
-Aurora's look + the good parts of `crypto-version`. It lives on the PRIVATE
-staging remote (`cowboycoder` → `morpheus-lumerin-node-staging`). Read
+This describes the Aurora reskin — pr2's function + Aurora's look + the good
+parts of `crypto-version`. That work landed on `pr3-reskin`, which is now fully
+contained in **`stake-duration`**, the distribution branch (`origin/HEAD` points
+there). `pr3-reskin` still exists on `origin` but is historical. Confirm what you
+are actually checked out on with `git status -sb`; do not trust this line. Read
 "Invariants" before changing anything visual — several of those lines were paid
 for with real defects.
 
 ## Getting set up (read this before the first build fails)
-- **Where it lives**: private remote `cowboycoder` →
-  `github.com/cowboycoderhq/morpheus-lumerin-node-staging`, branch `pr3-reskin`,
-  tagged `aurora-v1`. `ccfork` is the PUBLIC fork — resolve remotes by URL, never by
+- **Where it lives**: one remote, `origin` →
+  `github.com/cowboycoderhq/Morpheus-Lumerin-Node`. It is a **PUBLIC** fork —
+  everything you push is visible, so check `git config user.email` before the first
+  commit. Distribution branch is `stake-duration`. There is no `cowboycoder` remote,
+  no `ccfork` remote, and no `aurora-v1` tag. Still resolve remotes by URL, never by
   name, before any push (`git remote -v`).
-- **Deps**: in the operator's checkout `ui-desktop/node_modules` is a SYMLINK to the
-  sibling clone (`Morpheus-Lumerin-Node/ui-desktop/node_modules`) — it is machine-local
-  and not in git. A fresh clone has nothing: run `cd ui-desktop && npm install`.
+- **Deps**: `ui-desktop/node_modules` is a real directory, machine-local and not in
+  git. A fresh clone has nothing: run `cd ui-desktop && yarn install`. Use **yarn**,
+  not npm — `ui-desktop/package.json` pins `"packageManager": "yarn@1.22.22"`, only `yarn.lock`
+  is committed, and `.gitignore` bans `ui-desktop/package-lock.json`.
   The isolate kit brings its own: `cd ui-desktop/tools/ui-verify && npm install &&
   npx playwright install chromium`. The kit mounts REAL components, so it needs the
   app's deps installed too.
@@ -31,7 +36,10 @@ for with real defects.
 
 ## The two verification kits — both are load-bearing
 - `ui-desktop/tools/ui-verify` (`npm run verify`) — logic checks, the **frozen-value
-  gate**, and 9 isolation cases that mount REAL components in Playwright.
+  gate**, and 24 isolation cases that mount REAL components in Playwright
+  (`ui-desktop/tools/ui-verify/isolate/cases/`, excluding the `_mount.jsx`
+  helper). The `ui-desktop/` prefix matters: there is a second, unrelated
+  `tools/ui-verify/` at the repo root, and it has no `isolate/` directory.
   - `npm run frozen` — every colour-valued declaration must derive from `props.theme`.
     Queries the INVARIANT, not a list of literals; scans `.jsx/.tsx/.html/.css`;
     splits findings by reachability from the entry. Live findings FAIL, dead code is
@@ -95,11 +103,30 @@ real profile so the boot wizard health-checks instead of re-downloading ~2GB.
 ## Open items (next session starts here)
 1. **`VerifyMnemonicStep` has no isolate case.** It is the highest-risk flow in the
    app (the ledger's words) and is now materially new code (tap-a-word). Do this first.
-2. **MOR on hold is invisible and unclaimable.** The Diamond has
-   `getUserStakesOnHold` + `withdrawUserStakes`; they exist ONLY in the generated Go
-   bindings — no proxy-router endpoint, no UI. Closing a session early locks the
-   used-compute portion until `startOfTheDay(closedAt) + 1 day`, and the app neither
-   shows it nor returns it. Every user who closes early sees MOR vanish.
+2. **MOR on hold is shown in the app and claimed automatically by the StakeClaimer inside a running proxy-router, and only for its own wallet.** The proxy-router includes a StakeClaimer that automatically claims matured on-hold MOR and returns it to the wallet every 10 minutes — but only while that node is
+   running, and only for the wallet it holds (`proxyctl.go:237-240` starts the
+   claimer inside `Proxy.run`; `service.go:1118-1124` withdraws for
+   `GetMyAddress` alone). The Diamond has
+   `getUserStakesOnHold` + `withdrawUserStakes`; only the READ side has a
+   proxy-router route (`controller.go:75`, the single stake route in the tree) —
+   `withdrawUserStakes` is reached by the claimer or by calling the Diamond
+   yourself, never over HTTP. The app DOES display them (`Dashboard.jsx:658-666`, with a
+   per-tranche release schedule at `:527-553`). Closing a session day-locks the
+   final UTC day's used-compute portion until `startOfTheDay(min(closedAt,
+   endsAt)) + 1 day` (`SessionRouter.sol:296-298`), and that MOR is now
+   recoverable. That lock is **conditional**: the contract enters the
+   branch only while `block.timestamp < releaseAt_` (`SessionRouter.sol:305`), so a
+   genuinely late close — a session that ended at noon on day 1 and is closed on
+   day 4 — skips it, leaves `userStakeToLock_` at its initialiser of 0 (`:302`) and
+   transfers the entire remaining stake at once (`:314-315`), locking nothing. Do
+   not state the day-lock unconditionally.
+   The proxy-router's StakeClaimer returns it to the wallet automatically while
+   that node is running, and only for the wallet it holds; with the node off, or
+   for sessions opened from a different wallet, nothing sweeps until a
+   proxy-router holding that wallet runs — starting one claims matured stake
+   immediately on startup (`stake_claimer.go:87-89` calls `claimOnce` before the
+   ticker loop), and calling `withdrawUserStakes` yourself is the alternative,
+   never the only route.
    Diamond `0x6aBE1d282f72B474E54527D93b979A4f64d3030a` (Base, chainId 8453).
 3. **Settings tabs unmount on switch** → a typed-but-unsaved ETH node URL is
    discarded and `getConfig()` re-fires. react-bootstrap defaulted to keeping both

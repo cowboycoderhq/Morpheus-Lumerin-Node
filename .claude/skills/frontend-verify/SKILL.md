@@ -9,7 +9,7 @@ Compiling is not rendering: green typecheck/build was the sole verification for 
 
 ## Scope the run (blast radius, not the whole app)
 
-Full stack on every state the change touches — the Phase-A state list ∩ changed controls/surfaces. Theme/token change → all routes, all themes. One component → its routes and states only.
+Full stack on every state the change touches — the Phase-A state list ∩ changed controls/surfaces. Theme/token change → all routes, all themes, but for branches that touch onboarding, Login, or wallet-reset, the all-routes verification must use the name-shim described in CLAUDE.md to avoid the real profile; the runner currently does not support the shim, so adapt (e.g., by manually launching the shimmed app and running the audit separately) or exclude those routes. One component → its routes and states only.
 
 ## Steps
 

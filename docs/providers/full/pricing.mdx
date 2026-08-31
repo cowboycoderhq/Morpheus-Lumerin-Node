@@ -15,8 +15,16 @@ This page is for the **provider** side — pricing for the on-chain bid. Pricing
 ## Units and floors
 
 - `pricePerSecond` is denominated in **wei of MOR** (1 MOR = 10^18 wei).
-- Floor: `bidPricePerSecondMin = 10000000000` wei/sec = `0.00000001` MOR/sec ≈ `0.0006` MOR/min ≈ `0.036` MOR/hour at the floor.
-- There is no upper limit, but rating algorithms and competing bids will push consumers away from over-priced bids.
+- Floor: `bidMinPricePerSecond = 10000000000` wei/sec on Base mainnet = `0.00000001` MOR/sec ≈ `0.0000006` MOR/min ≈ `0.000036` MOR/hour at the floor.
+- On Base Sepolia the floor is not a fixed constant: it is whatever `getMinMaxBidPricePerSecond()` returns, `121052630917` wei/sec as of 2026-08-27. An owner call set that value after the contract was deployed; the number's origin is not recorded — it is not something the deploy performs (`1_full_protocol.migration.ts:105-109` passes the config figure straight through). A redeploy would therefore *not* reproduce it — the floor would come up at whatever `config_base_sepolia.json:7` holds and would have to be set again by its owner. Either way the literal here can be stale, so read it before you bid (see below).
+- Ceiling: `bidMaxPricePerSecond`, enforced on chain — `postModelBid` reverts with `MarketplaceBidPricePerSecondInvalid` outside the bounds (`smart-contracts/contracts/diamond/facets/Marketplace.sol:80-84`). Neither network's ceiling has been verified against the chain: read it as the second value returned by `getMinMaxBidPricePerSecond()`, not from a config. The deploy configs are inputs to a future deployment rather than readings — no deploy path reads `config_base_mainnet.json` at all (`deploy/helpers/config-parser.ts:20` hardcodes the Sepolia file), and the Sepolia config's figure was superseded on chain: `setMinMaxBidPricePerSecond(min, max)` is the only writer of either bound and writes **both in one call** (`Marketplace.sol:47-61`), so the owner call that moved the Sepolia floor above necessarily overwrote the ceiling at the same time. No ceiling reading has been recorded for either network. Within the bounds, rating algorithms and competing bids push consumers away from over-priced bids.
+
+Read the live bounds before you bid — on Base Sepolia the floor is whatever the owner last set, and a redeploy would reset it to the deploy config's figure rather than recompute it, so a literal copied from these docs can be stale:
+
+```bash
+cast call <DiamondContract> "getMinMaxBidPricePerSecond()(uint256,uint256)" \
+  --rpc-url https://sepolia.base.org     # Base mainnet: https://mainnet.base.org
+```
 
 ## Step 1 — Look at competing bids
 
@@ -61,15 +69,15 @@ curl -X POST 'http://localhost:8082/blockchain/bids' \
   -H 'Content-Type: application/json' \
   -d '{
     "modelID": "0xYOUR_MODELID",
-    "pricePerSecond": "10000000000"
+    "pricePerSecond": "10000000000000"
   }'
 ```
 
-The contract reverts if `pricePerSecond` is below the floor.
+The contract reverts if `pricePerSecond` is below the floor **or above the ceiling** — `Marketplace.sol:80-84` reverts `MarketplaceBidPricePerSecondInvalid` anywhere outside `[bidMinPricePerSecond, bidMaxPricePerSecond]`. That check runs before the bid fee is transferred (`Marketplace.sol:86`), so an out-of-bounds bid costs gas, not stake.
 
 ## Step 4 — Watch and adjust
 
-There is no auto-adjust. To change a price you **delete the old bid and post a new one**. Both calls cost gas; the **`postModelBid`** call **also charges a non-refundable `marketplaceBidFee` of `0.3 MOR`** every time (see "How bid posts cost MOR" below). Don't repost more often than you have to.
+There is no auto-adjust. When a provider calls `postModelBid` for the same provider+model and a previous active bid exists, the contract automatically deletes the old bid in the same transaction (see `Marketplace.sol` nonce > 0 logic). Only one call is needed to update the price, not two separate transactions. The `postModelBid` call still charges the non-refundable `marketplaceBidFee` every time (`0.3` MOR on Base mainnet, live on-chain; `0` on Base Sepolia, where bids are free) (see "How bid posts cost MOR" below). Don't repost more often than you have to.
 
 Things to watch:
 
@@ -79,13 +87,13 @@ Things to watch:
 
 ## How bid posts cost MOR
 
-Every time you call `postModelBid`, the marketplace charges a non-refundable **`marketplaceBidFee = 0.3 MOR`** ([`Marketplace.sol`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/smart-contracts/contracts/diamond/facets/Marketplace.sol)). This fee is **separate from**, and on top of:
+Every time you call `postModelBid`, the marketplace charges a non-refundable **`marketplaceBidFee`** — `0.3` MOR on Base mainnet and `0` on Base Sepolia, where bids are free. Both are `getBidFee()` readings taken 2026-08-31 — mainnet block `50701626`, Sepolia block `46212156`, recorded under [Contract minimums](/providers/full/register-onchain#contract-minimums) — not deploy inputs. That reading settles the long-standing disagreement with the deploy configs, and it settles it against them: no deploy path reads `config_base_mainnet.json` (`deploy/helpers/config-parser.ts:20` hardcodes the Sepolia file), and `config_base_sepolia.json:6` still lists `300000000000000000` where the live Sepolia contract returns `0`. The config is the stale artifact — `906bb602` re-pointed `lumerinProtocol` at a different Diamond and never re-ran `setMarketplaceBidFee` against it, so the stored fee stayed at its default. It is **not a constant**: `setMarketplaceBidFee` is `onlyOwner` ([`Marketplace.sol:40`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/smart-contracts/contracts/diamond/facets/Marketplace.sol)), so check the deployed value before budgeting. This fee is **separate from**, and on top of:
 
-- the refundable **provider stake** (`0.2` MOR) you posted at registration,
+- the refundable **provider stake** (`0.2` MOR on Base mainnet — live on-chain value, `0.2` on Sepolia) you posted at registration,
 - the refundable **model stake** (`0.1` MOR) you posted when registering the model,
 - BASE gas (paid in ETH on BASE).
 
-If you post → tweak → post → tweak → … six times during configuration, you've paid `~1.8 MOR` in non-refundable bid fees, plus gas. That's the most common reason new providers see "I lost ~2 MOR during setup": **it wasn't slashed, it was bid fees**. See also [Quickstart → "What can cost you MOR during setup"](/providers/full/quickstart#what-can-cost-you-mor-during-setup).
+If you post → tweak → post → tweak → … six times during configuration, you've paid `~1.8 MOR` on Base mainnet in non-refundable bid fees, plus gas. On Base Sepolia those same six posts cost `0` in fees, because the Sepolia bid fee is zero — only gas applies. That's the most common reason new providers report losing MOR during setup: **it wasn't slashed, it was bid fees**. See also [Quickstart → "What can cost you MOR during setup"](/providers/full/quickstart#what-can-cost-you-mor-during-setup).
 
 ## What about "stake-for-liquidity" rewards?
 

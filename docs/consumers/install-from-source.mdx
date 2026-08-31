@@ -11,7 +11,7 @@ This guide builds the proxy-router from source and walks through the API-only co
 
 ## Pre-requisites
 
-- An ERC-20 wallet on BASE with MOR + ETH (use a top-level, not derived, address). **Never share your private key.**
+- An ERC-20 wallet on BASE with MOR + ETH (any account works — the import flow lets you pick from 10 derived accounts). **Never share your private key.**
 - Basic Auth credentials for the local API. On first start the proxy-router writes `admin:<password>` to `.cookie` next to the binary — use those credentials in Swagger (**Authorize**) and in every curl below. See [API auth](/reference/api-auth).
 
 ## TL;DR
@@ -38,7 +38,7 @@ This guide builds the proxy-router from source and walks through the API-only co
 
 <Steps>
   <Step title="Install OS dependencies">
-    `git` (https://git-scm.com), `go` 1.22+ (https://golang.org).
+    `git` (https://git-scm.com), `go` 1.25+ (https://golang.org) — `proxy-router/go.mod:3` requires `go 1.25.0`; CI pins `1.25.x` and `proxy-router/Dockerfile:2` uses `golang:1.25` — and `jq` (https://jqlang.github.io/jq/), which the end-to-end script at the bottom of this page pipes through to read the wallet address, the model ids, and `sessionID` out of the JSON responses, and `curl` (https://curl.se), which drives every API call on this page. `curl` ships with macOS and with most Linux distributions, but is absent from minimal container images.
   </Step>
   <Step title="Clone and enter the repo">
     ```bash
@@ -51,9 +51,27 @@ This guide builds the proxy-router from source and walks through the API-only co
     cp .env.example .env
     vi .env
     ```
+
+<Warning>
+**Set your own API password before starting.** `.env.example` ships
+`COOKIE_CONTENT=admin:admin`, and that becomes the Basic Auth credential for the
+local API. Either **delete the line** — the proxy-router then generates a random
+32-character password on first start (`internal/system/auth.go:226-232`) — or set
+it to `admin:<your-own-password>`.
+
+Either way the credential is written to `.cookie` (default `./.cookie`, next to
+the binary — `proxy-router/internal/config/config.go:212`) with `0600` permissions. **Read the generated
+password with `cat .cookie`**; the file contains a single `admin:<password>`
+line, and that is what you enter in Swagger's **Authorize** box and in every
+`curl -u` below.
+
+The file is only written when it does **not** already exist (`auth.go:215`), so
+if you have started the router before, delete `.cookie` first or the change has
+no effect.
+</Warning>
     Set at minimum:
     - `WALLET_PRIVATE_KEY=` — your wallet's private key.
-    - `ETH_NODE_ADDRESS=wss://...` — recommended: an Alchemy/Infura BASE WSS endpoint.
+    - `ETH_NODE_ADDRESS=https://...` — recommended: an Alchemy/Infura BASE HTTPS endpoint.
     Reference: [Env: proxy-router](/reference/env-proxy-router).
   </Step>
   <Step title="Build and start">
@@ -74,10 +92,14 @@ In Swagger: **Authorize** → run `POST /blockchain/approve`. Via curl (replace 
 
 ```bash
 curl -X POST \
-  'http://localhost:8082/blockchain/approve?spender=0x6aBE1d282f72B474E54527D93b979A4f64d3030a&amount=3' \
+  'http://localhost:8082/blockchain/approve?spender=0x6aBE1d282f72B474E54527D93b979A4f64d3030a&amount=3000000000000000000' \
   -H 'Authorization: Basic <base64(user:pass)>' \
   -H 'accept: application/json' -d ''
 ```
+
+<Warning>
+**`amount` is in base units, not whole tokens.** It is passed to the ERC-20 `approve` call verbatim with no decimal scaling (`blockchainapi/service.go:1047`), and the token has 18 decimals. `amount=3` approves 3 base units — roughly 10⁻¹⁸ of a token — leaving the allowance effectively zero so every later session-open fails. Three whole tokens is `3000000000000000000`.
+</Warning>
 
 ## C. Query for a model
 
@@ -130,13 +152,13 @@ The response is OpenAI-compatible SSE.
 AUTH='Authorization: Basic <base64(user:pass)>'
 SPENDER=0x6aBE1d282f72B474E54527D93b979A4f64d3030a
 
-curl -X POST "http://localhost:8082/blockchain/approve?spender=$SPENDER&amount=3" \
+curl -X POST "http://localhost:8082/blockchain/approve?spender=$SPENDER&amount=3000000000000000000" \
   -H "$AUTH" -H 'accept: application/json' -d ''
 curl -s 'http://localhost:8082/wallet' -H "$AUTH" | jq .address
 curl -s 'http://localhost:8082/blockchain/models' -H "$AUTH" \
   | jq -r '.models[] | "\(.Id), \(.Name)"'
 SESSION=$(curl -s -X POST 'http://localhost:8082/blockchain/models/<modelId>/session' \
-  -H "$AUTH" -H 'Content-Type: application/json' -d '{"sessionDuration":600}' | jq -r .sessionId)
+  -H "$AUTH" -H 'Content-Type: application/json' -d '{"sessionDuration":600}' | jq -r .sessionID)
 curl -X POST 'http://localhost:8082/v1/chat/completions' \
   -H "$AUTH" -H "session_id: $SESSION" -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"tell me a joke"}],"stream":true}'

@@ -231,7 +231,7 @@ func (p *Proxy) run(ctx context.Context, prKey lib.HexString) error {
 		return p.sessionExpiryHandler.Run(errCtx)
 	})
 
-	// Sweep back stake that an early session close time-locked, once it matures.
+	// Sweep back stake that any close landing before releaseAt time-locked, once it matures.
 	// Waits for the TCP server the same way afterStart does, so the wallet is
 	// actually ready before we try to read its address.
 	g.Go(func() error {

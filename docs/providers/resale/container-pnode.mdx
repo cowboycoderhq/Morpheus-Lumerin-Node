@@ -14,12 +14,12 @@ For full mechanics (volumes, env files, ports, build), follow [Provider Docker](
 
 | Aspect | Full P-Node | Resale P-Node |
 |--------|-------------|---------------|
-| `apiUrl` | Internal/private model URL | Upstream's chat-completions URL |
+| `apiUrl` | Internal/private model URL | Upstream API endpoint URL (depends on `apiType`) |
 | `apiKey` | Usually omitted | Required (your upstream account key) |
 | `concurrentSlots` | Bound by your hardware | Bound by your upstream rate limits |
 | Model `tee` tag | Optional (for TEE) | Don't use — you can't attest the upstream |
 | `endpoint` (on-chain) | Same | Same — must be publicly reachable |
-| Subnet provider stake | Same `10000` MOR if applicable | Same |
+| Subnet provider stake | *(no such tier)* | Same |
 
 ## Example `models-config.json` for a resale node
 

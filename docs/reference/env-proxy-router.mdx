@@ -1,24 +1,54 @@
 ---
 title: "Env: proxy-router"
-description: "Every environment variable consumed by the proxy-router, with mainnet/testnet defaults and explicit precedence rules where two variables overlap."
+description: "Most environment variables consumed by the proxy-router, including DOCKER_HOST, DOCKER_API_VERSION, DOCKER_CERT_PATH, and DOCKER_TLS_VERIFY, with mainnet/testnet defaults and explicit precedence rules where two variables overlap. (IPFS_DISABLED, IPFS_MULTADDR, and MULTICALL3_ADDR are omitted from this page.)"
 audience: ["provider-full", "provider-resale", "prosumer", "developer"]
 product: ["proxy-router"]
 last_verified: "v7.9.0"
 source: "docs/proxy-router.all.env"
 ---
 
-The proxy-router is configured through `.env` (or container env vars). This page documents every variable. The canonical `.env.example` lives in the repo at [`proxy-router/.env.example`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/.env.example) and the full annotated dump at [`docs/proxy-router.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/proxy-router.all.env).
+The proxy-router is configured through `.env` (or container env vars). This page documents most variables consumed by the proxy-router, including Docker-related environment variables. It omits IPFS_DISABLED, IPFS_MULTADDR, and MULTICALL3_ADDR (defined in config.go). The canonical `.env.example` lives in the repo at [`proxy-router/.env.example`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/.env.example) and the annotated dump (which is complete) at [`docs/proxy-router.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/proxy-router.all.env).
+
+## Docker client variables
+
+The proxy-router uses the Docker client to interact with the Docker daemon. The following environment variables are consumed by the Docker client (via `client.FromEnv`):
+
+### `DOCKER_HOST`
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `DOCKER_HOST` | URL of the Docker host. | `unix:///var/run/docker.sock` |
+
+### `DOCKER_API_VERSION`
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `DOCKER_API_VERSION` | Override the Docker API version. | Auto-detect |
+
+### `DOCKER_CERT_PATH`
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `DOCKER_CERT_PATH` | Path to directory containing client certificates. | (not set) |
+
+### `DOCKER_TLS_VERIFY`
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `DOCKER_TLS_VERIFY` | Enable TLS verification (set to `1` to enable). | (not set) |
 
 <Note>
 Defaults below are from the source of truth (`proxy-router/internal/config/config.go`). When in doubt, the source wins.
 </Note>
 
-## Conflicting / overlapping variables — read this first
+## Conflicting / overlapping variables in the proxy-router — read this first
 
-Several pairs of variables look like they do "the same thing." They don't. The proxy-router resolves each pair with a specific precedence rule, and getting it wrong is a common cause of "I changed the env but nothing happened."
+Several of the proxy-router's variables look like they do "the same thing." They don't. The proxy-router resolves each pair with a specific precedence rule, and getting it wrong is a common cause of "I changed the env but nothing happened."
 
 <Warning>
-For every `*_CONTENT` ↔ `*_PATH` pair below, the **`*_CONTENT`** variable is a **one-shot file seeder**, not a runtime override. It only takes effect when the corresponding file **does not exist**. After the first successful start the file exists, and changing the `*_CONTENT` env on subsequent runs has **no effect** until you delete the file at `*_PATH`.
+For the `*_CONTENT` ↔ `*_PATH` pairs listed below, the **`*_CONTENT`** variable is a **one-shot file seeder** (except for `RATING_CONFIG_CONTENT`, which is a fallback if the file cannot be read). For the seeder pairs, it only takes effect when the corresponding file **does not exist**. After the first successful start the file exists, and changing the `*_CONTENT` env on subsequent runs has **no effect** until you delete the file at `*_PATH`.
+
+**A loader returning an error is not the same as the router exiting.** Each `*Loader.Init` below returns a Go error when its file is missing, but whether that error stops startup is decided by the call site in [`proxy-router/cmd/main.go`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/cmd/main.go), not by the loader. For the models and agent pairs `proxy-router/cmd/main.go:311-321` logs the error at **warn** level and carries on with an empty set. The rating config never reaches that decision on a missing file: `LoadRating` swallows the read error itself, falls back, and returns no error, so **a missing — or malformed — rating file starts the router too** (`proxy-router/internal/config/rating_config.go:36-47`). What exits non-zero at `proxy-router/cmd/main.go:277-280` is a rating config that was successfully *chosen* and then rejected by the parser: a malformed `RATING_CONFIG_CONTENT`, an unrecognised `algorithm`, or no `algorithm` key. Read the call site before concluding a missing file is fatal, and read the `RATING_CONFIG_PATH` section below before concluding a malformed one is.
 </Warning>
 
 ### `COOKIE_FILE_PATH` ↔ `COOKIE_CONTENT`
@@ -28,6 +58,7 @@ For every `*_CONTENT` ↔ `*_PATH` pair below, the **`*_CONTENT`** variable is a
 | File at `COOKIE_FILE_PATH` already exists | Reads the file. **`COOKIE_CONTENT` is silently ignored.** |
 | File does not exist + `COOKIE_CONTENT` is set | Writes `COOKIE_CONTENT` to the file (`username:password\n`), then reads it. |
 | File does not exist + `COOKIE_CONTENT` is unset | Generates a random 32-char password for `admin`, writes it to the file. |
+| File does not exist + `COOKIE_CONTENT` has no `:` separator | **Hard startup failure.** `EnsureConfigFilesExist` returns `invalid cookie content` (`auth.go:222-224`) and `main.go:222-224` returns it, so the process exits non-zero. `COOKIE_CONTENT` must be `username:password`, not a bare password. |
 
 Source: [`proxy-router/internal/system/auth.go`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/internal/system/auth.go) (`EnsureConfigFilesExist`).
 
@@ -42,18 +73,29 @@ Source: [`proxy-router/internal/system/auth.go`](https://github.com/MorpheusAIs/
 |-----------|---------------------------|
 | File at `MODELS_CONFIG_PATH` already exists | Reads the file. **`MODELS_CONFIG_CONTENT` is silently ignored.** |
 | File does not exist + `MODELS_CONFIG_CONTENT` is set | Writes `MODELS_CONFIG_CONTENT` to the file, then reads it. |
-| File does not exist + `MODELS_CONFIG_CONTENT` is unset | Logs a warning and runs with an empty model registry. |
+| File does not exist + `MODELS_CONFIG_CONTENT` is unset | `ModelConfigLoader.Init` returns `models config file not found` (`models_config.go:85`) — but the proxy-router **starts anyway**. `main.go:311-315` logs `failed to load model config, running with empty` at **warn** level and continues; no later exit is gated on it. The node comes up healthy, answers `/healthcheck`, and serves **zero models**. |
 
-Source: [`proxy-router/internal/config/models_config.go`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/internal/config/models_config.go) (`ModelConfigLoader.Init`).
+Sources: [`proxy-router/internal/config/models_config.go`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/internal/config/models_config.go) (`ModelConfigLoader.Init`, which produces the error) and [`proxy-router/cmd/main.go`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/cmd/main.go) lines 311-315 (which decides what happens to it).
 
 **Practical implications**
 
 - Use `MODELS_CONFIG_CONTENT` (single-line JSON) in TEE/Akash deployments where you can't mount a volume.
 - To update models on a self-hosted node, edit the JSON file directly and restart — don't bump `MODELS_CONFIG_CONTENT`. See [models-config.json](/reference/models-config).
+- **Do not use "the process is up" as evidence that your models loaded.** A missing, unreadable, or malformed `models-config.json` produces one warn line and a running router with an empty model set — not a crash-loop. Confirm the models are actually there with `GET /healthcheck` (the `models` array), and grep the startup log for `failed to load model config, running with empty`. Do **not** rely on the `models config loaded from file` info line as the all-clear — `models_config.go:98` emits it before the format is validated, so it also appears on a config that is then rejected.
 
 ### `AGENT_CONFIG_PATH` ↔ `AGENT_CONFIG_CONTENT`
 
-Same `*_CONTENT`-only-seeds-the-file rule as the two above. Source: [`proxy-router/internal/config/agents_config.go`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/internal/config/agents_config.go).
+Same `*_CONTENT`-only-seeds-the-file rule as the two above. Leaving `AGENT_CONFIG_PATH` unset does not disable the loader — it falls back to `agents-config.json` in the working directory. If that file is absent and `AGENT_CONFIG_CONTENT` is unset, `AgentConfigLoader.Init` returns `agents config file not found` (`agents_config.go:71`) — but, exactly as with the models pair, `main.go:317-321` downgrades that to a warning and **the router starts with an empty agent set**. Sources: [`proxy-router/internal/config/agents_config.go`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/internal/config/agents_config.go) (the loader) and [`proxy-router/cmd/main.go`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/cmd/main.go) lines 317-321 (the call site).
+
+### `RATING_CONFIG_PATH` ↔ `RATING_CONFIG_CONTENT`
+
+`RATING_CONFIG_CONTENT` is used as a fallback if the file at `RATING_CONFIG_PATH` cannot be read; it does **not** create or modify the file. If the file is unreadable **and** `RATING_CONFIG_CONTENT` is unset, `LoadRating` falls back to a built-in default config (`default` algorithm, empty allowlist) and logs `failed to load rating config file, using defaults` — a missing rating config is **not** fatal (`rating_config.go:36-47`).
+
+The inversion against the models/agent pairs is narrower than it looks, so take it in two steps.
+
+**Step 1 — choosing the text.** Missing, unreadable and *malformed* all fail identically here: `lib.ReadJSONFile` validates the bytes as JSON before returning them (`proxy-router/internal/lib/json.go:46-50`), so a typo is indistinguishable from a missing file and takes the same fallback branch (`proxy-router/internal/config/rating_config.go:37-44`). **A malformed `rating-config.json` does not take the node down.** It starts on `RATING_CONFIG_CONTENT`, or on `RatingConfigDefault` — empty `providerAllowlist`, **no denylist**, i.e. allow-all (`proxy-router/internal/config/rating_config.go:10-25`). A denylist you rely on to avoid paying certain providers therefore disappears on a stray comma while the node stays up and healthy, so **never read "it started" as "my rating config parsed"**; read the warn line `failed to load rating config file, using defaults`, then check for `provider filtering is enabled` vs `provider filtering is disabled` (`proxy-router/internal/rating/rating_factory.go:69-86`).
+
+**Step 2 — parsing the chosen text.** Whatever step 1 settled on is parsed by `rating.NewRatingFromConfig`, and three outcomes exit non-zero through `proxy-router/cmd/main.go:277-280`: a malformed `RATING_CONFIG_CONTENT` that was used because the file was unreadable; an `algorithm` that is present but unrecognised; and a config with **no** `algorithm` key — the empty string matches no `case`, and the error reads `unknown rating algorithm:` with nothing after the colon (`proxy-router/internal/rating/rating_factory.go:100-117`). Sources: [`proxy-router/internal/config/rating_config.go`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/internal/config/rating_config.go) and [`proxy-router/cmd/main.go`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/cmd/main.go) lines 277-280.
 
 ### `AUTH_CONFIG_FILE_PATH` (no inline twin)
 
@@ -64,14 +106,14 @@ Path to `proxy.conf`, which holds `rpcauth=` and `rpcwhitelist=` lines. **There 
 | Situation | What the proxy-router does |
 |-----------|---------------------------|
 | `WALLET_PRIVATE_KEY` is set | Uses it. The keychain is **not** read. |
-| `WALLET_PRIVATE_KEY` is unset and the OS supports a keychain (macOS) | Reads / writes the key from the system keychain. |
-| Neither | Refuses to start signing transactions; read-only operations still work. |
+| `WALLET_PRIVATE_KEY` is unset | Reads / writes the key from the OS credential store. **This is not macOS-only:** `proxy-router/internal/repositories/keychain/keychain.go:6` uses `github.com/zalando/go-keyring`, which ships macOS Keychain, Windows Credential Manager and Linux/BSD Secret Service backends, and `proxy-router/cmd/main.go:259-266` has no platform guard. |
+| `WALLET_PRIVATE_KEY` unset **and** the platform has no credential-store backend (go-keyring falls back to `unsupported platform`) | Refuses to start signing transactions; read-only operations still work. |
 
-`APP_RESET_KEYCHAIN=true` wipes the macOS keychain entry on start (use with care).
+`APP_RESET_KEYCHAIN=true` is a **one-shot maintenance wipe, not a startup modifier**, and it does not read "reset, then start." It deletes the stored wallet and the stored ETH-node URLs and then **returns before the node is built**: `proxy-router/cmd/main.go:198` is a bare `return nil` inside the block opened at `:181`, while everything that constructs storage, the RPC client and the HTTP server begins at `:204`. Because the return value is `nil`, `proxy-router/cmd/main.go:47-53` exits **0** — no error text, no listening port, and nothing a supervisor's failure detection can catch. Leave the variable set in a Compose file, a Kubernetes manifest or a systemd unit and every start is an immediate clean exit that reads as success. Run it once by hand, then unset it. The wipe is also not macOS-specific — see the credential-store note above.
 
 ### `WEB_PUBLIC_URL` fallback
 
-If `WEB_PUBLIC_URL` is unset, the proxy-router synthesizes `http://localhost:<port-from-WEB_ADDRESS>`. For provider deployments where consumers must reach you over the public internet, **always set this explicitly** to your public URL (e.g. `https://provider.example.com`). The TLS-pinning step in TEE attestation reads this URL.
+If `WEB_PUBLIC_URL` is unset, the proxy-router derives it from `WEB_ADDRESS`, and the substitution is narrower than "falls back to localhost": `proxy-router/internal/config/config.go:183-190` prepends `http://` and rewrites the host to `localhost` **only** when `WEB_ADDRESS` is a bare `:port` or contains `0.0.0.0`. Any host that does not contain the substring `0.0.0.0` is preserved verbatim — `WEB_ADDRESS=192.168.1.5:8082` yields `http://192.168.1.5:8082`, not a loopback URL. The rewrite is a plain `strings.Replace` (`:188`), not a host-equality test, so a host that merely *contains* the substring is rewritten too: `0.0.0.0.nip.io:8082` becomes `http://localhost.nip.io:8082`. Either way the result is a LAN, container or loopback address that consumers on the internet cannot reach. For provider deployments where consumers must reach you over the public internet, **always set this explicitly** to your public URL (e.g. `https://provider.example.com`). The TLS-pinning step in TEE attestation reads this URL.
 
 ### `ETH_NODE_USE_SUBSCRIPTIONS` ↔ `ETH_NODE_POLLING_INTERVAL`
 
@@ -82,9 +124,9 @@ Not a precedence pair, but easy to misconfigure:
 
 Mismatch (e.g. `subscriptions=true` with HTTPS endpoint) makes the node fail to receive blockchain events even though startup may look healthy.
 
-### `PROXY_STORE_CHAT_CONTEXT` is TEE-frozen
+### `PROXY_STORE_CHAT_CONTEXT` in the `-tee` image
 
-In the **`-tee` image** this is hard-coded `false` at build time and **cannot be overridden at runtime**. Setting it in the env has no effect inside a TEE deployment. See [TEE reference](/providers/full/tee-reference).
+The `-tee` image sets `PROXY_STORE_CHAT_CONTEXT=false` as a Docker `ENV` default (`proxy-router/Dockerfile.tee:23`), so that is the value you get unless something supplies another one. It is **not** immutable at the image level: an `ENV` default is overridden by `docker run -e`, by a Compose `environment:` entry, or by a `.env` the container reads — and nothing in the binary compares the running environment against the baked value. `BakedEnv` exists as a field on the attestation manifest (`proxy-router/internal/attestation/golden.go:48`) and is referenced nowhere else in the Go tree, so there is no runtime check to fail. The **deployment** does not close it either. A SecretVM measures the compose file, and editing the compose does change the measurement — but the compose declares `env_file: - usr/.env` (`proxy-router/docker-compose.tee.yml:15-16`), and that file's contents are not part of the measured bytes while Docker precedence puts them above the image's `ENV`, so the value can be set there with the attestation unchanged. The manifest does not settle it either: `baked_env.PROXY_STORE_CHAT_CONTEXT` is a workflow literal (`.github/workflows/build.yml:957`), not a value read out of the image. Treat `false` as the default you get, not as a guarantee. See [TEE reference](/providers/full/tee-reference).
 
 ---
 
@@ -92,7 +134,7 @@ In the **`-tee` image** this is hard-coded `false` at build time and **cannot be
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `APP_RESET_KEYCHAIN` | `false` | Set `true` to reset the macOS keychain entry on start |
+| `APP_RESET_KEYCHAIN` | `false` | One-shot wipe of the stored wallet and ETH-node URLs. **The process then exits 0 without starting the node** (`proxy-router/cmd/main.go:181-199`); not macOS-specific. Never leave it set in a service definition — see precedence above |
 | `AUTH_CONFIG_FILE_PATH` | `./proxy.conf` | Path to the auth config file (no inline twin) |
 | `COOKIE_FILE_PATH` | `./.cookie` | Path to admin cookie file |
 | `COOKIE_CONTENT` | (unset) | **Seeds the cookie file on first start only.** See precedence above. |
@@ -101,10 +143,10 @@ In the **`-tee` image** this is hard-coded `false` at build time and **cannot be
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `ETH_NODE_CHAIN_ID` | `8453` (mainnet) / `84532` (testnet) | BASE chain ID |
-| `ETH_NODE_ADDRESS` | (unset, falls back to built-in public RPC round-robin) | RPC endpoint URL (HTTPS or WSS — must match `ETH_NODE_USE_SUBSCRIPTIONS`). **Set explicitly for any real deployment** — the public round-robin fallback is rate-limited and unreliable; missed events break the node silently. |
+| `ETH_NODE_CHAIN_ID` | **(required)** — `SetDefaults()` assigns no value, so unset means `0` | BASE chain ID: `8453` mainnet, `84532` testnet (the values shown in the quick-switch block below are `.env.example` samples, not compiled defaults). `0` fails **loudly** on the public-RPC path — `Missing chain ID. You need to configure chain ID to use public eth node addresses` (`proxy-router/internal/repositories/ethclient/rpcclient_store_factory.go:62-64`). With `ETH_NODE_ADDRESS` set it fails *silently* instead: the chain-ID cross-check is guarded on `!= 0`, so `0` disables it and a node on the wrong chain is accepted (`proxy-router/cmd/main.go:252-253`) |
+| `ETH_NODE_ADDRESS` | (unset, falls back to built-in public RPC round-robin) | RPC endpoint URL (HTTPS or WSS — must match `ETH_NODE_USE_SUBSCRIPTIONS`). **Set explicitly for any real deployment** — the public round-robin fallback is rate-limited and unreliable; missed events break the node silently. The fallback is also conditional: the public endpoint list is looked up by chain ID, so it requires a non-zero `ETH_NODE_CHAIN_ID` and aborts without one (`proxy-router/internal/repositories/ethclient/rpcclient_store_factory.go:62-69`). |
 | `ETH_NODE_LEGACY_TX` | `false` | Set `true` to disable EIP-1559 |
-| `BLOCKSCOUT_API_URL` | `https://base.blockscout.com/api/v2` | Block explorer API |
+| `BLOCKSCOUT_API_URL` | (required) | Block explorer API |
 | `EXPLORER_RETRY_DELAY` | `5` | Delay between explorer retries (seconds) |
 | `EXPLORER_MAX_RETRIES` | `5` | Max explorer retries |
 | `ETH_NODE_USE_SUBSCRIPTIONS` | `false` | `true` to use WSS subscriptions; `false` for HTTP polling |
@@ -121,9 +163,11 @@ In the **`-tee` image** this is hard-coded `false` at build time and **cannot be
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `DIAMOND_CONTRACT_ADDRESS` | mainnet `0x6aBE1d282f72B474E54527D93b979A4f64d3030a`; testnet `0xA328196f2438DADA5ab729E39388D86896c27c85` | Diamond marketplace contract |
-| `MOR_TOKEN_ADDRESS` | mainnet `0x7431aDa8a591C955a994a21710752EF9b882b8e3`; testnet `0x5C80Ddd187054E1E4aBBfFCD750498e81d34FfA3` | MOR ERC-20 token |
-| `WALLET_PRIVATE_KEY` | (unset) | Wallet private key. Falls back to system keychain when unset. See precedence above. |
+| `DIAMOND_CONTRACT_ADDRESS` | **(required)** — no `SetDefaults()` entry; unset resolves to the **zero address**, not to a network default | Diamond marketplace contract |
+| `MOR_TOKEN_ADDRESS` | **(required)** — no `SetDefaults()` entry; unset resolves to the **zero address**, not to a network default | MOR ERC-20 token |
+| `WALLET_PRIVATE_KEY` | (unset) | Wallet private key. Falls back to the OS credential store when unset. See precedence above. |
+
+Neither marketplace address has a compiled default, and unlike the chain ID neither one fails loudly: the router starts on the zero address and every marketplace call then addresses a contract that does not exist. Take the per-network values from the [mainnet/testnet quick switch](#mainnet-vs-testnet-quick-switch) below or from `proxy-router/.env.example` — those are sample values in a file, not defaults in the binary.
 
 ## Logging
 
@@ -133,45 +177,48 @@ In the **`-tee` image** this is hard-coded `false` at build time and **cannot be
 | `LOG_FOLDER_PATH` | (unset) | If set, also write logs to files in this directory |
 | `LOG_IS_PROD` | `false` | Production log format |
 | `LOG_JSON` | `false` | JSON-formatted log lines |
-| `LOG_LEVEL_APP` | `warn` | App-level log level: `debug` `info` `warn` `error` `dpanic` `panic` `fatal` |
-| `LOG_LEVEL_TCP` | `warn` | TCP layer log level |
-| `LOG_LEVEL_ETH_RPC` | `warn` | Ethereum RPC log level |
-| `LOG_LEVEL_STORAGE` | `warn` | Badger storage log level |
+| `LOG_LEVEL_APP` | `debug` | App-level log level: `debug` `info` `warn` `error` `dpanic` `panic` `fatal`. `.env.example` ships `warn` as a recommendation; the compiled default is `debug` |
+| `LOG_LEVEL_TCP` | `info` | TCP layer log level. `.env.example` ships `warn` as a recommendation |
+| `LOG_LEVEL_ETH_RPC` | `info` | Ethereum RPC log level. `.env.example` ships `warn` as a recommendation |
+| `LOG_LEVEL_STORAGE` | `info` | Badger storage log level. `.env.example` ships `warn` as a recommendation |
 
-For TEE images logging is **frozen** to production / JSON / minimal at build time — these vars have no effect inside a `-tee` image.
+The `-tee` image ships production / JSON / reduced-verbosity values for all of these as Docker `ENV` defaults (`proxy-router/Dockerfile.tee:30-36`). Like any `ENV` default they are overridable with `-e` or a Compose `environment:` entry, and a measured SecretVM deployment does not pin them either: `CalculateRTMR3` measures the compose file's bytes and the rootfs hash and nothing else (`proxy-router/internal/attestation/rtmr.go:12-19`), while the compose declares `env_file: - usr/.env` (`proxy-router/docker-compose.tee.yml:15-16`) whose contents are outside those measured bytes and sit above the image's `ENV` in Docker precedence. Treat them as the values you get by default, not as guarantees — see the `PROXY_STORE_CHAT_CONTEXT` note above.
 
 ## Network ports & URLs
 
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `WEB_ADDRESS` | `0.0.0.0:8082` | Bind for the HTTP/Swagger API |
-| `WEB_PUBLIC_URL` | `http://localhost:<WEB_ADDRESS port>` | Public-facing URL of the API. **Set explicitly** for any provider that consumers must reach. |
+| `WEB_PUBLIC_URL` | `http://` + `WEB_ADDRESS`, with the host rewritten to `localhost` **only** for a bare `:port` or a literal `0.0.0.0`; any other host is kept as-is (`proxy-router/internal/config/config.go:183-190`) | Public-facing URL of the API. **Set explicitly** for any provider that consumers must reach. |
 | `PROXY_ADDRESS` | `0.0.0.0:3333` | Bind for the consumer-to-provider TCP proxy |
 
 ## Proxy state & configs
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `MAX_CACHED_DESTS` | `5` | Max cached provider destinations |
+| `MAX_CACHED_DESTS` | – | Not consumed; Config struct has no field for it |
 | `PROXY_STORAGE_PATH` | `./data/badger/` | Local Badger / runtime state |
-| `PROXY_STORE_CHAT_CONTEXT` | `true` | Persist chat context. **Frozen `false` in `-tee` images.** |
-| `PROXY_FORWARD_CHAT_CONTEXT` | `true` | Prepend stored history to prompts |
-| `MODELS_CONFIG_PATH` | `./models-config.json` | See [models-config](/reference/models-config). See precedence above. |
+| `PROXY_STORE_CHAT_CONTEXT` | `true` | Persist chat context. The `-tee` image ships `false` as a Docker `ENV` default — pinned neither by the image nor by a measured SecretVM deployment, since the compose's `env_file: - usr/.env` is outside the measured bytes; treat `false` as the default you get, not a guarantee. See precedence above |
+| `PROXY_FORWARD_CHAT_CONTEXT` | `false` | Prepend stored history to prompts. Default OFF: the client owns the transcript, so forwarding would duplicate context for any OpenAI-compatible client |
+| `MODELS_CONFIG_PATH` | `models-config.json` — but **not** from `SetDefaults()`, which assigns this one nothing (measured: empty). Empty is a **sentinel**: `ModelConfigLoader.Init` substitutes `ConfigPathDefault` before reading (`proxy-router/internal/config/models_config.go:15,73-76`), exactly as the agent pair below does | See [models-config](/reference/models-config). See precedence above. |
 | `MODELS_CONFIG_CONTENT` | (unset) | **Seeds the models config file on first start only.** See precedence above. |
-| `AGENT_CONFIG_PATH` | (built-in default) | Local agent registry path |
+| `AGENT_CONFIG_PATH` | `agents-config.json` | Local agent registry path. The Config field is empty when unset, but empty is a **sentinel**: `AgentConfigLoader.Init` substitutes `ConfigAgentsPathDefault` (`agents_config.go:15,59-62`) before reading, so the file actually loaded is `agents-config.json` |
 | `AGENT_CONFIG_CONTENT` | (unset) | **Seeds the agent config file on first start only.** Same rules as the models pair. |
-| `RATING_CONFIG_PATH` | `./rating-config.json` | See [rating-config](/reference/rating-config) |
+| `RATING_CONFIG_PATH` | `./rating-config.json` | See [rating-config](/reference/rating-config). A missing **or malformed** file falls back and the router starts — see precedence above |
+| `RATING_CONFIG_CONTENT` | (unset) | Inline rating JSON. **Not a seeder:** unlike the models and agent twins it never creates the file; it is consulted only when the file at `RATING_CONFIG_PATH` cannot be read or does not parse. If it is used and is itself malformed, startup does exit non-zero. See precedence above |
 
 ## Timeouts & retries
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `LLM_TIMEOUT` | (depends on release) | P-Node → backend LLM timeout (streaming + non-streaming) |
-| `CNODE_PNODE_TIMEOUT` | (depends on release) | Per-attempt timeout for C-Node waiting for P-Node first response |
-| `CNODE_PNODE_MAX_RETRIES` | (depends on release) | Max retries for C-Node → P-Node read timeout (chat / embeddings) |
-| `CNODE_PNODE_AUDIO_MAX_RETRIES` | (depends on release) | Max retries for audio transcription / speech routes |
+| `LLM_TIMEOUT` | `240s` (4m) | P-Node → backend LLM timeout (streaming + non-streaming) |
+| `CNODE_PNODE_TIMEOUT` | `90s` | Per-attempt timeout for C-Node waiting for P-Node first response |
+| `CNODE_PNODE_MAX_RETRIES` | `3` | Max retries for C-Node → P-Node read timeout (chat / embeddings) |
+| `CNODE_PNODE_AUDIO_MAX_RETRIES` | `20` | Max retries for audio transcription / speech routes |
 
-For exact defaults check the source of truth ([`config.go`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/internal/config/config.go)) — these can change between releases as we tune the network.
+All four are real `SetDefaults()` assignments, pinned in the binary at `proxy-router/internal/config/config.go:217-228`, not consumption-site fallbacks — an unset variable is `0`, and `SetDefaults()` replaces the zero with the value above before anything reads it. They can change between releases as we tune the network, so re-read that line rather than this table when a release note mentions timeouts.
+
+One near-miss to not "correct": `proxy-router/mobile/sdk.go:34-35` declares its own `DefaultCNodePNodeTimeout = 120 * time.Second`. That is the mobile SDK's constant, on a code path that does not read these environment variables at all; it is not a second opinion about `CNODE_PNODE_TIMEOUT`, which is `90s`.
 
 ## Model health self-checks (provider)
 
@@ -183,7 +230,7 @@ On provider nodes the proxy-router periodically probes every model from `models-
 | `MODEL_HEALTH_CHECK_INTERVAL` | `1h` | How often models are probed; results are cached between runs |
 | `MODEL_HEALTH_CHECK_TIMEOUT` | `60s` | Per-model probe timeout |
 | `MODEL_HEALTH_CHECK_PROBE_DELAY` | `2s` | Pause between per-model probes so many-model providers don't burst their upstream into a rate limit |
-| `MODEL_HEALTH_MAX_CONSECUTIVE_ERRORS` | `3` | Consecutive real-session prompt failures after which the model is reported `unhealthy` (`errorKind: session_errors`) immediately, without waiting for the next scheduled probe |
+| `MODEL_HEALTH_MAX_CONSECUTIVE_ERRORS` | `3` | Consecutive real-session prompt failures after which the model is reported `degraded` when every failure in the streak was a 429 (upstream rate limiting), and `unhealthy` otherwise, with `errorKind: session_errors` in both cases, immediately, without waiting for the next scheduled probe |
 
 ## Session health policy (consumer)
 
@@ -207,17 +254,21 @@ These are only consulted when at least one model in the marketplace is `tee`-tag
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `TEE_PORTAL_URL` | `https://secretai.scrtlabs.com/api` | SecretAI Portal used to verify raw TDX CPU quotes |
+| `TEE_PORTAL_URL` | `https://secretai.scrtlabs.com/api/quote-parse` | SecretAI Portal used to verify raw TDX CPU quotes. The full path is used as-is for TDX; SEV derives a sibling URL |
 | `TEE_IMAGE_REPO` | `ghcr.io/morpheusais/morpheus-lumerin-node-tee` | GHCR repo where the consumer-side P-Node attestation fetches the signed golden manifest via cosign |
 | `ARTIFACT_REGISTRY_URL` | `https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/tdx.csv` | SecretVM TDX artifact registry CSV (MRTD + RTMR0-2 lookup). Served from the published [secretvm-verify](https://www.npmjs.com/package/secretvm-verify) package after the GitHub repo was removed. |
 | `SEV_ARTIFACT_REGISTRY_URL` | `https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/sev.json` | SecretVM SEV-SNP artifact registry JSON |
-| `ARTIFACT_REGISTRY_REFRESH_INTERVAL` | `1h` | How often the proxy-router re-downloads the artifact registry |
+| `ARTIFACT_REGISTRY_REFRESH_INTERVAL` | `1h` | How often the proxy-router re-downloads the artifact registry; if unset or set to `0`, the constructor falls back to `1h` (`artifacts_registry.go:51-53`) |
 
 See [TEE overview](/concepts/tee-overview) and [TEE reference](/providers/full/tee-reference).
 
 ## System tuning (optional sysctl tweaks)
 
 These map to OS-level adjustments and only apply when `SYS_ENABLE=true`.
+
+<Warning>
+Optional to **enable**, not optional to **succeed**. With `SYS_ENABLE=true` on Linux or macOS, a `sysctl`/`setrlimit` call the process is not privileged to make aborts startup: `main.go:146-149` logs `failed to apply system config, try using sudo or set SYS_ENABLE to false to disable` and then **returns the error**, so the process exits non-zero. In an unprivileged container this turns a tuning knob into a crash-loop — leave `SYS_ENABLE=false` unless the node runs with the privileges to apply every value. (On Windows `ApplyConfig` is a no-op and always succeeds.)
+</Warning>
 
 | Variable | Default | Notes |
 |----------|---------|-------|
@@ -231,7 +282,9 @@ These map to OS-level adjustments and only apply when `SYS_ENABLE=true`.
 
 ## Mainnet vs testnet quick switch
 
-Comment / uncomment the appropriate block in `.env`:
+Comment / uncomment the appropriate block in `.env`. Each block is **five**
+values — the four blockchain settings plus `ENVIRONMENT`, which the sample
+`.env` switches alongside them (`proxy-router/.env.example:14-26`):
 
 ```bash
 # MAINNET
@@ -239,14 +292,21 @@ ETH_NODE_CHAIN_ID=8453
 DIAMOND_CONTRACT_ADDRESS=0x6aBE1d282f72B474E54527D93b979A4f64d3030a
 MOR_TOKEN_ADDRESS=0x7431aDa8a591C955a994a21710752EF9b882b8e3
 BLOCKSCOUT_API_URL=https://base.blockscout.com/api/v2
+ENVIRONMENT=production
 
 # TESTNET (Base Sepolia)
 # ETH_NODE_CHAIN_ID=84532
 # DIAMOND_CONTRACT_ADDRESS=0xA328196f2438DADA5ab729E39388D86896c27c85
 # MOR_TOKEN_ADDRESS=0x5C80Ddd187054E1E4aBBfFCD750498e81d34FfA3
 # BLOCKSCOUT_API_URL=https://base-sepolia.blockscout.com/api/v2
+# ENVIRONMENT=development
 ```
+
+`ENVIRONMENT` is not a chain selector, so leaving it on the mainnet value
+does not point the node at the wrong network — but it is the fifth value
+[Run with Docker](/consumers/install/docker) tells you to change, and the
+sample `.env` pairs it with each block, so switch it with the rest.
 
 ## Full annotated dump
 
-For the complete annotated reference (every variable, every example value), see [`docs/proxy-router.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/proxy-router.all.env) in the repo.
+For an annotated reference (with many variables and example values), see [`docs/proxy-router.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/proxy-router.all.env) in the repo. That dump is complete: it carries an assignment for every one of the 62 live `env:` tags in `config.go` (set-difference verified in both directions; `EXPLORER_API_URL` is excluded because `config.go:31` has it commented out, so the proxy-router does not read it). The variables this page does not tabulate are `IPFS_DISABLED`, `IPFS_MULTADDR`, and `MULTICALL3_ADDR` — look those up in the dump.

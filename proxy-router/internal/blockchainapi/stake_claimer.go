@@ -9,12 +9,12 @@ import (
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/lib"
 )
 
-// StakeClaimer sweeps MOR that closing a session EARLY time-locked, back to the
-// user, as soon as it matures.
+// StakeClaimer sweeps MOR that any close landing before releaseAt time-locked,
+// back to the user, as soon as it matures.
 //
-// Why this exists: closing a session before it ends does not spend the stake, it
-// pushes OnHold(amount, startOfDay(closedAt)+1day) onto the user's list
-// (SessionRouter._rewardUserAfterClose). The Diamond exposes
+// Why this exists: closing a session does not spend the stake, it pushes
+// OnHold(amount, startOfTheDay(min(closedAt, endsAt))+1day) onto the user's list
+// (SessionRouter._rewardUserAfterClose, :296-298). The Diamond exposes
 // getUserStakesOnHold/withdrawUserStakes, but nothing ever called them — no
 // endpoint, no UI — so the money was invisible AND unreachable. A real user
 // closed a 6-minute session at 3 minutes and watched ~2.7 MOR vanish for a day
@@ -24,8 +24,8 @@ import (
 // Safety: withdrawUserStakes(user_, ...) transfers to `user_` and nowhere else,
 // and we only ever pass our own address, so this job cannot send funds anywhere
 // but home. Its blast radius is gas. It never claims a stake that has not
-// matured — the contract would skip the entry and we would pay a fee for a
-// transfer of zero.
+// matured - the contract reverts SessionUserAmountToWithdrawIsZero in that case
+// (SessionRouter.sol:461-463), so an early call fails rather than transferring 0.
 type StakeClaimer struct {
 	blockchainService *BlockchainService
 	interval          time.Duration
@@ -33,9 +33,9 @@ type StakeClaimer struct {
 }
 
 // claimInterval: the lock releases on a 1-day boundary, so nothing is gained by
-// polling hard — but a user who reopens the app expecting their MOR back should
-// not wait long. Ten minutes costs two cheap eth_calls an hour and bounds the
-// "why isn't it back yet" window.
+// polling hard - but a user who reopens the app expecting their MOR back should
+// not wait long. Ten minutes is six ticks an hour, each costing one cheap
+// eth_call (claimOnce reads stakes on hold at :51), and bounds the wait.
 const claimInterval = 10 * time.Minute
 
 func NewStakeClaimer(blockchainService *BlockchainService, log lib.ILogger) *StakeClaimer {
@@ -58,9 +58,9 @@ func (s *StakeClaimer) claimOnce(ctx context.Context) *big.Int {
 
 	if available == nil || available.Sign() == 0 {
 		if hold != nil && hold.Sign() > 0 {
-			// The common case after an early close: money exists but is not due
-			// yet. Log it so "where is my MOR" has an answer in the log.
-			s.log.Infof("%s wei of stake still time-locked from early session closes, nothing matured yet", hold.String())
+			// Common after any close landing before releaseAt, not only an early one:
+			// money exists but is not due yet. Log it so "where is my MOR" has an answer.
+			s.log.Infof("%s wei of stake still time-locked from session closes that landed before releaseAt - any close, not only an early one; nothing matured yet", hold.String())
 		}
 		return nil
 	}

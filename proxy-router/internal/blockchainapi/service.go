@@ -1092,15 +1092,15 @@ func (s *BlockchainService) ClaimProviderBalance(ctx context.Context, sessionID 
 	return txHash, nil
 }
 
-// stakeOnHoldIterations walks every OnHold entry. The contract's loop is bounded
-// by this and by the entry count, and entries are POPPED as they are withdrawn,
-// so the list stays short in practice. 255 is the max a uint8 can express — i.e.
-// "all of them" — which is what a user wants: a partial sweep would silently
-// leave their money behind.
+// stakeOnHoldIterations asks for every OnHold entry. It bounds the WITHDRAW loop
+// (SessionRouter.sol:439, :448); the READ path ignores it and walks the whole
+// list anyway (:422 clamps it, :424 loops on onHold.length). Entries are POPPED
+// as they are withdrawn, so the list stays short. 255 is the max a uint8 can
+// express, so only a user holding more than 255 entries can get a partial sweep.
 const stakeOnHoldIterations uint8 = 255
 
-// GetUserStakesOnHold reports this wallet's stake locked by early session
-// closes: `available` is withdrawable now, `hold` is still time-locked.
+// GetUserStakesOnHold reports this wallet's stake locked by any close landing
+// before releaseAt: `available` is withdrawable now, `hold` is still time-locked.
 func (s *BlockchainService) GetUserStakesOnHold(ctx context.Context) (available *big.Int, hold *big.Int, err error) {
 	userAddr, err := s.GetMyAddress(ctx)
 	if err != nil {

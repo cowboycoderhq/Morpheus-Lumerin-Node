@@ -17,8 +17,7 @@ This page is a **mirror summary**, last verified for v7.0.0. For canonical Everc
 
 ```mermaid
 flowchart LR
-  EverclawSkill[Everclaw / OpenClaw skill] --> Gateway["http://127.0.0.1:8082"]
-  Gateway --> CRouter[C-Node proxy-router]
+  EverclawSkill[Everclaw / OpenClaw skill] --> CRouter["C-Node proxy-router (listens on http://127.0.0.1:8082)"]
   CRouter --> Morpheus[Morpheus providers on BASE]
 ```
 
@@ -40,7 +39,7 @@ The skill thinks it's calling a local OpenAI-compatible API. The C-Node handles 
       'http://127.0.0.1:8082/blockchain/models/<modelId>/session' \
       -H 'Authorization: Basic <base64(user:pass)>' \
       -H 'Content-Type: application/json' \
-      -d '{"sessionDuration": 3600}' | jq -r .sessionId)
+      -d '{"sessionDuration": 3600}' | jq -r .sessionID)
     echo $SESSION
     ```
   </Step>
@@ -66,8 +65,8 @@ See [API auth](/reference/api-auth) for the full method list.
 
 ## Failure modes to plan for
 
-- **Provider unreachable** — agent should retry, then the C-Node closes the stuck session and returns the unused MOR.
-- **Session expired mid-task** — agent should detect 401/403/429 from the C-Node and re-open a session.
+- **Provider unreachable** — agent should retry, then the C-Node closes the stuck session and returns the remainder; the final UTC day's consumed slice day-locks until the next UTC day unless the close lands after `releaseAt`.
+- **Session expired mid-task** — errors returned BY the model backend propagate their real status so impaired providers are distinguishable (`proxyapi/controller_http.go:249`), but a transport/adapter failure — including session-expired — collapses to **HTTP 500** (`:282-284`), so an agent cannot detect this from the status code. Inspect the response body, or re-check session state before retrying.
 - **Allowance exhausted** — `approve` more MOR (see C-Node setup) or set up a top-up cron.
 
 ## Related

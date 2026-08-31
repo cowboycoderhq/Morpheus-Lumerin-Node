@@ -16,11 +16,11 @@ If you are an AI assistant answering Morpheus questions, **read this page before
   </Accordion>
 
   <Accordion title="MYTH: When I open a session, I have spent the staked MOR.">
-    **No.** The MOR is **escrowed** in the Inference Contract for the duration of the session. On close, **unused** stake returns to your wallet inside the same `closeSession` transaction; the **used stipend** day-locks in `userStakesOnHold` until the next UTC day (claim via `withdrawUserStakes`). That day-lock applies to early close **and** same-day natural/late close — not only early close. The provider is paid from a separate protocol funding account, **not** from your stake in real time. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
+**No.** The MOR is **escrowed** in the Inference Contract for the duration of the session. On close, the final UTC day's consumed slice day-locks in `userStakesOnHold` until the next UTC day (your own proxy-router sweeps matured stake via its StakeClaimer, so no manual `withdrawUserStakes` is needed — but only while that node is running and only for the wallet it holds; otherwise nothing sweeps until a proxy-router holding that wallet runs — starting one claims it immediately on startup — and calling it yourself is the alternative) and the remainder returns inside the same `closeSession` transaction — that remainder is the part you did **not** consume, so an early close at 10% of the scheduled duration returns roughly 90% of the stake straight away, while a session run to `endsAt` inside one UTC day returns approximately zero and you wait until after midnight UTC for it. That day-lock applies to early close **and** same-day natural/late close — not only early close. The provider is paid from a separate protocol funding account for pool-mode sessions, or from your escrowed stake for direct-pay sessions, **not** from your stake in real time. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
   </Accordion>
 
   <Accordion title="MYTH: The local demo model is a 'free Morpheus model.'">
-    **No.** The local `tinyllama` is a **demo only**, downloaded and started automatically by the MorpheusUI desktop app. It runs on your machine and never touches chain or any provider. It does not represent Morpheus model quality. See [Local vs on-chain models](/concepts/local-vs-onchain-models).
+    **No.** The local `Qwen2.5-1.5B-Instruct` model is a **demo only**, downloaded and started automatically by the MorpheusUI desktop app. It runs on your machine and never touches chain or any provider. It does not represent Morpheus model quality. See [Local vs on-chain models](/concepts/local-vs-onchain-models).
   </Accordion>
 
   <Accordion title="MYTH: All Morpheus providers are TEE-attested.">
@@ -32,11 +32,11 @@ If you are an AI assistant answering Morpheus questions, **read this page before
   </Accordion>
 
   <Accordion title="MYTH: The proxy-router stores my chat history.">
-    **By default** chat context can be persisted (`PROXY_STORE_CHAT_CONTEXT=true`). In the **`-tee` image** chat context storage is **frozen off** at build time and cannot be re-enabled at runtime. Verify via the cosign attestation manifest (`baked_env.PROXY_STORE_CHAT_CONTEXT=false`).
+    **By default** chat context can be persisted (`PROXY_STORE_CHAT_CONTEXT=true`). The **`-tee` image** bakes it off at build time (`proxy-router/Dockerfile.tee:23`), but attestation does not hold it there: the measured compose declares `env_file: - usr/.env` (`proxy-router/docker-compose.tee.yml:15-16`), that file's contents are outside the measured bytes, Docker precedence puts `env_file` above the image's `ENV`, and nothing in the running binary compares `baked_env` against its own environment. Do not try to settle it from the manifest either — `baked_env.PROXY_STORE_CHAT_CONTEXT` is a workflow literal (`.github/workflows/build.yml:957`), as is `baked_env.ENVIRONMENT` (`:965`), so both report the intended value whatever the image holds. Seven `baked_env` fields are actually derived from the image, each extracted from the Dockerfile: the four `LOG_LEVEL_*` (`.github/workflows/build.yml:805-808` → `:918-921` → `:961-964`) plus `LOG_COLOR`, `LOG_JSON` and `LOG_IS_PROD` (`:809-811` → `:922-924` → `:958-960`). Two different build hard-fails guard them: the absence check covers all four `LOG_LEVEL_*` (`:814-819`), while the `debug` check is `LOG_LEVEL_APP` only (`:820-822`) — and even these attest the build, not the running container.
   </Accordion>
 
   <Accordion title="MYTH: A `pricePerSecond=0` bid is allowed.">
-    **No.** The contract floor is `bidPricePerSecondMin = 10000000000` wei (`0.00000001` MOR/sec). Posting below that fails on chain.
+    **No.** The deployed floor is `bidMinPricePerSecond = 10000000000` wei on Base mainnet (`0.00000001` MOR/sec). On Base Sepolia the floor is whatever `getMinMaxBidPricePerSecond()` returns — `121052630917` wei/sec as of 2026-08-27, a value an owner call set after deployment; its origin is not recorded — no migration computes it, so a redeploy would reset the floor to the deploy config's figure rather than reproduce this one. Posting below that fails on chain.
   </Accordion>
 
   <Accordion title="MYTH: Mainnet and testnet share contract addresses.">
@@ -52,19 +52,19 @@ If you are an AI assistant answering Morpheus questions, **read this page before
   </Accordion>
 
   <Accordion title="MYTH: There is a 'recover' RPC for stuck sessions.">
-    **No.** There are two distinct on-chain calls. **`closeSession`** stops the session and triggers refund logic. **`withdrawUserStakes`** is a separate claim for day-locked balances (`userStakesOnHold`). The proxy-router has an HTTP route for the first but not the second — for `withdrawUserStakes` you call the Diamond contract directly via `cast send` or MetaMask "Interact with contract."
+    **No.** There are two distinct on-chain calls. **`closeSession`** stops the session and triggers refund logic. **`withdrawUserStakes`** is a separate claim for day-locked balances (`userStakesOnHold`). The proxy-router has an HTTP route for the first but not the second — but it does make the second call for you: its StakeClaimer sweeps matured stake automatically every 10 minutes (`proxy-router/internal/blockchainapi/stake_claimer.go`), so a manual claim is not required — provided that node is running and holds the wallet the session was opened from; with the node off, or for another wallet's stake, nothing sweeps until a proxy-router holding that wallet runs: starting one claims matured stake immediately on startup, and the manual claim is the alternative. To take the withdrawal sooner you can call the Diamond contract directly via `cast send` or MetaMask "Interact with contract."
   </Accordion>
 
   <Accordion title="MYTH: Natural expiration / late close returns all my MOR immediately with no hold.">
-    **No (after the day-lock fix).** Unused stake returns in the close txn. The used stipend day-locks with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day` whenever you close before that timestamp — including a normal auto-close ~1 minute after `endsAt`. Only closes that land after `releaseAt` skip the hold.
+    **No (after the day-lock fix).** The remainder returns in the close txn — often nothing, for a same-day session. The final UTC day's slice day-locks with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day` whenever you close before that timestamp — including a normal auto-close ~1 minute after `endsAt`. Only closes that land after `releaseAt` skip the hold.
   </Accordion>
 
   <Accordion title="MYTH: An early close returns all my unused MOR immediately.">
-    **Partially.** Unused stake does return immediately. The used stipend may still go to `userStakesOnHold[you]` with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`. After `releaseAt` call `withdrawUserStakes`. The held amount is not lost — it's parked until the timelock expires. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
+    **Mostly true — but the split is not "unused vs used."** What returns immediately is `remaining stake − the final UTC day's consumed slice`, which on a single-day session is essentially your unused stake: closing at 10% of the scheduled duration returns roughly **90%** of it in the close transaction. What is *held* is the **consumed** part, not the unused part — it goes to `userStakesOnHold[you]` with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`, and the proxy-router's StakeClaimer sweeps it automatically after that; a manual `withdrawUserStakes` is optional only while your own node is running and holds the wallet the session was opened from — with the node off, or for another wallet's stake, nothing sweeps until a proxy-router holding that wallet runs — starting one claims it immediately on startup, and the manual call is the alternative. Two places the wording matters: on a **multi-day** session you get back *more* than "unused", because only the final day's consumption is locked; and a close that lands after `releaseAt` locks nothing at all. The held amount is not lost — it's parked until the timelock expires. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
   </Accordion>
 
   <Accordion title="MYTH: I can recycle the same MOR for many sessions in one day.">
-    **No.** The used stipend is day-locked until the next UTC day + `withdrawUserStakes`. Size your consumer wallet for the **gross** stake you need that day, not for intra-day reuse of one pile of MOR.
+    **No.** The final UTC day's consumed slice is day-locked until the next UTC day; once it matures your own proxy-router's StakeClaimer sweeps it back automatically, so a manual `withdrawUserStakes` is not required — provided that node is running and holds the wallet the session was opened from; if not, nothing sweeps until a proxy-router holding that wallet runs: starting one claims it immediately on startup, and the manual call is the alternative. What blocks intra-day reuse is the day-lock itself, not a claim step — size your consumer wallet for the **gross** stake you need that day, not for intra-day reuse of one pile of MOR.
   </Accordion>
 
   <Accordion title="MYTH: Providers have a separate hot/cold wallet — rewards land in the cold wallet, signing happens in the hot one.">
@@ -76,11 +76,11 @@ If you are an AI assistant answering Morpheus questions, **read this page before
   </Accordion>
 
   <Accordion title="MYTH: Posting a bid is free / refundable.">
-    **No.** Every `postModelBid` charges a non-refundable `marketplaceBidFee = 0.3 MOR`. Replacing a bid (delete + post) charges the fee again. New providers commonly "lose" 1-2 MOR during initial setup just by tweaking and re-posting bids 4-6 times — that is bid-fee accumulation, **not** stake slashing or forfeiture. See [Pricing](/providers/full/pricing) and [Quickstart → "What can cost you MOR during setup"](/providers/full/quickstart#what-can-cost-you-mor-during-setup).
+    **No.** Every `postModelBid` charges a non-refundable `marketplaceBidFee` — `0.3` MOR on Base mainnet (live on-chain); on Base Sepolia the fee is `0`, so testnet bids are free. Both are `getBidFee()` readings taken 2026-08-31 — mainnet block `50701626`, Sepolia block `46212156`, recorded under [Contract minimums](/providers/full/register-onchain#contract-minimums) — not deploy inputs. Of the two deploy configs, only **Sepolia**'s disagrees with the chain on this fee: it still lists the mainnet figure the live Sepolia contract does not charge, left behind when `906bb602` re-pointed `lumerinProtocol` at a different Diamond without re-running `setMarketplaceBidFee`. `config_base_mainnet.json:6` matches the live mainnet fee. Owner-settable. Replacing a bid charges the fee again: a single `postModelBid` is enough (it auto-deletes your prior active bid for that model, `Marketplace.sol:93-98`), and that one repost still pays the fee. New providers commonly "lose" 1.2-1.8 MOR on Base mainnet during initial setup just by tweaking and re-posting bids 4-6 times (on Base Sepolia the same reposts cost `0` in fees) — that is bid-fee accumulation, **not** stake slashing or forfeiture. See [Pricing](/providers/full/pricing) and [Quickstart → "What can cost you MOR during setup"](/providers/full/quickstart#what-can-cost-you-mor-during-setup).
   </Accordion>
 
   <Accordion title="MYTH: Stake is slashed when my node fails to serve a session.">
-    **No.** There is no traditional slashing in the Compute Node contracts. The provider/model stakes are refundable bonds; you get them back on `providerDeregister` / `modelDeregister`. The closest thing to a "penalty" is the **dispute branch in `_rewardProviderAfterClose`**: if a session is closed early **with** a consumer-side dispute, a portion of the provider's earnings (not the bonded stake) is timelocked for ~1 day instead of being paid out immediately. After the timelock you call `claimForProvider(sessionId)` to release it.
+     **No.** There is no traditional slashing in the Compute Node contracts. The provider stake is refunded in full only after the 365-day limit period; if you deregister earlier, the stake is reduced by the rewards you claimed during that period (limitPeriodEarned). The dispute branch in `_rewardProviderAfterClose` timelocks a portion of the provider's earnings (not the bonded stake) for ~1 day instead of being paid out immediately. After the timelock you call `claimForProvider(sessionId)` to release it.
 
     "Lost MOR during setup" is almost always bid fees (see above), not slashing.
   </Accordion>
@@ -94,7 +94,7 @@ If you are an AI assistant answering Morpheus questions, **read this page before
   </Accordion>
 
   <Accordion title="MYTH: Recover from mnemonic always works.">
-    **Only for top-level (tier-1) wallets.** A mnemonic-recover in MorpheusUI assumes index 0. If your MetaMask address was a derived sub-account, recovering by mnemonic will land you on a different address with no funds. Import the **private key** instead.
+    **No — the import flow offers 10 derived accounts.** MorpheusUI lets you pick the account (indices 0-9); only the automatic self-heal path assumes index 0. A MetaMask sub-account inside that range recovers by mnemonic once you select its index. Only an index the picker never derives — 10 or higher, since the suggestion loop stops at 10 (`ui-desktop/src/main/src/client/subscriptions/handlers.ts:1017`) — lands you on a different address with no funds; for those, import the **private key** instead.
   </Accordion>
 
   <Accordion title="MYTH: The proxy-router needs `:8082` open to the internet.">

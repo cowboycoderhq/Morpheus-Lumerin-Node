@@ -515,9 +515,10 @@ func (c *ProxyController) UpdateChatTitle(ctx *gin.Context) {
 //	@Summary	Bind a chat to the session currently serving it
 //	@Tags		chat
 //	@Produce	json
-//	@Param		id		path		string					true	"Chat ID"	format(hex32)
-//	@Param		request	body		UpdateChatSessionReq	true	"Session"
-//	@Success	200		{object}	ResultResponse
+//	@Param		id		path		string							true	"Chat ID"	format(hex32)
+//	@Param		request	body		proxyapi.UpdateChatSessionReq	true	"Session"
+//	@Success	200		{object}	proxyapi.ResultResponse
+//	@Security	BasicAuth
 //	@Router		/v1/chats/{id}/session [post]
 func (c *ProxyController) UpdateChatSession(ctx *gin.Context) {
 	var params structs.PathHex32ID

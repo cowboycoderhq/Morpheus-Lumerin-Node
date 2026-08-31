@@ -23,11 +23,11 @@ flowchart LR
 
 **Who earns:** providers who host models and serve consumer sessions.
 
-**How it's earned:** for every consumer session that closes against your bid, the contract pays you `pricePerSecond × duration` (capped by your proportional stake limit, see below). Payment happens **inside `closeSession`** via `_rewardProviderAfterClose`, from the **protocol `fundingAccount`** for stake-pool sessions, or **directly from the consumer's wallet** for sessions opened with `directPayment: true`. Either way, the amount you earn is the same per second of service.
+**How it's earned:** for every consumer session that closes against your bid, the contract pays you `pricePerSecond × duration` (capped at `stake − limitPeriodEarned` per 365-day period — the full stake, not a proportion of it; see below). Payment happens **inside `closeSession`** via `_rewardProviderAfterClose`, from the **protocol `fundingAccount`** for stake-pool sessions, or **from the contract's balance (the consumer's escrowed stake)** for sessions opened with `directPayment: true`. Either way, the amount you earn is the same per second of service.
 
 **Where it goes:** the provider wallet that owns the on-chain provider record.
 
-**Cap:** `PROVIDER_REWARD_LIMITER_PERIOD` (currently 1 day) caps how much a provider can earn per period proportional to their staked amount. Beyond the cap, sessions still bill the consumer but the provider waits for the next period to earn more. Code: [`SessionRouter.sol::_claimForProvider`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/smart-contracts/contracts/diamond/facets/SessionRouter.sol).
+**Cap:** `PROVIDER_REWARD_LIMITER_PERIOD` is **365 days** (`ProviderStorage.sol:21`). Within a period a provider can claim at most `stake − limitPeriodEarned` — i.e. **the full stake**, not a proportion of it (`SessionRouter.sol:383`). A provider who hits the cap waits for the current period to end — up to a year, not a day. That period is **not** a one-shot window running from registration: the first payout that lands after `limitPeriodEnd` has passed sets a new end at `block.timestamp + 365 days` and zeroes `limitPeriodEarned` (`SessionRouter.sol:378-381`), and that rollover executes inside every `closeSession` payout (`SessionRouter.sol:290`), not only on an explicit `claimForProvider`. So a provider who keeps serving is perpetually inside a window, and the full-stake refund branch (`ProviderRegistry.sol:100-101`) is reached only by letting a whole period elapse with no payout at all — not by waiting out the year that began at registration. Beyond the cap, sessions still bill the consumer but the provider waits for the next period to earn more. Code: [`SessionRouter.sol::_claimForProvider`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/smart-contracts/contracts/diamond/facets/SessionRouter.sol).
 
 **Disputes / on-hold:** if the consumer disputes a session and closes early, a portion of the provider's reward is parked in a per-day timelock similar to the consumer's `userStakesOnHold` queue. Code: [`SessionRouter.sol::_rewardProviderAfterClose`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/smart-contracts/contracts/diamond/facets/SessionRouter.sol). To pull the unlocked portion later, call `claimForProvider(sessionId)`.
 
@@ -55,14 +55,14 @@ flowchart LR
 | Currency in | MOR (consumer stake) | MOR (your locked principal) |
 | Currency out | MOR (per-session) | MOR (emissions) |
 | Tied to your hardware | Yes | No |
-| Tied to your provider stake | Yes (proportional limiter) | No |
+| Tied to your provider stake | Yes — the per-period cap equals the full stake | No |
 | Where to read more | This site | [mor.org](https://mor.org), upstream MorpheusAIs/Docs |
 
 ## What they have in common
 
 - Both denominate everything in **MOR** on **BASE**.
 - Both can use the same wallet, but **don't have to**.
-- The on-chain provider stake (the `0.2` MOR or `10000` MOR refundable bond) **is part of System 1**, not System 2 — depositing it does not enrol you in stake-for-liquidity.
+- The on-chain provider stake (the refundable bond: `0.2` MOR on Base mainnet, `0.2` on Sepolia) **is part of System 1**, not System 2 — depositing it does not enrol you in stake-for-liquidity.
 
 ## A common mistake
 

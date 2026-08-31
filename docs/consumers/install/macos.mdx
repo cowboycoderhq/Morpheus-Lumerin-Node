@@ -13,15 +13,15 @@ For a packaged install (no compilation), use the [Consumer quickstart](/consumer
 </Note>
 
 <Warning>
-**Wallet:** if you start with an existing MetaMask wallet, use a **tier-1** (top-level) address, not a derived/secondary one. MorpheusUI's mnemonic-recover flow does not work properly with secondary addresses derived under the same mnemonic.
+**Wallet:** if you start with an existing MetaMask wallet, the import flow lets you pick any of 10 accounts derived from the mnemonic (`ImportFlow.jsx:110-129`), so it need not be the top-level one.
 </Warning>
 
 ## Dependencies
 
-| Tool | Minimum |
-|------|---------|
+| Tool | Minimum | Where |
+|------|---------|-------|
 | `git` | latest | https://git-scm.com |
-| `go`  | 1.22+  | https://golang.org |
+| `go`  | 1.25+  | https://golang.org |
 | `node`| 20+    | https://nodejs.org |
 | `make`| any    | https://www.gnu.org/software/make |
 | `yarn`| any    | https://yarnpkg.com |
@@ -53,7 +53,7 @@ You will need a port for the local model server (`8080` in this guide). This set
   </Step>
   <Step title="Download and run">
     ```bash
-    wget -O models/${model_file_name} \
+    curl -L -o models/${model_file_name} \
       ${model_url}/${model_collection}/resolve/main/${model_file_name}
     ./llama-server -m models/${model_file_name} \
       --host ${model_host} --port ${model_port} --n-gpu-layers 4096
@@ -83,6 +83,24 @@ You'll need:
     cp .env.example .env
     vi .env
     ```
+
+<Warning>
+**Set your own API password before starting.** `.env.example` ships
+`COOKIE_CONTENT=admin:admin`, and that becomes the Basic Auth credential for the
+local API. Either **delete the line** — the proxy-router then generates a random
+32-character password on first start (`internal/system/auth.go:226-232`) — or set
+it to `admin:<your-own-password>`.
+
+Either way the credential is written to `.cookie` (default `./.cookie`, next to
+the binary — `proxy-router/internal/config/config.go:212`) with `0600` permissions. **Read the generated
+password with `cat .cookie`**; the file contains a single `admin:<password>`
+line, and that is what you enter in Swagger's **Authorize** box and in every
+`curl -u` below.
+
+The file is only written when it does **not** already exist (`auth.go:215`), so
+if you have started the router before, delete `.cookie` first or the change has
+no effect.
+</Warning>
     See [Env: proxy-router](/reference/env-proxy-router) for every field.
   </Step>
   <Step title="Build & run">
@@ -110,7 +128,7 @@ The Electron app lives in `ui-desktop/` (product name **MorpheusUI**):
 ```bash
 cd <your_path>/Morpheus-Lumerin-Node/ui-desktop
 cp .env.example .env
-vi .env  # confirm PROXY_WEB_URL points at the proxy-router API port
+vi .env  # optional: set SERVICE_PROXY_API_PORT if the proxy-router API is not on 8082
 yarn install
 yarn dev
 ```
@@ -118,7 +136,7 @@ yarn dev
 The Electron app launches into onboarding. Confirm:
 - Lower-left shows your ERC-20 wallet.
 - Wallet tab shows MOR + ETH balances.
-- Chat tab is set to `Provider: (local)` by default.
+- The Chat tab renders no `Provider:` label. A **Provider** row (default **Auto**) appears on the **Select payment method** screen when you open a marketplace session.
 
 ## Step D — CLI (terminal 4)
 
@@ -137,7 +155,7 @@ Release builds of the CLI are named `*-morpheus-cli-<version>` (see [Releases](h
 
 - Save your wallet mnemonic before any cleanup.
 - `rm -rf ./node_modules` from inside `ui-desktop` if dependencies get stuck.
-- Packaged-app data lives under Electron's `userData` directory — typically `~/Library/Application Support/MorpheusUI` for the `.app`, or `~/Library/Application Support/morpheus-app` when the package name is used (including `yarn dev`). Delete whichever exists to reset the wallet store and downloaded services.
+- Packaged-app data lives under Electron's `userData` directory — `~/Library/Application Support/morpheus-app` for both the packaged `.app` and `yarn dev`. Electron derives that folder from the package name (`ui-desktop/package.json:2`), which declares no `productName`; the `MorpheusUI` set at `ui-desktop/electron.builder.config.ts:36` names the macOS bundle only. Logs sit beside it in `~/Library/Logs/morpheus-app`. A `~/Library/Application Support/MorpheusUI` folder is not created by current builds — remove one only if an older build left it behind. Delete these to reset the wallet store and downloaded services.
 - Dangling processes: `ps -ax | grep electron` / `ps -ax | grep proxy-router` then `kill -9 <pid>`.
 - Locked log files in `./data/`: `lsof | grep /proxy-router/data/` and kill the holding process.
 

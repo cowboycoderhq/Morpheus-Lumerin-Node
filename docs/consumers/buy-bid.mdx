@@ -13,13 +13,13 @@ Opening a session = "buying a bid." You stake MOR for a fixed duration; the prox
 
 <Steps>
   <Step title="Confirm wallet funding">
-    Lower-left of MorpheusUI shows your wallet address; the Wallet tab shows MOR and ETH balances. You need at least `5` MOR for a session and a small ETH balance for gas.
+    Lower-left of MorpheusUI shows your wallet address; the Wallet tab shows MOR and ETH balances. You need enough MOR for a session — the app computes the amount from the bid price and duration, and there is no flat minimum. You also need a small ETH balance for gas.
   </Step>
   <Step title="Pick a remote model">
-    Chat tab → **Change Model** → pick from the remote dropdown (anything other than "Local Model"). The dropdown lists models registered in the Diamond marketplace contract.
+    Chat tab → **New chat** → pick a model. The picker is a searchable list with **Local**, **Secure** and **Marketplace** sections, not a dropdown; anything outside **Local** is a marketplace model registered in the Diamond contract.
   </Step>
   <Step title="Open a session">
-    Click **Open Session**. Enter a stake (minimum `5` MOR). Confirm.
+    Choosing a marketplace model opens **Select payment method**. Set the **Session length** — the stake follows from the length and the bid price, not the other way round — then click **Stake** and confirm. There is no flat MOR minimum.
   </Step>
   <Step title="Watch for the on-chain confirmation">
     A transaction will be submitted. Once confirmed, the session is open and you can prompt.
@@ -28,9 +28,9 @@ Opening a session = "buying a bid." You stake MOR for a fixed duration; the prox
     Either path:
 
     - **Natural expiration** — your consumer node submits `closeSession` ~1 minute after `endsAt` (if online).
-    - **Early close** — click the time icon next to the model line; click **X** next to the session.
+    - **Early close** — open the history drawer from the chat header, switch to the **Sessions** tab, and click **Close** next to the session.
 
-    In both cases: **unused** stake returns in the close txn; the **used stipend** day-locks in `userStakesOnHold` until the next UTC day. After `releaseAt`, call `withdrawUserStakes` to claim the held slice.
+In both cases the contract day-locks `min(your remaining stake, the stake-equivalent of the seconds consumed during the **final UTC day**)` in `userStakesOnHold` until the next UTC day, and returns the remainder in the close txn. **That remainder is the part you did not consume.** The lock scales with consumed seconds, so a session closed at 10% of its scheduled length returns roughly 90% of the stake immediately, while a session left to run to `endsAt` inside one UTC day returns approximately zero. Budget for the **consumed** portion being unavailable until after midnight UTC — closing early is what keeps the rest liquid. After `releaseAt`, the proxy-router automatically sweeps matured stake via its StakeClaimer — but only while your own node is running and only for the wallet it holds; with the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs: starting one claims matured stake immediately on startup, and manual calling of `withdrawUserStakes` is the alternative. Use `GET /blockchain/stakes/on-hold` to check the balance.
   </Step>
 </Steps>
 
@@ -59,9 +59,9 @@ curl -X POST 'http://localhost:8082/blockchain/sessions/<sessionId>/close' \
 ## What you should expect
 
 - **Wallet balance drops by the staked amount** the instant the open transaction is mined. The MOR is now in the Inference Contract on Base for the duration of the session.
-- **On close (early or natural):** unused stake returns in the same txn; the used stipend day-locks with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`. After `releaseAt`, call `withdrawUserStakes(yourAddress, iterations)` on the Diamond — there is no HTTP route on the proxy-router.
+- **On close (early or natural):** the contract locks `min(remaining stake, stake-equivalent of the final UTC day's consumed seconds)` with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`, and returns the remainder in the same txn — **the unconsumed portion**, which is close to the whole stake for an early close and approximately zero only for a session run to `endsAt` inside one UTC day. After `releaseAt` a running proxy-router sweeps matured stake automatically every 10 minutes (`blockchainapi/stake_claimer.go`), and only for the wallet it holds; `GET /blockchain/stakes/on-hold` reports the balance. While that node is running it sweeps for you, so calling `withdrawUserStakes(yourAddress, iterations)` on the Diamond yourself only takes the withdrawal sooner; with the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs — starting one claims matured stake immediately on startup, and calling it yourself is the alternative.
 - **Capital planning:** used stake is **not reusable the same UTC day**. Size your wallet for the gross stake you need that day, not for recycling one pile of MOR many times before midnight UTC. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
-- **The provider is paid from a separate protocol funding account**, not from your stake in real time. If that funding account is empty or under-approved, every `closeSession` fails — yours included. The session sits "active" past `endsAt` until operators top it up. See [Why is my MOR locked?](/ai/why-locked-in-contract).
+   - **The provider is paid from a separate protocol funding account** for pool-mode sessions (the default). If that funding account is empty or under-approved, pool-mode `closeSession` calls fail. Direct-pay sessions (`directPayment: true`) pay the provider from your escrowed stake and can close independently of the funding account. See [Sessions: stake, close, recover](/concepts/sessions-stake-close-recover).
 - For a hosted read-only wallet checker that splits your MOR across the three on-chain buckets (wallet / active session / on-hold), see [tech.mor.org/session.html](https://tech.mor.org/session.html).
 
 ## Picking a good bid

@@ -323,10 +323,22 @@ func (c *ApiGatewayClient) GetBidsByModelAgent(ctx context.Context, modelAgentId
 	return result, err
 }
 
-func (c *ApiGatewayClient) ListUserSessions(ctx context.Context, user string) (result []SessionListItem, err error) {
+func (c *ApiGatewayClient) ListUserSessions(ctx context.Context, user string, offset *big.Int, limit uint8, order string) (result []SessionListItem, err error) {
 	response := map[string][]SessionListItem{}
 
-	err = c.getRequest(ctx, fmt.Sprintf("/blockchain/sessions/user?user=%s", user), &response)
+	endpoint := fmt.Sprintf("/blockchain/sessions/user?user=%s&offset=%s&limit=%d", user, offset.String(), limit)
+	// order == "" means the caller (see resolveOrder in cli/main.go) wants
+	// the order parameter omitted entirely, not sent as an empty value --
+	// that's what lets a bare `listBlockchainSession` come back in the same
+	// ORDER the pre-pagination CLI got, by leaving the server to apply its
+	// own default. The WIRE is not the pre-pagination one: offset and limit
+	// are new here and always sent (client_test.go:34-36 asserts exactly
+	// that), where the pre-pagination call sent neither.
+	if order != "" {
+		endpoint += fmt.Sprintf("&order=%s", order)
+	}
+
+	err = c.getRequest(ctx, endpoint, &response)
 	if err != nil {
 		return nil, fmt.Errorf("internal error: %v", err)
 	}
@@ -334,10 +346,16 @@ func (c *ApiGatewayClient) ListUserSessions(ctx context.Context, user string) (r
 	return response["sessions"], nil
 }
 
-func (c *ApiGatewayClient) ListProviderSessions(ctx context.Context, provider string) (result []SessionListItem, err error) {
+func (c *ApiGatewayClient) ListProviderSessions(ctx context.Context, provider string, offset *big.Int, limit uint8, order string) (result []SessionListItem, err error) {
 	response := map[string][]SessionListItem{}
 
-	err = c.getRequest(ctx, fmt.Sprintf("/blockchain/sessions/provider?provider=%s", provider), &response)
+	endpoint := fmt.Sprintf("/blockchain/sessions/provider?provider=%s&offset=%s&limit=%d", provider, offset.String(), limit)
+	// See ListUserSessions above: order == "" omits the parameter entirely.
+	if order != "" {
+		endpoint += fmt.Sprintf("&order=%s", order)
+	}
+
+	err = c.getRequest(ctx, endpoint, &response)
 	if err != nil {
 		return nil, fmt.Errorf("internal error: %v", err)
 	}

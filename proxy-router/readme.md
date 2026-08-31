@@ -18,8 +18,11 @@
 
 - **Using `chat_id`:**
   - Include a `chat_id` in the request header.
-  - The proxy-router automatically injects the corresponding chat context.
-  - **Request Simplification:** Only the latest message needs to be sent in the request body.
+  - The proxy-router does not automatically inject the chat context; injection requires `PROXY_FORWARD_CHAT_CONTEXT` to be set to `TRUE` (by default it is `FALSE`). `PROXY_STORE_CHAT_CONTEXT` alone only stores the context.
+  - **Request Simplification:** Only the latest message needs to be sent in the request body --
+  but only when `PROXY_FORWARD_CHAT_CONTEXT` is `TRUE`. Under the default (`FALSE`,
+  `config.go:198-206`) the proxy-router stores history without prepending it, so the client
+  must still send whatever context the model needs.
 
 #### When `PROXY_STORE_CHAT_CONTEXT` is set to `FALSE`
 

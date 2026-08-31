@@ -7,7 +7,7 @@ last_verified: "v7.0.0"
 source: "docs/02.5-api-auth.md"
 ---
 
-API access requires authentication and network access. This was introduced in main release `2.0.0` (and dev/test `1.6.1`) to:
+Most API access requires authentication and network access — five routes are open: `GET /healthcheck`, `POST /proxy/provider/ping`, `POST /auth/users/request`, `GET /auth/cookie/path` and `GET /swagger/*any`. This was introduced in main release `2.0.0` (and dev/test `1.6.1`) to:
 1. Prevent unauthorized access to the API and the wallet in case of network or firewall mis-configuration.
 2. Enable governed access for AI agents — agents should have **scoped** access to the API, not full admin.
 
@@ -15,8 +15,8 @@ API access requires authentication and network access. This was introduced in ma
 
 | File | Default location | Purpose |
 |------|------------------|---------|
-| `.cookie` | proxy-router binary directory | Admin username/password |
-| `proxy.conf` | proxy-router binary directory | All users + per-user method whitelists |
+| `.cookie` | `./.cookie` — relative to the **working directory the proxy-router is started from**, not the binary's directory (`internal/config/config.go:212`, made absolute at `:268` via `filepath.Abs`) | Admin username/password |
+| `proxy.conf` | `./proxy.conf` — same working-directory resolution (`internal/config/config.go:215`) | All users + per-user method whitelists |
 
 Override paths via env vars:
 
@@ -80,7 +80,7 @@ Content-Type: application/json
 {
   "username": "agent",
   "password": "agentPassword",
-  "methods": ["get_balance"]
+  "perms": ["get_balance"]
 }
 ```
 
@@ -100,7 +100,7 @@ Content-Type: application/json
 
 ## Authorization header
 
-All endpoints require:
+Most endpoints require authentication, but five routes are open: GET /healthcheck, POST /proxy/provider/ping, POST /auth/users/request, GET /auth/cookie/path, and GET /swagger/*any. For those that do, use the following header:
 
 ```
 Authorization: Basic <base64(username:password)>
@@ -113,37 +113,61 @@ For example, `YWRtaW46SkpMUk56ZTA4Wk4zdmxOZGd3Z2JyaDZjNGRSdzlnUVQ=` decodes to `
 These method names are recognized in `rpcwhitelist=` entries (e.g. `rpcwhitelist=agent:get_balance,get_transactions`). Set `rpcwhitelistdefault=1` to allow them by default unless restricted.
 
 ```
-get_balance
-get_transactions
-get_allowance
-get_latest_block
+add_user
+agent_requests
 approve
+audio_speech
+audio_transcription
+call_agent_tool
+chat
+close_session
+create_bid
+create_model
+create_provider
+delete_bids
+delete_model
+delete_provider
+docker_build
+docker_manage
+docker_version
+edit_chat_history
+embeddings
+get_agent_tools
+get_allowance
+get_balance
+get_bids
+get_budget
+get_chat_history
+get_latest_block
+get_local_agents
+get_local_models
+get_models
+get_providers
+get_sessions
+get_supply
+get_transactions
+get_wallet
+initiate_session
+ipfs_add
+ipfs_get
+ipfs_pin
+ipfs_pinned
+ipfs_unpin
+ipfs_version
+model_health_refresh
+open_session
+remove_user
+remove_wallet
+request_allowance
 send_eth
 send_mor
-get_providers
-create_provider
-delete_provider
-get_models
-create_model
-delete_model
-create_bid
-get_bids
-delete_bids
-get_sessions
 session_provider_claim
-open_session
-close_session
-get_budget
-get_supply
+set_wallet
 system_config
-add_user
-remove_user
-initiate_session
-chat
-get_local_models
-get_chat_history
-edit_chat_history
 ```
+
+This list is generated from every `CheckAuth("...")` call in the proxy-router source; there are **51**. A method not listed here cannot be granted.
+
 
 ## Recommendations
 
