@@ -329,8 +329,11 @@ func (c *ApiGatewayClient) ListUserSessions(ctx context.Context, user string, of
 	endpoint := fmt.Sprintf("/blockchain/sessions/user?user=%s&offset=%s&limit=%d", user, offset.String(), limit)
 	// order == "" means the caller (see resolveOrder in cli/main.go) wants
 	// the order parameter omitted entirely, not sent as an empty value --
-	// that's what lets a bare `listBlockchainSession` reach the server
-	// exactly as the pre-pagination CLI did.
+	// that's what lets a bare `listBlockchainSession` come back in the same
+	// ORDER the pre-pagination CLI got, by leaving the server to apply its
+	// own default. The WIRE is not the pre-pagination one: offset and limit
+	// are new here and always sent (client_test.go:34-36 asserts exactly
+	// that), where the pre-pagination call sent neither.
 	if order != "" {
 		endpoint += fmt.Sprintf("&order=%s", order)
 	}

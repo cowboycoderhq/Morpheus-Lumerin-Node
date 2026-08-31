@@ -13,9 +13,11 @@ import (
 // the docs-accuracy branch's follow-up fixes to the same three flags:
 //   - limitToUint8 must reject a --limit above the server's uint8 ceiling
 //     instead of silently wrapping mod 256 (256 -> 0, 300 -> 44 on the wire),
-//     and must reject 0: the server's contract is validate:"gte=1", limit=0
-//     returns an empty page, and 0 used to sail through and get misreported
-//     as "a full page of results was returned" (main.go's full-page note).
+//     and must reject 0: like the offset case below, validate:"gte=1"
+//     (structs/req.go) is inert -- gin enforces only the binding tag -- so
+//     limit=0 reaches the server and returns an empty page, and 0 used to
+//     sail through and get misreported as "a full page of results was
+//     returned" (main.go's full-page note).
 //   - validateOffset must reject a negative --offset; the server's
 //     validate:"gte=0" tag (structs/req.go) is a go-playground/validator tag
 //     that gin's ShouldBindQuery does not enforce. It must be applied at

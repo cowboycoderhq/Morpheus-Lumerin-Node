@@ -287,12 +287,15 @@ func main() {
 // A value above the server's uint8 ceiling is rejected instead of silently
 // wrapping mod 256 (e.g. a bare uint8() conversion turns 256 into 0 and 300
 // into 44 -- exactly the truncation this pagination fix exists to eliminate).
-// Zero is rejected too: the server's contract is validate:"gte=1", limit=0
-// returns an empty page, and listBlockchainSessions' full-page note (below)
-// would otherwise print "a full page of results was returned" over zero rows.
+// Zero is rejected too, here rather than at the server: Limit is tagged
+// validate:"gte=1" (structs/req.go:34), but that is a go-playground/validator
+// tag and gin's ShouldBindQuery enforces only the binding tag, which is
+// omitempty -- so limit=0 reaches the server and returns an empty page.
+// listBlockchainSessions' full-page note (below) would otherwise print
+// "a full page of results was returned" over zero rows.
 func limitToUint8(limit uint) (uint8, error) {
 	if limit == 0 {
-		return 0, fmt.Errorf("--limit 0 is not valid; the server requires limit >= 1 (structs.QueryOffsetLimitOrder, proxy-router/internal/blockchainapi/structs/req.go) and returns an empty page for it, not a truncated one")
+		return 0, fmt.Errorf("--limit 0 is rejected by this CLI, not by the server: structs.QueryOffsetLimitOrder tags Limit validate:\"gte=1\" (proxy-router/internal/blockchainapi/structs/req.go:34), but gin binds on the binding tag, which is omitempty, so nothing runs that rule -- limit=0 reaches the server verbatim and comes back as an empty page, not a truncated one")
 	}
 	if limit > math.MaxUint8 {
 		return 0, fmt.Errorf("--limit %d exceeds the maximum accepted value of %d", limit, math.MaxUint8)
@@ -334,7 +337,8 @@ func orderToServerString(order string) (string, error) {
 // When isSet is false, resolveOrder returns ("", nil) -- the client's cue
 // (see ListUserSessions/ListProviderSessions in cli/chat/client/client.go)
 // to omit the order parameter from the request entirely, exactly matching
-// what the pre-pagination CLI sent (nothing). That matters because
+// what the pre-pagination CLI sent for THAT parameter (nothing); offset
+// and limit are new and are always sent. That matters because
 // proxy-router's mapOrder treats only the exact string "ASC" as ascending
 // (internal/blockchainapi/mappers.go:105-110), while the server's own
 // default is the lowercase "asc" (structs/req.go's
