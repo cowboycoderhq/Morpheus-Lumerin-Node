@@ -9,12 +9,12 @@ import (
 	"github.com/MorpheusAIs/Morpheus-Lumerin-Node/proxy-router/internal/lib"
 )
 
-// StakeClaimer sweeps MOR that closing a session EARLY time-locked, back to the
-// user, as soon as it matures.
+// StakeClaimer sweeps MOR that any close landing before releaseAt time-locked,
+// back to the user, as soon as it matures.
 //
-// Why this exists: closing a session before it ends does not spend the stake, it
-// pushes OnHold(amount, startOfDay(closedAt)+1day) onto the user's list
-// (SessionRouter._rewardUserAfterClose). The Diamond exposes
+// Why this exists: closing a session does not spend the stake, it pushes
+// OnHold(amount, startOfTheDay(min(closedAt, endsAt))+1day) onto the user's list
+// (SessionRouter._rewardUserAfterClose, :296-298). The Diamond exposes
 // getUserStakesOnHold/withdrawUserStakes, but nothing ever called them — no
 // endpoint, no UI — so the money was invisible AND unreachable. A real user
 // closed a 6-minute session at 3 minutes and watched ~2.7 MOR vanish for a day
