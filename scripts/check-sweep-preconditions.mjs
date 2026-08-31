@@ -24,6 +24,14 @@
 // Those three put TWO defects on one axis, and a fix for either can create the
 // other. Both are violations:
 //
+//   Class L — WRONG ABOUT THE LOCK. Not a missing qualifier but a false
+//   statement: the day-lock anchored to the close rather than to
+//   startOfTheDay(min(closedAt, endsAt)) (:296-298), or attributed to closing
+//   EARLY when the gate at :305 has no early/late test. Classes E and S ask
+//   "what is missing"; this asks "is it true", and no amount of qualifying
+//   repairs it. Added after the wrong anchor survived seven passes at
+//   docs/concepts/tokens-and-fees.mdx:26 with this checker reporting PASS: 0.
+//
 //   Class E — OVER-PROMISE. "It comes back automatically" / "no manual call is
 //   needed", without BOTH (1) and (2) in reach of the claim. Facts 1 and 2 mean
 //   nothing sweeps at all unless a proxy-router holding that wallet is running,
@@ -143,6 +151,13 @@ const PROSE_IN_SCOPE = (rel) =>
 const GO_SOURCE_ROOTS = [
   `proxy-router${sep}internal${sep}blockchainapi`,
   `proxy-router${sep}internal${sep}proxyctl`,
+  // The registries package wraps the Diamond calls and its doc comments are
+  // where this subject is described most concretely. It was never scanned, so
+  // session_router.go sat at base wording through every pass of this branch --
+  // byte-identical at 462c664d and at the tip -- carrying "Closing late locks
+  // nothing", which is false for a late close inside the session's own UTC day.
+  // Nothing here could have reported that, so PASS said nothing about it.
+  `proxy-router${sep}internal${sep}repositories${sep}registries`,
 ];
 const IS_SCANNED_GO = (rel) =>
   /\.go$/.test(rel) && GO_SOURCE_ROOTS.some((r) => rel === r || rel.startsWith(r + sep));
@@ -221,6 +236,7 @@ const SCAN_ROOTS = ['docs', '.cursor', ...SINGLE_FILE_ROOTS,
   // Within this package the two Go unit kinds part company: a PRINTED string is
   // in scope (see IN_SCOPE), a comment is INFO.
   'proxy-router/internal/blockchainapi',
+  'proxy-router/internal/repositories/registries',
   // Where the claimer is CONSTRUCTED and started. Fact 1 of this checker is a
   // claim about this file, so the file has to be readable by the checker that
   // makes it.
@@ -269,10 +285,41 @@ const EXCULPATORY = [
 // page this merely describes a component that exists, and a component is not
 // falsified by not running: INFO, not a violation. In a file that dictates an
 // assistant's assertions it IS a violation (see DICTATES_ASSERTIONS).
+// The verb lists here are the gate's weakest joint and were measured to be so.
+// AUTO_SWEEP did not match "auto-claimer" -- `claim` needs a word boundary and
+// "claimer" supplies none -- even though SUBJECT_STRONG lists `auto-?claimer`
+// as a name for the very thing. SWEPT_BACK did not match "the money comes home"
+// because `comes` was not in its list. Together those two gaps hid an
+// unqualified sweep promise that THIS pull request wrote, at
+// controller.go:73-74: the file produced no violation, no INFO record, and no
+// line in --info at all.
+//
+// The suffixes and the motion verbs below close the specific paraphrases that
+// were observed. They do NOT make this a semantic check, and it is worth being
+// plain about that: any lexical cue set is a list of ways of saying a thing,
+// and English has more. A writer who says "you do not have to do anything for
+// it to arrive" still evades every entry here. What the gate can honestly
+// claim is that it fires on the forms observed in this corpus and on the ones
+// that have evaded it before, each pinned as a fixture so a later refactor
+// cannot quietly drop one.
 const ASSERTS_SWEEP = [
   ['AUTOMATIC',   /\bautomatic(ally)?\b/i],
-  ['AUTO_SWEEP',  /\bauto-?(sweep|sweeps|claim|claimed|claims)\b/i],
+  // suffixes: auto-claimer, auto-claiming, auto-sweeper, auto-sweeping
+  ['AUTO_SWEEP',  /\bauto-?(sweep|claim)(s|ed|er|ers|ing)?\b/i],
   ['SWEPT_BACK',  /\b(swept|sweeps|sweep|claimed|claims|returns?|returned)\b[^.;:]{0,40}?\b(back|home|to (your|the) wallet)\b/i],
+  // Class A's other face: not naming a mechanism at all, but removing the
+  // reader's agency -- "the money comes home whether or not anyone looks".
+  // That sentence carries the full promise with none of SWEPT_BACK's verbs.
+  //
+  // Widening SWEPT_BACK's verb list to reach it was tried first and REVERTED,
+  // measured: adding come/came/get/land/arrive took the scan from 0 violations
+  // to 4, and the two new ones were a quoted user complaint ("I closed and
+  // nothing came back") and a sentence about what the CLOSE transaction
+  // returns. Those are different claims that happen to share a verb, and a
+  // gate that cannot tell them apart teaches its reader to wave it through.
+  // The agency phrasing is specific to the promise, so it costs no precision:
+  // 0 new findings across the corpus.
+  ['NO_AGENCY',   /\bwhether or not (anyone|you|the user)\b|\bwithout (you|anyone|the user) (doing|having to|lifting|needing)\b|\bon its own\b|\bby itself\b|\bno (user )?action (is )?(needed|required)\b/i],
 ];
 
 // Class S — SOLE REMEDY. Names the manual call as THE remedy for the node-off /
@@ -429,8 +476,90 @@ function windowAt(body, idx) {
 // ------------------------------------------------------------- classify ----
 // One place decides what a unit is, so the self-test exercises the same code the
 // sweep does.
+// Class L — THE LOCK, not the sweep. Classes E and S both ask "is this sweep
+// promise missing a qualifier". Neither can reach a sentence that is complete
+// and simply FALSE about when the lock fires or where it is anchored, and that
+// is a different failure with its own history on this branch:
+//
+//   * WRONG ANCHOR. `releaseAt_ = startOfTheDay(min(closedAt, endsAt)) + 1 days`
+//     (SessionRouter.sol:296-298). Text that anchors it to the CLOSE instead
+//     disagrees with the contract on every close landing on a later UTC day than
+//     the one the session ended in — the contract returns everything, the text
+//     says it is locked. docs/concepts/tokens-and-fees.mdx:26 said exactly that
+//     for seven passes, and stake_claimer.go:16 and session_router.go:258 said
+//     it in code comments the scanner did not read.
+//
+//   * EARLY-CLOSE ATTRIBUTION. The gate is `block.timestamp < releaseAt_`
+//     (:305) with no early/late test at all, so "closing EARLY locks it" and
+//     "closing late locks nothing" are both false — a late close inside the
+//     session's own UTC day locks, usually the whole stake. This is the claim
+//     this pull request was opened to correct, and it survived at base wording
+//     in four source comments while the gate reported PASS.
+//
+// The provider path is the reason ANCHOR_CLOSE is not simply "mentions
+// closedAt": _getProviderOnHoldAmount really does anchor to
+// startOfTheDay(session.closedAt) (SessionRouter.sol:268), and a comment about
+// THAT is correct. So the cue only fires where the surrounding text is about the
+// USER stake, and any text carrying the correct formula discharges it.
+const LOCK_SUBJECT = /userStakesOnHold|OnHold\(|releaseAt|day-?lock|_rewardUserAfterClose/i;
+const CORRECT_ANCHOR = /min\(\s*(?:session\.)?closed_?At\s*,\s*(?:session\.)?ends_?At\s*\)|min\(\s*(?:session\.)?ends_?At\s*,\s*(?:session\.)?closed_?At\s*\)/i;
+const PROVIDER_CTX = /provider|_getProviderOnHoldAmount|_rewardProviderAfterClose/i;
+
+const LOCK_FALSE = [
+  ['ANCHOR_CLOSE', /startOf(?:The)?Day\s*\(\s*(?:session\.)?closed_?At\s*\)/i],
+  ['ANCHOR_PROSE', /\b(?:before|until)\s+the\s+(?:start\s+of\s+the\s+)?next\s+UTC\s+day\s*\(\s*`?releaseAt`?\s*\)/i],
+  // CASE-SENSITIVE on purpose, and this is the cue's known limit. Uppercase
+  // EARLY is the emphatic form the base source comments used and is almost
+  // always the attribution error. Lowercase "early" is not: "an early close
+  // returns the part you did not consume" is TRUE and appears correctly on
+  // several pages, so a case-insensitive version was measured to fire on them.
+  // A lowercase attribution error therefore evades this cue and is caught only
+  // if it also names the wrong anchor. Stated so the gap is on the record.
+  ['EARLY_ONLY',   /\bclosing (?:a session |sessions )?EARLY\b|\bclosed? (?:a session )?EARLY\b|\bfrom closing sessions\s+EARLY\b/],
+  ['BEFORE_ENDS',  /\bclosing a session before it ends\b|\bclosing before (?:a block's )?`?EndsAt`?/i],
+  ['LATE_NO_LOCK', /\bclosing late locks nothing\b|\bclos\w+ late\b[^.;:]{0,25}\block\w*\s+nothing\b/i],
+];
+
+// "any close, not only an early one" and its kin explicitly repair the
+// attribution, so a unit carrying one is making the correct claim.
+const LOCK_DISCHARGE = /any close(?:\s+landing)?[^.;:]{0,40}not only an early one|not only an early one|any close, natural expiry included|natural expiry included|not on early closes only/i;
+
+// The two faces discharge SEPARATELY. An earlier draft let the correct formula
+// discharge everything, which was too generous in one direction and untested in
+// the other: text reading "locked by closing sessions EARLY ... until
+// startOfTheDay(min(closedAt, endsAt))" would have been waved through with its
+// attribution still wrong, and no self-test case exercised the discharge at all,
+// so deleting it left the suite green. Both are fixed here.
+const ANCHOR_CUES = new Set(['ANCHOR_CLOSE', 'ANCHOR_PROSE']);
+
+function classifyLock(body) {
+  if (!LOCK_SUBJECT.test(body)) return null;
+  let hits = cueHits(LOCK_FALSE, body)
+    .filter((h) => !(h.name === 'ANCHOR_CLOSE' && PROVIDER_CTX.test(windowAt(body, h.index))));
+  // Stating the real formula discharges the ANCHOR cues only. Text that names
+  // both anchors on purpose is correct — ui-desktop/src/renderer/src/utils/
+  // marketplace.ts:574-577 says the chain uses min(ClosedAt, EndsAt) while that
+  // function reports startOfDay(ClosedAt), and explains why they agree whenever
+  // anything is held. That is the case this discharge exists for.
+  if (CORRECT_ANCHOR.test(body)) hits = hits.filter((h) => !ANCHOR_CUES.has(h.name));
+  // Repairing the attribution in words discharges the ATTRIBUTION cues only.
+  if (LOCK_DISCHARGE.test(body)) hits = hits.filter((h) => ANCHOR_CUES.has(h.name));
+  if (!hits.length) return null;
+  return {
+    verdict: 'violation',
+    cues: [...new Set(hits.map((h) => h.name))],
+    missing: 'ANCHOR',
+    note: 'lock claim: the gate is block.timestamp < releaseAt_ anchored at startOfTheDay(min(closedAt, endsAt)) (SessionRouter.sol:296-298, :305)',
+  };
+}
+
 function classify(body, { agentFile }) {
   if (!SUBJECT.test(body)) return null;
+
+  // Class L is decided first and independently of agentFile: a false statement
+  // about the contract is false on a human page too.
+  const lock = classifyLock(body);
+  if (lock) return lock;
 
   const exc = cueHits(EXCULPATORY, body);
   const asr = cueHits(ASSERTS_SWEEP, body);
@@ -699,9 +828,25 @@ function scan(root) {
       for (const su of subUnits(u)) {
         const body = su.body;
         if (!SUBJECT.test(body)) continue;
-        const inScope = IN_SCOPE(rel, su.kind);
         const c = classify(body, { agentFile: DICTATES_ASSERTIONS(rel, su.kind) });
         if (!c) continue;
+        // A Go COMMENT is INFO for the sweep classes, and the reason is about the
+        // reader: a comment describes a mechanism to whoever is already editing
+        // the file, not a promise to a user with money in the contract. That
+        // reasoning does not transfer to Class L. A comment that says the wrong
+        // thing about what the contract DOES is read by the next editor and
+        // copied outward — which is the measured history here: at 462c664d,
+        // stake_claimer.go:12-28 and session_router.go:255-259 both carried the
+        // wrong anchor AND the early-close attribution, they survived every pass
+        // of this branch, and the wording reappeared in the docs those comments
+        // describe. So Class L is in scope wherever it is scanned.
+        // Restricted to Go comments in the scanned packages. A blanket override
+        // was tried and REVERTED: it also dragged verify/** in, which records
+        // what was true at a past commit and is out of scope on purpose — two
+        // audit files immediately became violations for correctly quoting the
+        // wording they were auditing.
+        const inScope = IN_SCOPE(rel, su.kind)
+          || (c.missing === 'ANCHOR' && baseKind(su.kind) === 'go-comment' && IS_SCANNED_GO(rel));
 
         const rec = {
           file: rel, line: su.start, endLine: su.end ?? su.start, kind: su.kind,
@@ -783,6 +928,26 @@ const SYNTHETIC_CASES = [
   ['clean',     true,  'Queue an immediate model health sweep instead of waiting for the next scheduled run. Returns immediately; the sweep runs in the background.'],
   // no claim at all -> nothing to report
   ['clean',     false, '`withdrawUserStakes(address, uint8)` moves past-releaseAt rows from `userStakesOnHold` to the user\'s wallet.'],
+
+  // --- Class L: the lock claim itself ---
+  ['violation', false, 'Closing a session early locks the used-compute portion until `startOfTheDay(closedAt) + 1 day` in `userStakesOnHold`.'],
+  ['violation', false, 'GetUserStakesOnHold reports stake locked from closing sessions EARLY. Closing late locks nothing.'],
+  // discharged by carrying the real formula
+  ['clean', false, 'The day-lock parks the slice in `userStakesOnHold` until `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`.'],
+  // discharged by repairing the attribution in words
+  ['clean', false, 'Stake time-locked by a close landing before releaseAt in `userStakesOnHold` - any close, not only an early one.'],
+  // exercises the ANCHOR discharge specifically: ANCHOR_CLOSE fires on
+  // startOfDay(ClosedAt) and is discharged by the min() form in the same unit.
+  // Deleting the discharge turns this clean case into a violation.
+  ['clean', false, "The chain's release time for `userStakesOnHold` is startOfDay(min(ClosedAt, EndsAt)) + 1 day; this helper reports startOfDay(ClosedAt) + 1 day, and they are the same day whenever anything is actually held."],
+  // exercises the ATTRIBUTION discharge specifically: EARLY_ONLY fires and is
+  // repaired in words by the same unit. Deleting that discharge turns this
+  // clean case into a violation.
+  ['clean', false, 'Stake in `userStakesOnHold` was once described as coming from closing sessions EARLY; it is parked by any close landing before releaseAt, not only an early one.'],
+  // the correct formula does NOT excuse a wrong attribution in the same unit
+  ['violation', false, 'Stake time-locked by closing sessions EARLY sits in `userStakesOnHold` until `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`.'],
+  // the PROVIDER path really is anchored to closedAt, so this must NOT fire
+  ['clean', false, '_getProviderOnHoldAmount locks the provider tokens for the current day; withdrawal is allowed a day after `startOfTheDay(session.closedAt)`, and `userStakesOnHold` is a different list.'],
 ];
 
 // Leg 1b — CORPUS. Byte slices lifted programmatically out of the tree (and, for
@@ -842,6 +1007,11 @@ const CORPUS_CASES = [
   ['violation', false, "d627040c^:docs/reference/glossary.mdx:26",
    "| **`userStakesOnHold`** | Per-user array on the Inference Contract that holds the **final UTC day's consumed slice** after close — but only when `closeSession` lands **before** `releaseAt` (`SessionRouter.sol:305`); a genuinely late close skips the lock entirely and the whole remaining stake returns at close. Each entry has an amount and `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`. Cleared by the proxy-router's StakeClaimer, which submits `withdrawUserStakes` automatically once an entry matures — but only while your own node is running and only for the wallet it holds; with the node off, or for a session opened from another wallet, calling it yourself is the only way. |"],
   // DELETED by d627040c: 'the manual call is the only route'
+  // Class L, proven by firing on the defect this branch shipped for seven
+  // passes: the day-lock anchored to the CLOSE instead of to the session end.
+  // Pinned to 0b7e6561, the published tip at which it was still live.
+  ['violation', false, "0b7e6561:docs/concepts/tokens-and-fees.mdx:26",
+   "  <Accordion title=\"Consumer session stake\"> In **pool mode**, the session duration is derived from the staked amount: the system converts the stake to a stipend using the inverse of `stipendToStake`, then divides by `pricePerSecond`. The required stake for a desired duration D is approximately `D * pricePerSecond * totalMORSupply * 100 / computeBalance` (`SessionRouter.sol:408-414`). This stake is typically much larger than the direct-payment cost (`price \u00d7 duration`) because of the pool parameters. There is **no MOR minimum**; the only floor is a 5-minute duration. Paid in MOR, escrowed in the Inference Contract on `openSession`. On close, the lock is only applied when the close time is before the start of the next UTC day (`releaseAt`). If the close happens after `releaseAt`, the entire remaining stake is returned immediately and no day-lock is created. The locked amount (if any) is automatically swept by the proxy-router's StakeClaimer after the next UTC day \u2014 but only while your own node is running and only for the wallet it holds; with the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs: starting one claims matured stake immediately on startup, and a manual `withdrawUserStakes` is the alternative. The provider is paid from a separate protocol `fundingAccount` for pool-mode sessions, or from your escrowed stake for direct-pay sessions, not from your stake in real time. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover)."],
   ['violation', false, "d627040c^:docs/reference/glossary.mdx:27",
    "| **`withdrawUserStakes`** | On-chain function (`withdrawUserStakes(address, uint8)`, selector `0xa98a7c6b`) on the Diamond contract that moves past-`releaseAt` rows from `userStakesOnHold` to the user's wallet. A running proxy-router auto-sweeps matured stakes every 10 minutes via `stake_claimer.go`, and only for the wallet it holds; with the node off, or for stakes held against a different wallet, the manual call is the only route. The balance is still reported at `GET /blockchain/stakes/on-hold`. |"],
 ];
@@ -939,6 +1109,17 @@ const FIXTURE_TREE = {
     + '\ts.log.Infof("%s wei of matured stake is swept back to your wallet automatically, no manual claim needed", hold)\n'
     + '}\n',
 
+  // Class L in a Go COMMENT, which the sweep classes deliberately treat as INFO.
+  // This asserts the narrow override: a false statement about what the contract
+  // DOES is a violation even in a comment. Without it, the four base-wording
+  // comments this branch shipped would still be invisible to leg 2.
+  'proxy-router/internal/repositories/registries/fx_registry.go':
+    'package registries\n\n'
+    + '// FxGetUserStakesOnHold reports stake locked from closing sessions EARLY;\n'
+    + '// the entry is OnHold(amount, startOfDay(closedAt)+1day) on userStakesOnHold.\n'
+    + '// Closing late locks nothing.\n'
+    + 'func fx() {}\n',
+
   // the second Go root, and a log line whose defect is the sole-remedy face
   'proxy-router/internal/proxyctl/fx_proxyctl.go':
     'package proxyctl\n\n'
@@ -989,6 +1170,7 @@ const FIXTURE_EXPECTED = [
   'docs/concepts/fx-mermaid-node.mdx:5',
   'docs/concepts/fx-mermaid.mdx:5',
   'docs/concepts/fx-note.mdx:3',
+  'proxy-router/internal/repositories/registries/fx_registry.go:3',
   'proxy-router/internal/blockchainapi/fx_claimer.go:6',
   'proxy-router/internal/proxyctl/fx_proxyctl.go:4',
   'smart-contracts/docs/fx-rfp.md:3',
@@ -1039,7 +1221,18 @@ function legPipeline(fail) {
     if (!r.violations.some((v) => v.file === goRel && v.kind === 'go-log-string')) {
       fail('pipeline: the printed Go string produced no violation - Go units, the Go roots or the Go scope leg is broken');
     }
-    if (r.violations.some((v) => v.kind === 'go-comment')) fail('pipeline: a Go COMMENT was raised to a violation - the two Go readers were collapsed');
+    // Still asserted, but scoped to the SWEEP classes. Class L is deliberately a
+    // violation in a comment (see the scope note in scan()), so the original
+    // blanket form would now fail for the reason the change was made.
+    if (r.violations.some((v) => v.kind === 'go-comment' && v.missing !== 'ANCHOR')) {
+      fail('pipeline: a Go COMMENT was raised to a SWEEP violation - the two Go readers were collapsed');
+    }
+    // ...and the Class L override must actually be reaching a comment, or the
+    // narrowing above has quietly become permission to report nothing.
+    const lockRel = 'proxy-router/internal/repositories/registries/fx_registry.go'.split('/').join(sep);
+    if (!r.violations.some((v) => v.file === lockRel && v.kind === 'go-comment' && v.missing === 'ANCHOR')) {
+      fail('pipeline: the Class L comment produced no violation - the lock class or its scope override is off');
+    }
     if (!r.info.some((v) => v.file === goRel && v.kind === 'go-comment')) fail('pipeline: the Go comment produced no INFO record - goUnits never cut a comment unit');
 
     // frontmatter and mermaid carry the agent tier OUTSIDE docs/ai
@@ -1086,6 +1279,20 @@ function legWiring(fail) {
   const kinds = u.map((x) => x.kind);
   for (const k of ['frontmatter', 'table-row', 'component']) {
     if (!kinds.includes(k)) fail(`wiring: units() no longer produces a "${k}" unit (got ${kinds.join(',')})`);
+  }
+
+  // --- Class L wiring ---
+  if (!SCAN_ROOTS.includes('proxy-router/internal/repositories/registries')) {
+    fail('wiring: the registries package left SCAN_ROOTS - session_router.go goes unread again');
+  }
+  if (!IS_SCANNED_GO(join('proxy-router', 'internal', 'repositories', 'registries', 'session_router.go'))) {
+    fail('wiring: the registries package left GO_SOURCE_ROOTS - its comments cannot be cut into units');
+  }
+  if (!classifyLock('Closing a session early locks it until `startOfTheDay(closedAt) + 1 day` in `userStakesOnHold`.')) {
+    fail('wiring: classifyLock no longer fires on the wrong anchor - Class L is disabled');
+  }
+  if (classifyLock('The slice sits in `userStakesOnHold` until `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`.')) {
+    fail('wiring: classifyLock fires on the CORRECT formula - the discharge is broken');
   }
 
   // --- the four SINGLE-FILE roots, asserted by name ---
