@@ -93,5 +93,5 @@ cast send 0x6aBE1d282f72B474E54527D93b979A4f64d3030a \
 ## On-chain minimums
 
 - Consumer session-open stake floor: **none**. There is no MOR-denominated minimum; the only floor is `MIN_SESSION_DURATION`, **5 minutes** (`smart-contracts/contracts/diamond/storages/SessionStorage.sol:34`).
-- Provider stake: **0.2 MOR** on Base mainnet (live on-chain via `getProviderMinimumStake()`; `config_base_mainnet.json` now sets `0.2` to match, as of `cef943ef`); Base Sepolia deploys `0.2`. **No subnet tier exists.** Refundable on deregistration, but capped at `stake − limitPeriodEarned` while the 365-day period is open (`ProviderRegistry.sol:99-105`).
+- Provider stake: **0.2 MOR** on Base mainnet (live on-chain via `getProviderMinimumStake()`; `config_base_mainnet.json` now sets `0.2` to match, as of `6d5a41fc`); Base Sepolia deploys `0.2`. **No subnet tier exists.** Refundable on deregistration, but capped at `stake − limitPeriodEarned` while the 365-day period is open (`ProviderRegistry.sol:99-105`).
 - Bid price floor: **`10000000000` wei/sec** on Base mainnet (`0.00000001` MOR/sec); on Base Sepolia read `getMinMaxBidPricePerSecond()` for the live floor — `121052630917` wei/sec as of 2026-08-27. Owner-settable via `setMinMaxBidPricePerSecond`.
