@@ -68,6 +68,27 @@ on:
     branches: ['**']
   pull_request:
 
+# A superseded run is cancelled rather than left burning Actions minutes on a
+# commit nobody is waiting for. Same key as docs.yml:23-25 and build.yml:55-57.
+#
+# github.ref is safe to group on because push and pull_request occupy DISJOINT
+# ref namespaces: measured on this repository, the push run checks out
+# refs/remotes/origin/pr/docs-accuracy and the pull_request run checks out
+# refs/remotes/pull/1/merge. A group can therefore never span two branches or
+# two pull requests -- only successive events of the SAME kind on the same one,
+# which is exactly what should supersede.
+#
+# It deliberately does NOT collapse the push/pull_request pair that both fire
+# on one commit while a PR is open: two refs, two groups, both still run. That
+# is not pure waste -- they test different trees (branch head vs merge-with-
+# base), so one can be red while the other is green. Collapsing them would need
+# a key like `github.head_ref || github.ref_name`, which flattens a fork PR's
+# head branch onto a bare branch name and can then cancel a run on a DIFFERENT
+# branch that happens to share it. Not a trade worth making for this workflow.
+concurrency:
+  group: proxy-router-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
