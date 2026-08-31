@@ -9,7 +9,7 @@
 // -------------
 // Three facts, all read out of source, not out of a doc:
 //
-//   1. NODE:   StakeClaimer is constructed and started only inside `Proxy.Run`
+//   1. NODE:   StakeClaimer is constructed and started only inside `Proxy.run`
 //              (proxy-router/internal/proxyctl/proxyctl.go:237-240). With no
 //              proxy-router running, nothing sweeps. There is no other caller
 //              and no HTTP route.
@@ -822,7 +822,7 @@ const CORPUS_CASES = [
    "2. **MOR on hold is shown in the app and claimed automatically by the proxy-router's StakeClaimer.** The proxy-router includes a StakeClaimer that automatically claims matured on-hold MOR and returns it to the wallet every 10 minutes — but only while that node is    running, and only for the wallet it holds (`proxyctl.go:237-240` starts the    claimer inside `Proxy.Run`; `service.go:1118-1124` withdraws for    `GetMyAddress` alone). The Diamond has    `getUserStakesOnHold` + `withdrawUserStakes`; these are accessible through the    proxy-router, and the app DOES display them (`Dashboard.jsx:658-666`, with a    per-tranche release schedule at `:527-553`). Closing a session day-locks the    final UTC day's used-compute portion until `startOfTheDay(min(closedAt,    endsAt)) + 1 day` (`SessionRouter.sol:296-298`), and that MOR is now    recoverable. That lock is **conditional, not automatic**: the contract enters the    branch only while `block.timestamp < releaseAt_` (`SessionRouter.sol:305`), so a    genuinely late close — a session that ended at noon on day 1 and is closed on    day 4 — skips it, leaves `userStakeToLock_` at its initialiser of 0 (`:302`) and    transfers the entire remaining stake at once (`:314-315`), locking nothing. Do    not state the day-lock unconditionally.    The proxy-router's StakeClaimer returns it to the wallet automatically while    that node is running; with the node off, or for sessions opened from a    different wallet, nothing sweeps and `withdrawUserStakes` has to be called by    hand.    Diamond `0x6aBE1d282f72B474E54527D93b979A4f64d3030a` (Base, chainId 8453)."],
   // CORRECT: 'no user action is required WHILE ...' - negated, fully qualified
   ['clean', true, "docs/ai/where-is-my-mor.mdx:50",
-   "After `releaseAt` your own proxy-router sweeps matured stake automatically every 10 minutes (`stake_claimer.go`); `GET /blockchain/stakes/on-hold` reports the balance. That sweep runs only inside a running node and only over the wallet that node holds — the StakeClaimer is started by `Proxy.Run` (`proxy-router/internal/proxyctl/proxyctl.go:237-240`) and withdraws for `GetMyAddress` alone (`proxy-router/internal/blockchainapi/service.go:1118-1124`). So no user action is required **while your node is running and the session was opened from its wallet**; with the node stopped, or for sessions opened from a different wallet, nothing sweeps until a proxy-router holding that wallet runs — starting one claims matured stake immediately on startup (`stake_claimer.go:87-89`), and the call below is the alternative:"],
+   "After `releaseAt` your own proxy-router sweeps matured stake automatically every 10 minutes (`stake_claimer.go`); `GET /blockchain/stakes/on-hold` reports the balance. That sweep runs only inside a running node and only over the wallet that node holds \u2014 the StakeClaimer is started by `Proxy.run` (`proxy-router/internal/proxyctl/proxyctl.go:237-240`) and withdraws for `GetMyAddress` alone (`proxy-router/internal/blockchainapi/service.go:1118-1124`). So no user action is required **while your node is running and the session was opened from its wallet**; with the node stopped, or for sessions opened from a different wallet, nothing sweeps until a proxy-router holding that wallet runs \u2014 starting one claims matured stake immediately on startup (`stake_claimer.go:87-89`), and the call below is the alternative:"],
   // CORRECT: 'a manual withdrawUserStakes is optional only while ...'
   ['clean', true, "docs/ai/myths.mdx:63",
    "  <Accordion title=\"MYTH: An early close returns all my unused MOR immediately.\">     **Mostly true — but the split is not \"unused vs used.\"** What returns immediately is `remaining stake − the final UTC day's consumed slice`, which on a single-day session is essentially your unused stake: closing at 10% of the scheduled duration returns roughly **90%** of it in the close transaction. What is *held* is the **consumed** part, not the unused part — it goes to `userStakesOnHold[you]` with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`, and the proxy-router's StakeClaimer sweeps it automatically after that; a manual `withdrawUserStakes` is optional only while your own node is running and holds the wallet the session was opened from — with the node off, or for another wallet's stake, nothing sweeps until a proxy-router holding that wallet runs — starting one claims it immediately on startup, and the manual call is the alternative. Two places the wording matters: on a **multi-day** session you get back *more* than \"unused\", because only the final day's consumption is locked; and a close that lands after `releaseAt` locks nothing at all. The held amount is not lost — it's parked until the timelock expires. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover)."],
@@ -834,7 +834,7 @@ const CORPUS_CASES = [
    "## Claim day-locked on-hold balance (no node HTTP route)"],
   // CORRECT: both conditions AND both routes named
   ['clean', false, "docs/reference/api-endpoints.mdx:205",
-   "A running proxy-router claims matured on-hold stakes automatically via its internal StakeClaimer (see `proxy-router/internal/blockchainapi/stake_claimer.go`). That is bounded twice: the claimer is started only inside `Proxy.Run` (`internal/proxyctl/proxyctl.go:237-240`), and it withdraws only for the node's own `GetMyAddress` (`internal/blockchainapi/service.go:1118-1124`). With the node stopped, or for stakes belonging to a different wallet, nothing is claimed. There is no dedicated HTTP endpoint, so manual claiming via `cast send` or a wallet UI is the alternative for direct contract interaction. In those two cases nothing sweeps until a proxy-router holding that wallet runs — starting one claims matured stake immediately on startup (`stake_claimer.go:87-89` calls `claimOnce` before entering the ticker loop) — so starting that node and the manual call are the two routes."],
+   "A running proxy-router claims matured on-hold stakes automatically via its internal StakeClaimer (see `proxy-router/internal/blockchainapi/stake_claimer.go`). That is bounded twice: the claimer is started only inside `Proxy.run` (`internal/proxyctl/proxyctl.go:237-240`), and it withdraws only for the node's own `GetMyAddress` (`internal/blockchainapi/service.go:1118-1124`). With the node stopped, or for stakes belonging to a different wallet, nothing is claimed. There is no dedicated HTTP endpoint, so manual claiming via `cast send` or a wallet UI is the alternative for direct contract interaction. In those two cases nothing sweeps until a proxy-router holding that wallet runs \u2014 starting one claims matured stake immediately on startup (`stake_claimer.go:87-89` calls `claimOnce` before entering the ticker loop) \u2014 so starting that node and the manual call are the two routes."],
   // DELETED by d627040c: '...the alternative - and the only route when the node is off'
   ['violation', false, "d627040c^:docs/reference/api-endpoints.mdx:205",
    "A running proxy-router claims matured on-hold stakes automatically via its internal StakeClaimer (see `proxy-router/internal/blockchainapi/stake_claimer.go`). That is bounded twice: the claimer is started only inside `Proxy.Run` (`internal/proxyctl/proxyctl.go:237-240`), and it withdraws only for the node's own `GetMyAddress` (`internal/blockchainapi/service.go:1118-1124`). With the node stopped, or for stakes belonging to a different wallet, nothing is claimed. There is no dedicated HTTP endpoint, so manual claiming via `cast send` or a wallet UI is the alternative for direct contract interaction — and the only route in those two cases."],
@@ -1186,10 +1186,17 @@ function selftest() {
 //
 // PROVENANCE IS PINNED TO A COMMIT, NOT TO THE WORKING TREE.
 // A fixture may cite either `path:line` (the working tree) or `rev:path:line`.
-// Tree-relative is only honest for a slice the docs are not going to rewrite --
-// which is exactly the `clean` fixtures. The `violation` fixtures quote wording
-// the docs pass then REMOVED, so a tree-relative citation for one of those goes
-// stale the moment the fix lands, and the mode shipped red: 8/17, exit 1.
+// The `violation` fixtures quote wording the docs pass then REMOVED, so a
+// tree-relative citation for one of those goes stale the moment the fix lands,
+// and the mode shipped red: 8/17, exit 1. Those are pinned.
+//
+// A `clean` fixture stays tree-relative on purpose -- that is the half of this
+// mode that says something about the CURRENT tree. It does still drift when an
+// unrelated correction touches the same line (renaming Proxy.Run to Proxy.run
+// moved two of them), and the repair there is to RE-EXTRACT the slice from the
+// tree, not to pin it: re-extracting keeps the assertion live, and --selftest
+// leg 1b independently re-checks that the new bytes still classify `clean`, so
+// a re-extraction cannot quietly launder a verdict change into the corpus.
 //
 // Red was defensible for one commit and not after that. An advertised mode that
 // always fails teaches its reader to ignore it, and then it cannot report the

@@ -105,10 +105,12 @@ real profile so the boot wizard health-checks instead of re-downloading ~2GB.
    app (the ledger's words) and is now materially new code (tap-a-word). Do this first.
 2. **MOR on hold is shown in the app and claimed automatically by the StakeClaimer inside a running proxy-router, and only for its own wallet.** The proxy-router includes a StakeClaimer that automatically claims matured on-hold MOR and returns it to the wallet every 10 minutes — but only while that node is
    running, and only for the wallet it holds (`proxyctl.go:237-240` starts the
-   claimer inside `Proxy.Run`; `service.go:1118-1124` withdraws for
+   claimer inside `Proxy.run`; `service.go:1118-1124` withdraws for
    `GetMyAddress` alone). The Diamond has
-   `getUserStakesOnHold` + `withdrawUserStakes`; these are accessible through the
-   proxy-router, and the app DOES display them (`Dashboard.jsx:658-666`, with a
+   `getUserStakesOnHold` + `withdrawUserStakes`; only the READ side has a
+   proxy-router route (`controller.go:75`, the single stake route in the tree) —
+   `withdrawUserStakes` is reached by the claimer or by calling the Diamond
+   yourself, never over HTTP. The app DOES display them (`Dashboard.jsx:658-666`, with a
    per-tranche release schedule at `:527-553`). Closing a session day-locks the
    final UTC day's used-compute portion until `startOfTheDay(min(closedAt,
    endsAt)) + 1 day` (`SessionRouter.sol:296-298`), and that MOR is now
