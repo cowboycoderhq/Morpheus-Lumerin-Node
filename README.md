@@ -18,20 +18,23 @@ adds a consumer desktop experience on top of it, in two areas:
 
 **Session duration and cost, actually under your control.**
 
-- **A duration slider**, not four fixed chips — pick anywhere from ~5 minutes
-  to ~8 hours, priced by the real number of contract blocks it takes to cover
-  that span.
-- **Rolling sessions**, so a long chat doesn't front the whole duration's
-  collateral: the app chains ~6-minute stakes to the same model, holding
-  roughly one block's worth of MOR at a time instead of the full target. Choose
-  **Seamless** (the next block opens before the current one ends — inference
-  never pauses, but two blocks' stake is briefly locked at once) or **Economy**
-  (waits for the block to close first — cheaper, with a short pause between).
-- **Pick your provider**, or let the router auto-select. A model is often
-  served by several providers at different prices and uptimes; the picker
-  shows each one's online/offline state and its price, greys out any you can't
-  afford, and — once picked — every restake in that rolling session targets
-  the same provider, not whichever the router would auto-pick next.
+- **Type how long you want the session, in plain language** — "1 day", "2
+  years" — instead of picking from fixed chips. That typed length sets the
+  stake directly and opens as ONE block, up to the network's per-session cap
+  (7 days by default, read live from the contract, not hardcoded).
+- **Only a length longer than that cap chains** into multiple blocks
+  automatically, and only then does a renewal choice appear: **Seamless**
+  (the next block opens before the current one ends — inference never pauses,
+  but two blocks' stake is briefly locked at once) or **Sequential** (waits
+  for the block to end first — a short pause, same total cost either way).
+  A normal-length session never sees this; there is nothing to renew.
+- **Pick a specific provider**, not just the router's auto-pick (auto-select
+  itself is upstream's own long-standing default, not something added here).
+  A model is often served by several providers at different prices and
+  uptimes; the picker shows each one's online/offline state and its price,
+  greys out any you can't afford, and — once picked — every renewal in a
+  chained session targets that same provider rather than whatever the router
+  would auto-pick next.
 - **Stake even if you can only afford some of a model's providers.** The old
   gate priced against the model's most expensive provider and blocked you
   outright; it now gates on the cheapest and tells you "covers N of M
