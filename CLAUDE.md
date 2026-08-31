@@ -103,7 +103,7 @@ real profile so the boot wizard health-checks instead of re-downloading ~2GB.
 ## Open items (next session starts here)
 1. **`VerifyMnemonicStep` has no isolate case.** It is the highest-risk flow in the
    app (the ledger's words) and is now materially new code (tap-a-word). Do this first.
-2. **MOR on hold is shown in the app and claimed automatically by the proxy-router's StakeClaimer.** The proxy-router includes a StakeClaimer that automatically claims matured on-hold MOR and returns it to the wallet every 10 minutes — but only while that node is
+2. **MOR on hold is shown in the app and claimed automatically by the StakeClaimer inside a running proxy-router, and only for its own wallet.** The proxy-router includes a StakeClaimer that automatically claims matured on-hold MOR and returns it to the wallet every 10 minutes — but only while that node is
    running, and only for the wallet it holds (`proxyctl.go:237-240` starts the
    claimer inside `Proxy.Run`; `service.go:1118-1124` withdraws for
    `GetMyAddress` alone). The Diamond has
@@ -112,16 +112,19 @@ real profile so the boot wizard health-checks instead of re-downloading ~2GB.
    per-tranche release schedule at `:527-553`). Closing a session day-locks the
    final UTC day's used-compute portion until `startOfTheDay(min(closedAt,
    endsAt)) + 1 day` (`SessionRouter.sol:296-298`), and that MOR is now
-   recoverable. That lock is **conditional, not automatic**: the contract enters the
+   recoverable. That lock is **conditional**: the contract enters the
    branch only while `block.timestamp < releaseAt_` (`SessionRouter.sol:305`), so a
    genuinely late close — a session that ended at noon on day 1 and is closed on
    day 4 — skips it, leaves `userStakeToLock_` at its initialiser of 0 (`:302`) and
    transfers the entire remaining stake at once (`:314-315`), locking nothing. Do
    not state the day-lock unconditionally.
    The proxy-router's StakeClaimer returns it to the wallet automatically while
-   that node is running; with the node off, or for sessions opened from a
-   different wallet, nothing sweeps and `withdrawUserStakes` has to be called by
-   hand.
+   that node is running, and only for the wallet it holds; with the node off, or
+   for sessions opened from a different wallet, nothing sweeps until a
+   proxy-router holding that wallet runs — starting one claims matured stake
+   immediately on startup (`stake_claimer.go:87-89` calls `claimOnce` before the
+   ticker loop), and calling `withdrawUserStakes` yourself is the alternative,
+   never the only route.
    Diamond `0x6aBE1d282f72B474E54527D93b979A4f64d3030a` (Base, chainId 8453).
 3. **Settings tabs unmount on switch** → a typed-but-unsaved ETH node URL is
    discarded and `getConfig()` re-fires. react-bootstrap defaulted to keeping both

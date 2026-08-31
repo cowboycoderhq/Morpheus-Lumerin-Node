@@ -100,7 +100,7 @@ The Morpheus consumer node (proxy-router) does **not** custody tokens — it jus
     ```
   </Step>
   <Step title="Done">
-    Spendable MOR is back in your wallet — everything except the final UTC day's locked slice lands at close, and that slice once the day-lock expires and the proxy-router's StakeClaimer sweeps it back, which needs no manual claim while your own node is running and holds the wallet you opened from. With the node off, or for a session opened from another wallet, nothing sweeps and you submit `withdrawUserStakes` yourself. It is not an "unused now, used later" split: on a multi-day session the earlier days' consumed stake is in the amount returned at close.
+    Spendable MOR is back in your wallet — everything except the final UTC day's locked slice lands at close, and that slice once the day-lock expires and the proxy-router's StakeClaimer sweeps it back, which needs no manual claim while your own node is running and holds the wallet you opened from. With the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs — starting one claims matured stake immediately on startup — and submitting `withdrawUserStakes` yourself is the alternative, never the only route. It is not an "unused now, used later" split: on a multi-day session the earlier days' consumed stake is in the amount returned at close.
   </Step>
 </Steps>
 
