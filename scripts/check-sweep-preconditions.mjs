@@ -205,7 +205,12 @@ const DICTATES_ASSERTIONS = (rel, kind) =>
                                              // agent-citable reference, so a bare
                                              // assertion here is repeated verbatim
 
-const SCAN_ROOTS = ['docs', '.cursor', 'README.md', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md',
+// The scan roots that are a FILE rather than a directory. Kept as its own
+// list because the self-test has to enumerate them: dropping one removes
+// exactly one file from the walk, which no directory-level assertion sees.
+const SINGLE_FILE_ROOTS = ['README.md', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md'];
+
+const SCAN_ROOTS = ['docs', '.cursor', ...SINGLE_FILE_ROOTS,
   'verify', 'proxy-router/docs', 'smart-contracts/docs', 'ui-desktop',
   // The @Description annotations in this package ARE the /blockchain/stakes/on-hold
   // text a user reads in Swagger UI; proxy-router/docs/{docs.go,swagger.json,
@@ -789,31 +794,31 @@ const SYNTHETIC_CASES = [
 // when the corpus is FIXED would be a gate nobody keeps.
 const CORPUS_CASES = [
   // sole-remedy: 'submit withdrawUserStakes yourself' with no start-the-node route
-  ['violation', true, "docs/ai/where-is-my-mor.mdx:118",
+  ['violation', true, "40a96321:docs/ai/where-is-my-mor.mdx:118",
    "| \"I closed (or let it expire) and only part came back.\" | Expected — the final UTC day's slice is in the on-hold queue (Bucket 2). A running proxy-router automatically sweeps matured stake every 10 minutes for the wallet it holds, so no manual claim is needed — with the node off, or for another wallet's stake, submit `withdrawUserStakes` yourself. |"],
   // same shape, second row
-  ['violation', true, "docs/ai/where-is-my-mor.mdx:119",
+  ['violation', true, "40a96321:docs/ai/where-is-my-mor.mdx:119",
    "| \"I closed and **nothing** came back.\" | Expected when the session was fully consumed inside one UTC day — e.g. it ran to `endsAt` — because then the consumed slice is essentially the whole stake. **Not** expected from an early close, which returns the unconsumed part in the close txn. A running proxy-router automatically sweeps the held part after `releaseAt` for the wallet it holds, so no manual claim is needed — with the node off, or for another wallet's stake, submit `withdrawUserStakes` yourself. |"],
   // mermaid node label
-  ['violation', true, "docs/ai/why-locked-in-contract.mdx:61",
+  ['violation', true, "40a96321:docs/ai/why-locked-in-contract.mdx:61",
    "  Q2 -->|Yes| A2[Consumed slice likely in userStakesOnHold — a running node auto-sweeps after releaseAt for its own wallet only, otherwise call withdrawUserStakes yourself]"],
   // inside an APPROVED-ANSWER template
-  ['violation', true, "docs/ai/llm-prompt-cheatsheet.mdx:68",
+  ['violation', true, "40a96321:docs/ai/llm-prompt-cheatsheet.mdx:68",
    "  - ✅ \"Opening a session escrows MOR; the final UTC day's **consumed** slice day-locks until the next UTC day, and the **unconsumed** remainder returns in the close transaction. Closing at 10% of the scheduled duration returns roughly 90% of the stake; the return is near zero only when the session was fully consumed, e.g. left to run to `endsAt` inside one UTC day. A running proxy-router's StakeClaimer sweeps the held slice automatically after `releaseAt`, for the wallet that node holds — with the node off, or for a session opened from another wallet, you call `withdrawUserStakes` yourself.\""],
   // corrective half of a myth bullet
-  ['violation', true, "docs/ai/session-states-open-close-recover.mdx:61",
+  ['violation', true, "40a96321:docs/ai/session-states-open-close-recover.mdx:61",
    "- ❌ \"I closed, I should see all my MOR back instantly.\" → **Only the remainder returns at close** — `remaining stake − the final UTC day's day-locked slice` — which is the part you did not consume: roughly **90%** of the stake for a close at 10% of the scheduled duration, and **zero** only for a fully consumed session such as one run to `endsAt` inside one UTC day. The split is **not** \"unused vs used\" because the lock is windowed to the **final UTC day**: `userDuration_` starts at `max(openedAt, startOfTheDay(sessionEnd))` (`SessionRouter.sol:306`), so on a multi-day session the earlier days' *consumed* stake comes back at close too. The rest arrives after `releaseAt`, swept automatically by a running proxy-router holding that wallet — with the node off, or for a session opened from another wallet, you submit `withdrawUserStakes` yourself."],
   // <Step> body
-  ['violation', false, "docs/concepts/sessions-stake-close-recover.mdx:103",
+  ['violation', false, "40a96321:docs/concepts/sessions-stake-close-recover.mdx:103",
    "  <Step title=\"Done\">     Spendable MOR is back in your wallet — everything except the final UTC day's locked slice lands at close, and that slice once the day-lock expires and the proxy-router's StakeClaimer sweeps it back, which needs no manual claim while your own node is running and holds the wallet you opened from. With the node off, or for a session opened from another wallet, nothing sweeps and you submit `withdrawUserStakes` yourself. It is not an \"unused now, used later\" split: on a multi-day session the earlier days' consumed stake is in the amount returned at close."],
   // 'optional while running - and required with the node off'
-  ['violation', false, "docs/consumers/buy-bid.mdx:62",
+  ['violation', false, "40a96321:docs/consumers/buy-bid.mdx:62",
    "- **On close (early or natural):** the contract locks `min(remaining stake, stake-equivalent of the final UTC day's consumed seconds)` with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`, and returns the remainder in the same txn — **the unconsumed portion**, which is close to the whole stake for an early close and approximately zero only for a session run to `endsAt` inside one UTC day. After `releaseAt` a running proxy-router sweeps matured stake automatically every 10 minutes (`blockchainapi/stake_claimer.go`), and only for the wallet it holds; `GET /blockchain/stakes/on-hold` reports the balance. Calling `withdrawUserStakes(yourAddress, iterations)` on the Diamond yourself is optional while that node is running — and required with the node off, or for a session opened from another wallet."],
   // 1703-char rule; 'the user calls withdrawUserStakes themselves'
-  ['violation', true, ".cursor/rules/morpheus.mdc:25",
+  ['violation', true, "40a96321:.cursor/rules/morpheus.mdc:25",
    "5. **Opening a session escrows MOR; it does not spend MOR.** But do not say it all returns on close: the stake-equivalent of the final UTC day's consumption is day-locked in `userStakesOnHold` until `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`. The lock is sized from the seconds actually consumed ([`SessionRouter.sol:306-308`](../../smart-contracts/contracts/diamond/facets/SessionRouter.sol)), so it equals the whole remaining stake only as consumption approaches the full scheduled duration, not because the session was same-day. A session left to run to `endsAt` inside one UTC day is fully consumed and commonly returns **nothing** at close — while an early close returns the part you did not consume, roughly 90% of the stake at 10% of the scheduled duration; the locked slice is swept to the wallet after `releaseAt` by the consumer's own running proxy-router, and only for the wallet that node holds — with the node off, or for a session opened from another wallet, nothing sweeps and the user calls `withdrawUserStakes` themselves. The lock is **conditional, not automatic**: the contract enters that branch only while `block.timestamp < releaseAt_` ([`SessionRouter.sol:305`](../../smart-contracts/contracts/diamond/facets/SessionRouter.sol)), so a genuinely late close — a session that ended at noon on day 1 and is closed on day 4 — skips it, leaves `userStakeToLock_` at zero and transfers the entire remaining stake at once ([`SessionRouter.sol:314-315`](../../smart-contracts/contracts/diamond/facets/SessionRouter.sol)). Do not state the day-lock unconditionally. Cite [`docs/ai/session-states-open-close-recover.mdx`](../../docs/ai/session-states-open-close-recover.mdx)."],
   // 1622-char rule; also the bold-lead case
-  ['violation', true, "CLAUDE.md:123",
+  ['violation', true, "40a96321:CLAUDE.md:123",
    "2. **MOR on hold is shown in the app and claimed automatically by the proxy-router's StakeClaimer.** The proxy-router includes a StakeClaimer that automatically claims matured on-hold MOR and returns it to the wallet every 10 minutes — but only while that node is    running, and only for the wallet it holds (`proxyctl.go:237-240` starts the    claimer inside `Proxy.Run`; `service.go:1118-1124` withdraws for    `GetMyAddress` alone). The Diamond has    `getUserStakesOnHold` + `withdrawUserStakes`; these are accessible through the    proxy-router, and the app DOES display them (`Dashboard.jsx:658-666`, with a    per-tranche release schedule at `:527-553`). Closing a session day-locks the    final UTC day's used-compute portion until `startOfTheDay(min(closedAt,    endsAt)) + 1 day` (`SessionRouter.sol:296-298`), and that MOR is now    recoverable. That lock is **conditional, not automatic**: the contract enters the    branch only while `block.timestamp < releaseAt_` (`SessionRouter.sol:305`), so a    genuinely late close — a session that ended at noon on day 1 and is closed on    day 4 — skips it, leaves `userStakeToLock_` at its initialiser of 0 (`:302`) and    transfers the entire remaining stake at once (`:314-315`), locking nothing. Do    not state the day-lock unconditionally.    The proxy-router's StakeClaimer returns it to the wallet automatically while    that node is running; with the node off, or for sessions opened from a    different wallet, nothing sweeps and `withdrawUserStakes` has to be called by    hand.    Diamond `0x6aBE1d282f72B474E54527D93b979A4f64d3030a` (Base, chainId 8453)."],
   // CORRECT: 'no user action is required WHILE ...' - negated, fully qualified
   ['clean', true, "docs/ai/where-is-my-mor.mdx:50",
@@ -902,6 +907,27 @@ const FIXTURE_TREE = {
     + 'With the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs: '
     + 'starting one claims matured stake immediately on startup, and the manual call is the alternative.\n',
 
+  // The other three SINGLE-FILE scan roots. CLAUDE.md above was the only one
+  // with a fixture, so leg 2 could not see README.md, AGENTS.md or
+  // CONTRIBUTING.md being dropped from SCAN_ROOTS: leg 3 pinned the directory
+  // roots by name and the four file roots not at all. Dropping README.md hid a
+  // real README.md violation with the self-test still green (measured against
+  // 462c664d, where README.md:46-50 is one of the two base violations: the
+  // scan drops from 2 violations to 1 and --selftest still says 44/44).
+  // A root that no fixture exercises is a root the self-test cannot defend.
+  'README.md':
+    '# Fixture readme\n\n'
+    + 'The StakeClaimer sweeps the day-locked stake back to your wallet automatically, so no manual `withdrawUserStakes` call is needed.\n',
+
+  // an agent-instruction file: a bare assertion is a violation here on its own
+  'AGENTS.md':
+    '# Fixture agents\n\n'
+    + 'Stake on hold is returned to the wallet by the StakeClaimer automatically.\n',
+
+  'CONTRIBUTING.md':
+    '# Fixture contributing\n\n'
+    + 'With the node off, or for a session opened from another wallet, you must call `withdrawUserStakes` yourself - that is the only route.\n',
+
   // Go, both halves in ONE file: the PRINTED string is in scope, the comment
   // above it is not. A mutation that collapses the two kinds breaks one of the
   // two assertions whichever way it collapses them.
@@ -953,6 +979,9 @@ const FIXTURE_TREE = {
 // file:line of every violation the fixture tree must produce.
 const FIXTURE_EXPECTED = [
   'CLAUDE.md:3/bold-lead',
+  'README.md:3',
+  'AGENTS.md:3',
+  'CONTRIBUTING.md:3',
   '.cursor/rules/fx.mdc:3',
   'docs/ai/fx-agent.mdx:3',
   'docs/ai/fx-agent.mdx:8',
@@ -986,6 +1015,13 @@ function legPipeline(fail) {
     const rels = r.files.map((f) => relative(dir, f));
     for (const need of ['docs/ai/fx-agent.mdx'.split('/').join(sep), '.cursor/rules/fx.mdc'.split('/').join(sep)]) {
       if (!rels.includes(need)) fail(`pipeline: walk never reached ${need} - SCAN_ROOTS or the extension filter dropped it`);
+    }
+    // Every SINGLE-FILE root, named one at a time so the failure says which one
+    // went. A directory root announces itself when a whole tree stops being
+    // scanned; a file root can be deleted from SCAN_ROOTS and take exactly one
+    // file's violations with it, which is why this was invisible for six passes.
+    for (const need of SINGLE_FILE_ROOTS) {
+      if (!rels.includes(need)) fail(`pipeline: walk never reached the single-file root ${need} - it was dropped from SCAN_ROOTS`);
     }
 
     const got = r.violations.map((v) => `${v.file.split(sep).join('/')}:${v.line}${v.kind.includes('/') ? '/' + v.kind.split('/')[1] : ''}`).sort();
@@ -1050,6 +1086,19 @@ function legWiring(fail) {
   const kinds = u.map((x) => x.kind);
   for (const k of ['frontmatter', 'table-row', 'component']) {
     if (!kinds.includes(k)) fail(`wiring: units() no longer produces a "${k}" unit (got ${kinds.join(',')})`);
+  }
+
+  // --- the four SINGLE-FILE roots, asserted by name ---
+  // Leg 3 previously pinned only the directory roots, so `SCAN_ROOTS` could
+  // lose README.md, AGENTS.md or CONTRIBUTING.md and every leg stayed green.
+  // Spelled out as a literal, NOT read from SINGLE_FILE_ROOTS: an assertion
+  // that reads the constant it is checking cannot notice that constant
+  // shrinking. This is the same reason leg 3 names 'docs' and '.cursor'
+  // literally instead of iterating SCAN_ROOTS.
+  for (const r of ['README.md', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md']) {
+    if (!SINGLE_FILE_ROOTS.includes(r)) fail(`wiring: SINGLE_FILE_ROOTS no longer lists "${r}"`);
+    if (!SCAN_ROOTS.includes(r)) fail(`wiring: SCAN_ROOTS no longer contains the single-file root "${r}"`);
+    if (!IN_SCOPE(r)) fail(`wiring: ${r} is scanned but out of scope - it can no longer fail anything`);
   }
 
   // --- the three widened categories, asserted structurally ---
@@ -1133,9 +1182,31 @@ function selftest() {
 // --------------------------------------------------- fixture provenance ----
 // Proves the corpus fixtures above were extracted, not retyped: each slice must
 // still occur byte-for-byte in the file it cites, and the live unit at that line
-// must classify the same way the frozen slice does. Deliberately NOT part of
-// --selftest: the docs pass that follows this commit will legitimately change
-// those lines, and this mode is expected to report drift then.
+// must classify the same way the frozen slice does.
+//
+// PROVENANCE IS PINNED TO A COMMIT, NOT TO THE WORKING TREE.
+// A fixture may cite either `path:line` (the working tree) or `rev:path:line`.
+// Tree-relative is only honest for a slice the docs are not going to rewrite --
+// which is exactly the `clean` fixtures. The `violation` fixtures quote wording
+// the docs pass then REMOVED, so a tree-relative citation for one of those goes
+// stale the moment the fix lands, and the mode shipped red: 8/17, exit 1.
+//
+// Red was defensible for one commit and not after that. An advertised mode that
+// always fails teaches its reader to ignore it, and then it cannot report the
+// failure it exists for -- a fixture that was never in the tree at all. So the
+// nine drifted slices are pinned to 40a96321, the commit that introduced them,
+// where each is byte-identical AND still classifies as the verdict it asserts.
+// The pin was measured per fixture by walking 462c664d..HEAD newest-first for
+// the last commit whose unit at that line equals the frozen slice, not assumed.
+//
+// What a green run does NOT mean: 40a96321 and d627040c are reachable only from
+// this pull request's branch. Squash-merging and deleting the branch makes every
+// rev-pinned fixture unreadable and this mode will report `cannot read source`
+// -- correctly, and loudly. It is a provenance check, not a regression check;
+// whether the CURRENT tree is clean is the main scan's job, not this one's.
+//
+// Deliberately NOT part of --selftest, which stays corpus-independent: this mode
+// shells out to git and asserts about history rather than about the classifier.
 function verifyFixtures() {
   let bad = 0;
   for (const [expect, agentFile, src, text] of CORPUS_CASES) {
