@@ -11,6 +11,58 @@ The purpose of this software is to enable interaction with distributed, decentra
 >
 > Because Phase 2 runs inside the attested P-Node, **any v6+ consumer is forward-compatible with a v7+ provider** and gains the Phase 2 guarantees automatically — no client-side upgrade required. See the [TEE reference](https://nodedocs.mor.org/providers/full/tee-reference), the [SecretVM quickstart](https://nodedocs.mor.org/providers/full/secretvm-quickstart), and the [TEE backend verification developer reference](https://nodedocs.mor.org/providers/full/tee-backend-verification).
 
+## What this fork adds
+
+Everything above is the official Morpheus network. This branch (`stake-duration`)
+adds a consumer desktop experience on top of it, in two areas:
+
+**Session duration and cost, actually under your control.**
+
+- **A duration slider**, not four fixed chips — pick anywhere from ~5 minutes
+  to ~8 hours, priced by the real number of contract blocks it takes to cover
+  that span.
+- **Rolling sessions**, so a long chat doesn't front the whole duration's
+  collateral: the app chains ~6-minute stakes to the same model, holding
+  roughly one block's worth of MOR at a time instead of the full target. Choose
+  **Seamless** (the next block opens before the current one ends — inference
+  never pauses, but two blocks' stake is briefly locked at once) or **Economy**
+  (waits for the block to close first — cheaper, with a short pause between).
+- **Pick your provider**, or let the router auto-select. A model is often
+  served by several providers at different prices and uptimes; the picker
+  shows each one's online/offline state and its price, greys out any you can't
+  afford, and — once picked — every restake in that rolling session targets
+  the same provider, not whichever the router would auto-pick next.
+- **Stake even if you can only afford some of a model's providers.** The old
+  gate priced against the model's most expensive provider and blocked you
+  outright; it now gates on the cheapest and tells you "covers N of M
+  providers" so a comfortably-affordable session isn't refused over a provider
+  you were never going to use anyway.
+- **See who's actually serving you** — the provider's endpoint and the MOR you
+  actually have locked, not an abbreviated on-chain address and a cost figure
+  that used to be computed wrong.
+- **A warning before an early close locks your MOR**, naming the exact figure
+  and until when — closing before a block's `EndsAt` time-locks that stake for
+  ~24h on-chain, which is the network's behavior, not a bug in this app; you
+  just weren't told beforehand. Held stakes past their lock are auto-claimed
+  back for you.
+
+**Your terminal, not just the app window.**
+
+- **[grok](https://x.ai) and [opencode](https://opencode.ai) integration** —
+  pin the Morpheus models you use in Settings → OpenAI-compatible API, and
+  they appear in both tools' own model pickers, session or no session.
+- **No model ever decides to spend.** Ask a pinned model with no session open
+  and your terminal says so; this app's window comes forward with the price,
+  the provider, and the duration, and a session opens only once you confirm it
+  here — never from inside the agent's own turn.
+- **One command from a clean clone to a running build** — see
+  [Build the desktop app from source](#build-the-desktop-app-from-source)
+  below.
+
+Full detail on each release lives in the app itself (Settings → What's new in
+this version) and in
+[`ui-desktop/src/shared/release-notes.ts`](ui-desktop/src/shared/release-notes.ts).
+
 ## Documentation
 
 The canonical documentation lives at **[nodedocs.mor.org](https://nodedocs.mor.org)**. Source files are in [`/docs`](docs/) and built with [Mintlify](https://mintlify.com). The site replaces the previous `00-overview.md` / `02-*.md` / `04-*.md` / `99-troubleshooting.md` set of files; old paths still resolve via redirects in [`docs/docs.json`](docs/docs.json).
