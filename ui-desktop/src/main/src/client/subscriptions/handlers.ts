@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import restart from '../electron-restart'
 import dbManager from '../database'
 import storage from '../storage'
@@ -1561,6 +1561,33 @@ export const getMainLogTail = async ({ lines = 60 }: { lines?: number } = {}) =>
     }
   }
   return { file: candidates[0], text: '' }
+}
+
+// Backs the "Something broke on this screen" fallback's log link
+// (RootErrorBoundary.tsx). Deliberately does NOT open main.log itself —
+// getMainLogTail's redactSecretsInText backstop only covers what this
+// handler returns, not the file on disk, and this app has stored a real
+// wallet seed/password hash before (see settings.json). Writing the same
+// redacted tail RemediationCard already copies to a throwaway temp file and
+// opening THAT keeps one redaction contract for every way a user can get log
+// content out of the app, instead of a second, unaudited path straight to
+// the raw file.
+export const openLogFile = async (opts: { lines?: number } = {}) => {
+  const { file: sourcePath, text } = await getMainLogTail(opts)
+  const tempPath = path.join(app.getPath('temp'), 'morpheus-log-for-support.txt')
+  try {
+    fs.writeFileSync(
+      tempPath,
+      text || `(log file was empty or unreadable: ${sourcePath})`,
+      'utf8'
+    )
+  } catch (e) {
+    return { ok: false, error: String(e) }
+  }
+  // shell.openPath resolves to an error STRING on failure, '' on success —
+  // the inverse of a normal promise, easy to mis-check, so name it plainly.
+  const openError = await shell.openPath(tempPath)
+  return openError ? { ok: false, error: openError } : { ok: true, path: tempPath }
 }
 
 export const getWhatsNewState = async () => ({
