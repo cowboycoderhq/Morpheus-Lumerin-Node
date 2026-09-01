@@ -140,8 +140,25 @@ export const redactSecretsInText = (s: unknown): string =>
     // timestamps are safe (the token run is broken by dots / is too short).
     .replace(/\b[\w.-]{2,40}:[A-Za-z0-9+/=_-]{20,}={0,2}\b/g, '[REDACTED_COOKIE]')
 
+// `data` is not always the {message, stack} shape this assumed. The generic
+// sendToMainProcess() error-forward path (renderer client/utils.ts) routes
+// here with whatever a failed IPC call rejected with — which can be a bare
+// string (e.g. setOpenAiApiConfig's catch sends `String(e)`, a real message
+// like "Error: listen EADDRINUSE: address already in use 127.0.0.1:8137")
+// or a plain Node SystemError-shaped object with no *enumerable* message/
+// stack (both non-enumerable on Error instances, so a caller that forwards
+// the raw error object rather than stringifying it loses them the same way).
+// Reading .message/.stack off either produced silent, content-free
+// "client-side error, , " lines — discovered while investigating a genuine
+// setup-wizard freeze report that took an hour to reconstruct from raw JSON
+// because this handler had thrown the actual error text away.
 export const handleClientSideError = (data) => {
-  log.error('client-side error', redactSecretsInText(data.message), redactSecretsInText(data.stack))
+  const message =
+    typeof data === 'string'
+      ? data
+      : (data?.message ?? (data != null ? JSON.stringify(data) : String(data)))
+  const stack = data != null && typeof data === 'object' ? data.stack : undefined
+  log.error('client-side error', redactSecretsInText(message), redactSecretsInText(stack))
 }
 
 export const getDefaultCurrency = async () => getDefaultCurrencySetting()
