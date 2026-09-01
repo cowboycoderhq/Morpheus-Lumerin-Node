@@ -14,6 +14,7 @@ import initMenu from './menu'
 import errorHandler from './errorHandler'
 import logger from './logger'
 import { join, relative, normalize, sep, isAbsolute } from 'path'
+import { BUILD_SHA, BUILD_DIRTY } from '../shared/build-info'
 
 const installExtension = (install as any).default as typeof install
 
@@ -174,6 +175,19 @@ app
   .then(async () => {
     // Set app user model id for windows
     electronApp.setAppUserModelId('com.electron')
+
+    // package.json's version has stayed "1.1.4" across dozens of commits in a
+    // single day of work — "About shows 1.1.4" cannot answer "which commit
+    // built this DMG", and that ambiguity has already cost real time
+    // diagnosing a crash report that needed it. macOS's native About panel's
+    // `version` field is conventionally the build number shown under the
+    // marketing version — this is that field, not a second copy of it.
+    if (process.platform === 'darwin') {
+      app.setAboutPanelOptions({
+        applicationVersion: app.getVersion(),
+        version: BUILD_DIRTY ? `${BUILD_SHA}-dirty` : BUILD_SHA
+      })
+    }
 
     // Content-Security-Policy — packaged builds ONLY. Vite's dev server needs
     // inline script + eval + a websocket for HMR, so a strict CSP would break

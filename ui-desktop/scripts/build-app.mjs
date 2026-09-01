@@ -9,12 +9,52 @@
 // Everything it does is still available piecemeal (`yarn build:mac-arm64` and
 // friends) — this is the front door, not a replacement.
 import { execSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const uiDesktop = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// A stale `out/` from an interrupted or unrelated earlier build has one way
+// to matter: electron-vite's production build overwrites the files it knows
+// about, but it does not delete files it no longer produces. A hashed chunk
+// from a previous build can survive alongside the new ones, referenced by
+// nothing — harmless on its own, but the exact shape of the failure mode a
+// reported crash could never otherwise be ruled out against without this.
+// `dist/` holds the finished installer(s) this run should replace, not
+// accumulate. Removing both before every build makes "freshly built" mean
+// what it says, not "probably fresh, assuming nothing survived from before."
+for (const dir of ['out', 'dist']) {
+  rmSync(join(uiDesktop, dir), { recursive: true, force: true });
+}
+
+// Stamp which commit is actually being built. package.json's version is not
+// this: it stays the same string across many commits in a day of work, so
+// "About shows 1.1.4" cannot answer "which commit produced this DMG" — that
+// ambiguity has already cost real time diagnosing a crash report that turned
+// out to need this. Failure here (no git, not a repo) degrades to the
+// checked-in 'dev-unbuilt' default rather than blocking the build.
+try {
+  const sha = execSync('git rev-parse --short HEAD', { cwd: uiDesktop, encoding: 'utf8' }).trim();
+  const dirty = execSync('git status --porcelain', { cwd: uiDesktop, encoding: 'utf8' }).trim().length > 0;
+  writeFileSync(
+    join(uiDesktop, 'src/shared/build-info.ts'),
+    `// Overwritten by scripts/build-app.mjs — see that file's comment.\n` +
+      `export const BUILD_SHA = ${JSON.stringify(sha)};\n` +
+      `export const BUILD_DIRTY = ${dirty};\n`,
+  );
+} catch (err) {
+  console.warn(`[app] Could not stamp the build commit (${err.message}) — About will show 'dev-unbuilt'.`);
+}
 const version = JSON.parse(
   execSync('node -p "JSON.stringify(require(\'./package.json\'))"', {
     cwd: uiDesktop,

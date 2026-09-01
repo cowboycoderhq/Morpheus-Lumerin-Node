@@ -1,5 +1,6 @@
 import React from 'react';
 import { sendToMainProcess } from '../client/utils';
+import { BUILD_SHA, BUILD_DIRTY } from '../../../shared/build-info';
 
 /**
  * The app had NO error boundary anywhere. React's behaviour without one is not
@@ -131,11 +132,19 @@ export class RootErrorBoundary extends React.Component<Props, State> {
             whiteSpace: 'pre-wrap',
             fontSize: '1.1rem',
             opacity: 0.75,
-            marginBottom: '1.6rem',
+            marginBottom: '0.6rem',
           }}
         >
           {String(this.state.error?.message ?? this.state.error)}
         </pre>
+        {/* The build a report is ABOUT, not just the version — package.json's
+            version stays the same string across many commits in a day of
+            work, so this is what actually lets a bug report be pinned to a
+            commit. */}
+        <p style={{ fontSize: '0.95rem', opacity: 0.55, marginBottom: '1.6rem' }}>
+          build {BUILD_SHA}
+          {BUILD_DIRTY ? ' (dirty)' : ''}
+        </p>
         <div
           style={{
             display: 'flex',
