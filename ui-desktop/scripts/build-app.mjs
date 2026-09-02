@@ -100,10 +100,22 @@ console.log('[app] First run takes a few minutes; later ones are much faster.\n'
 //
 // So this always produces an UNSIGNED local build. Signing and notarizing is
 // scripts/release.sh's job, and it needs credentials only the publisher has.
+//
+// This script itself runs as a yarn step ("app": "yarn install && node
+// scripts/build-app.mjs"), so process.env already carries the npm_config_*
+// variables yarn classic injects into every script for npm-compatibility —
+// including a handful of npm's own decades-old `npm version` flags
+// (version-git-tag, version-commit-hooks, ...) that current npm no longer
+// recognizes. Spreading process.env wholesale into this NESTED npm run
+// forwards all of them straight through, so every build printed five
+// "Unknown env config" warnings that had nothing to do with this app.
+const forwardedEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => !/^npm_config_/i.test(key)),
+);
 execSync(`npm run ${script}`, {
   cwd: uiDesktop,
   stdio: 'inherit',
-  env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' },
+  env: { ...forwardedEnv, CSC_IDENTITY_AUTO_DISCOVERY: 'false' },
 });
 
 // Find what was actually produced rather than predicting its name: the artifact
