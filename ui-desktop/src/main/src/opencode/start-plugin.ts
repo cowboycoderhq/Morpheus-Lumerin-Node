@@ -112,10 +112,21 @@ export const server = async () => ({
     config.provider = config.provider || {};
     // Only ever ADD our own key. Merging into whatever else is here would be
     // editing the user's configuration, which this integration does not do.
+    //
+    // d.baseUrl is the bare ORIGIN (http://127.0.0.1:<port>, no /v1) — the
+    // descriptor's one field shared with the /start command plugin, which
+    // needs the origin to build /morpheus/v1/* paths itself. @ai-sdk/
+    // openai-compatible's baseURL is a different contract: it appends
+    // /chat/completions directly onto whatever is given, so it needs /v1
+    // appended HERE, at the one consumer that wants it, not by changing what
+    // the descriptor means for everyone who reads it. Passing the bare
+    // origin through unchanged was a real bug: opencode posted to
+    // /chat/completions instead of /v1/chat/completions and the endpoint
+    // rejected it outright.
     config.provider.morpheus = {
       npm: '@ai-sdk/openai-compatible',
       name: 'Morpheus',
-      options: { baseURL: d.baseUrl, apiKey: d.apiKey },
+      options: { baseURL: d.baseUrl.replace(/\/+$/, '') + '/v1', apiKey: d.apiKey },
       models,
     };
   },
