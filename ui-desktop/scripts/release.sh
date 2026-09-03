@@ -8,15 +8,21 @@
 #   - Developer ID Application cert + private key in the login keychain, plus
 #     Apple's "Developer ID Certification Authority" intermediate.
 #       security find-identity -v -p codesigning     # must list the identity
-#   - Notary credentials stored as a keychain profile (default name: <NOTARY_PROFILE>):
-#       xcrun notarytool store-credentials <NOTARY_PROFILE> \
-#         --apple-id <id@example.com> --team-id <TEAMID>
+#   - Notary credentials stored as a keychain profile:
+#       xcrun notarytool store-credentials "<profile-name>" \
+#         --apple-id <id@example.com> --team-id <YOUR_TEAM_ID>
 #     (paste an app-specific password from appleid.apple.com when prompted)
+#   - Two environment variables naming the signer. They are deliberately NOT
+#     hardcoded here: this repo is public, and a signing identity string carries
+#     an organisation name and Apple Team ID — enough to identify the publisher.
+#       export SIGNING_IDENTITY="Developer ID Application: <Org> (<TEAMID>)"
+#       export NOTARY_PROFILE="<keychain-profile-name>"
+#     Keep them in a gitignored file you source (e.g. ui-desktop/.env.release),
+#     never in this script and never in shell history you commit.
 #
 # Usage:
-#   scripts/release.sh                 # arm64 (this machine)
-#   scripts/release.sh x64             # intel
-#   NOTARY_PROFILE=Other scripts/release.sh
+#   SIGNING_IDENTITY=… NOTARY_PROFILE=… scripts/release.sh        # arm64
+#   SIGNING_IDENTITY=… NOTARY_PROFILE=… scripts/release.sh x64    # intel
 #
 # WHY THE ORDER BELOW MATTERS: the .app is notarized and stapled BEFORE the DMG
 # is built around it, then the DMG is notarized and stapled too. Notarizing only
@@ -28,8 +34,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."                       # ui-desktop/
 
 ARCH="${1:-arm64}"
-PROFILE="${NOTARY_PROFILE:-<NOTARY_PROFILE>}"
-ID="Developer ID Application: <ORG> (<TEAMID>)"
+# Fail fast and loudly if the signer isn't supplied: a default here would put an
+# organisation name and Team ID back into a public file.
+PROFILE="${NOTARY_PROFILE:?set NOTARY_PROFILE — the notarytool keychain profile name}"
+ID="${SIGNING_IDENTITY:?set SIGNING_IDENTITY — e.g. 'Developer ID Application: <Org> (<TEAMID>)'}"
 CONFIG="electron.builder.config.ts"
 VERSION=$(node -p "require('./package.json').version")
 APP_DIR="dist/mac-$ARCH"
@@ -56,7 +64,7 @@ security find-identity -v -p codesigning 2>/dev/null | grep -q "$ID" ||
 xcrun notarytool history --keychain-profile "$PROFILE" 2>&1 |
   grep -q "Successfully received submission history" ||
   fail "notary profile '$PROFILE' is not set up. Create it with:
-       xcrun notarytool store-credentials $PROFILE --apple-id <id> --team-id <TEAMID>"
+       xcrun notarytool store-credentials $PROFILE --apple-id <id> --team-id <YOUR_TEAM_ID>"
 
 # Apple rejects a notarization request whose bundle carries the debug
 # get-task-allow entitlement. Cheaper to check than to discover from a rejection.
