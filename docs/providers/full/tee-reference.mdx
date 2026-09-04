@@ -19,8 +19,8 @@ For the shortest path to deploying on SecretVM, jump to [SecretVM quickstart](/p
 The `-tee` Docker image (`ghcr.io/morpheusais/morpheus-lumerin-node-tee`) is a hardened version of the standard proxy-router image with all non-secret configuration **baked in at build time**:
 
 - Blockchain config (contract addresses, chain ID, blockscout URL) is pinned to the target network (`proxy-router/Dockerfile.tee:13-16`, surfaced in the signed manifest's `baked_env`).
-- Chat context storage is disabled (`PROXY_STORE_CHAT_CONTEXT=false`).
-- Logging is set to production mode: `LOG_JSON=true`, `LOG_COLOR=false`, `LOG_IS_PROD=true`, with the levels pinned at `LOG_LEVEL_APP=info` and `LOG_LEVEL_TCP`/`LOG_LEVEL_ETH_RPC`/`LOG_LEVEL_STORAGE=warn` (`proxy-router/Dockerfile.tee:30-36`, surfaced in the signed manifest's `baked_env`). That is quieter than the compiled `debug` app default, not the quietest level — the publish job refuses to ship a manifest if `LOG_LEVEL_APP=debug` is baked in (`.github/workflows/build.yml:820-821`).
+- Chat context storage is disabled (`PROXY_STORE_CHAT_CONTEXT=false`, `proxy-router/Dockerfile.tee:23`, surfaced in the signed manifest's `baked_env`) — but that `baked_env` field is a workflow literal (`.github/workflows/build.yml:957`), so unlike the logging pins it is not read back out of the image.
+- Logging is set to production mode: `LOG_JSON=true`, `LOG_COLOR=false`, `LOG_IS_PROD=true`, with the levels pinned at `LOG_LEVEL_APP=info` and `LOG_LEVEL_TCP`/`LOG_LEVEL_ETH_RPC`/`LOG_LEVEL_STORAGE=warn` (`proxy-router/Dockerfile.tee:30-36`, surfaced in the signed manifest's `baked_env`). That is quieter than the compiled `debug` app default, not the quietest level — the publish job refuses to ship a manifest if `LOG_LEVEL_APP=debug` is baked in (`.github/workflows/build.yml:820-822`).
 - Environment is pinned to `production` (`proxy-router/Dockerfile.tee:19`, surfaced in the signed manifest's `baked_env`).
 
 Two network variants are produced by CI/CD:

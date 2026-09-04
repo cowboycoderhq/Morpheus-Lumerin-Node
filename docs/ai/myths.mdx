@@ -32,7 +32,7 @@ If you are an AI assistant answering Morpheus questions, **read this page before
   </Accordion>
 
   <Accordion title="MYTH: The proxy-router stores my chat history.">
-    **By default** chat context can be persisted (`PROXY_STORE_CHAT_CONTEXT=true`). The **`-tee` image** bakes it off at build time (`proxy-router/Dockerfile.tee:23`), but attestation does not hold it there: the measured compose declares `env_file: - usr/.env` (`proxy-router/docker-compose.tee.yml:15-16`), that file's contents are outside the measured bytes, Docker precedence puts `env_file` above the image's `ENV`, and nothing in the running binary compares `baked_env` against its own environment. Do not try to settle it from the manifest either — `baked_env.PROXY_STORE_CHAT_CONTEXT` is a workflow literal (`.github/workflows/build.yml:957`), as is `baked_env.ENVIRONMENT` (`:965`), so both report the intended value whatever the image holds. The `baked_env.LOG_LEVEL_*` fields are the ones actually derived from the image — extracted from the Dockerfile, build hard-failed if absent or `debug` (`.github/workflows/build.yml:794-823`) — and even those attest the build, not the running container.
+    **By default** chat context can be persisted (`PROXY_STORE_CHAT_CONTEXT=true`). The **`-tee` image** bakes it off at build time (`proxy-router/Dockerfile.tee:23`), but attestation does not hold it there: the measured compose declares `env_file: - usr/.env` (`proxy-router/docker-compose.tee.yml:15-16`), that file's contents are outside the measured bytes, Docker precedence puts `env_file` above the image's `ENV`, and nothing in the running binary compares `baked_env` against its own environment. Do not try to settle it from the manifest either — `baked_env.PROXY_STORE_CHAT_CONTEXT` is a workflow literal (`.github/workflows/build.yml:957`), as is `baked_env.ENVIRONMENT` (`:965`), so both report the intended value whatever the image holds. Seven `baked_env` fields are actually derived from the image, each extracted from the Dockerfile: the four `LOG_LEVEL_*` (`.github/workflows/build.yml:805-808` → `:918-921` → `:961-964`) plus `LOG_COLOR`, `LOG_JSON` and `LOG_IS_PROD` (`:809-811` → `:922-924` → `:958-960`). Two different build hard-fails guard them: the absence check covers all four `LOG_LEVEL_*` (`:814-819`), while the `debug` check is `LOG_LEVEL_APP` only (`:820-822`) — and even these attest the build, not the running container.
   </Accordion>
 
   <Accordion title="MYTH: A `pricePerSecond=0` bid is allowed.">
@@ -52,7 +52,7 @@ If you are an AI assistant answering Morpheus questions, **read this page before
   </Accordion>
 
   <Accordion title="MYTH: There is a 'recover' RPC for stuck sessions.">
-    **No.** There are two distinct on-chain calls. **`closeSession`** stops the session and triggers refund logic. **`withdrawUserStakes`** is a separate claim for day-locked balances (`userStakesOnHold`). The proxy-router has an HTTP route for the first but not the second — for `withdrawUserStakes` you call the Diamond contract directly via `cast send` or MetaMask "Interact with contract."
+    **No.** There are two distinct on-chain calls. **`closeSession`** stops the session and triggers refund logic. **`withdrawUserStakes`** is a separate claim for day-locked balances (`userStakesOnHold`). The proxy-router has an HTTP route for the first but not the second — but it does make the second call for you: its StakeClaimer sweeps matured stake automatically every 10 minutes (`proxy-router/internal/blockchainapi/stake_claimer.go`), so a manual claim is not required. To take the withdrawal sooner you can call the Diamond contract directly via `cast send` or MetaMask "Interact with contract."
   </Accordion>
 
   <Accordion title="MYTH: Natural expiration / late close returns all my MOR immediately with no hold.">
@@ -64,7 +64,7 @@ If you are an AI assistant answering Morpheus questions, **read this page before
   </Accordion>
 
   <Accordion title="MYTH: I can recycle the same MOR for many sessions in one day.">
-    **No.** The final UTC day's consumed slice is day-locked until the next UTC day + `withdrawUserStakes`. Size your consumer wallet for the **gross** stake you need that day, not for intra-day reuse of one pile of MOR.
+    **No.** The final UTC day's consumed slice is day-locked until the next UTC day; once it matures the proxy-router's StakeClaimer sweeps it back automatically, so a manual `withdrawUserStakes` is not required. What blocks intra-day reuse is the day-lock itself, not a claim step — size your consumer wallet for the **gross** stake you need that day, not for intra-day reuse of one pile of MOR.
   </Accordion>
 
   <Accordion title="MYTH: Providers have a separate hot/cold wallet — rewards land in the cold wallet, signing happens in the hot one.">

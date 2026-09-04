@@ -7,7 +7,26 @@ last_verified: "v7.6.0"
 source: "docs/ui-desktop.all.env"
 ---
 
-MorpheusUI configuration lives in `ui-desktop/.env`, and it is read **only at build time**. `electron.vite.config.ts:41-43` substitutes `process.env.<KEY>` with a JSON literal for every key `env.schema.ts` declares, and passes that map as `define:` for all three bundles — main (`:55`), preload (`:71`) and renderer (`:85`) — so these values are compiled in as constants. A **packaged install has no configuration file and no runtime override**: `.env` is excluded from the app bundle (`electron.builder.config.ts:46`) and nothing under `ui-desktop/src/` loads dotenv, so editing a `.env` beside an installed app does nothing, silently. Changing any value on this page means rebuilding from source ([macOS install (from source)](/consumers/install/macos)). The complete annotated dump is at [`docs/ui-desktop.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/ui-desktop.all.env). Source of truth: [`ui-desktop/env.schema.ts`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/ui-desktop/env.schema.ts) — the build injects exactly the keys it declares, so a variable absent from it is read from `.env` and discarded. The app consumes those keys in three places (`src/main/config/index.ts`, `orchestrator.config.ts`, `src/main/logger.ts`), so no single reader is the full list.
+MorpheusUI configuration lives in `ui-desktop/.env`, and it is read **only at build time**. `electron.vite.config.ts:41-43` substitutes `process.env.<KEY>` with a JSON literal for every key `env.schema.ts` declares, and passes that map as `define:` for all three bundles — main (`:55`), preload (`:71`) and renderer (`:85`) — so these values are compiled in as constants. A **packaged install carries no configuration file**: `.env` is excluded from the app bundle (`electron.builder.config.ts:46`) and nothing under `ui-desktop/src/` loads dotenv, so editing a `.env` beside an installed app does nothing, silently. That is a claim about the *file*; the *process environment* is a separate channel, and for one variable it still reaches the code — see the note below. Changing any value on this page means rebuilding from source ([macOS install (from source)](/consumers/install/macos)). The complete annotated dump is at [`docs/ui-desktop.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/ui-desktop.all.env). Source of truth: [`ui-desktop/env.schema.ts`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/ui-desktop/env.schema.ts) — the build injects exactly the keys it declares. A variable absent from it is never substituted, so it is not compiled in — but neither is it erased: the `process.env.<KEY>` read survives into the shipped bundle as a live runtime lookup. The app consumes those keys in three places (`src/main/config/index.ts`, `orchestrator.config.ts`, `src/main/logger.ts`), so no single reader is the full list.
+
+<Note>
+**One undeclared variable is still live at runtime.** `IGNORE_DEBUG_LOGS` is read at
+`ui-desktop/src/main/config/index.ts:17` (`debug: process.env.DEBUG && !process.env.IGNORE_DEBUG_LOGS`)
+but is **absent from `ui-desktop/env.schema.ts`**, so the `define:` map built at
+`ui-desktop/electron.vite.config.ts:41-43` never substitutes it. It therefore stays a real
+`process.env` lookup in a packaged build: launching the app with `IGNORE_DEBUG_LOGS` set **in the
+process environment** still suppresses `config.debug`. Putting it in a `.env` file next to the
+installed app does nothing, because that file is never read. It also still ships in
+`ui-desktop/.env.example:70`, where it has no build-time effect.
+
+The only other `process.env` keys under `ui-desktop/src/` that the schema does not declare are
+Electron tooling rather than settings, and neither is a runtime input for a packaged build:
+`ELECTRON_RENDERER_URL` is injected by the electron-vite dev server and every consumer is gated on
+`is.dev` / `!app.isPackaged` (`ui-desktop/src/main/index.ts:52`, `:158`, and
+`ui-desktop/src/main/src/client/subscriptions/utils.js:61`); `ELECTRON_DISABLE_SECURITY_WARNINGS` is
+*assigned* by the app, not read from the environment, and only when unpackaged
+(`ui-desktop/src/main/index.ts:83-84`).
+</Note>
 
 ## Auth & networking
 
