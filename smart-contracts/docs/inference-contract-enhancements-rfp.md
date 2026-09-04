@@ -41,9 +41,9 @@ The Inference Contract is a Diamond proxy with four primary write facets and sha
 | Facet | Role today |
 |-------|------------|
 | **ModelRegistry** | Any wallet meeting min stake registers a model. `modelId = keccak256(owner, baseModelId)`. Re-registering with the same `baseModelId` **upserts** metadata and adds stake. |
-| **Marketplace** | Providers post bids (`pricePerSecond`). Reposting auto-deletes the prior active bid for that provider↔model pair. Charges **0.3 MOR** `marketplaceBidFee` per post. |
+| **Marketplace** | Providers post bids (`pricePerSecond`). Reposting auto-deletes the prior active bid for that provider↔model pair. The fee is 0.3 MOR on Base mainnet and 0.3 MOR on Base Sepolia, as specified in `smart-contracts/deploy/data/config_base_*.json` and documented in `tokens-and-fees.mdx`. |
 | **ProviderRegistry** | Provider bond + endpoint string. Re-register upserts endpoint and adds stake. |
-| **SessionRouter** | Open/close sessions, stipend-based duration, early-close timelock, provider payouts from `fundingAccount` or user escrow. |
+| **SessionRouter** | Open/close sessions, stipend-based duration, close day-lock (gated at `SessionRouter.sol:305` on `block.timestamp < releaseAt_`, so it fires on *any* close before the day after session end, natural expiry included — not on early closes only), provider payouts from `fundingAccount` or user escrow. |
 
 ### 2.1 Key behavioral facts (contract-verified)
 
@@ -53,13 +53,13 @@ The Inference Contract is a Diamond proxy with four primary write facets and sha
 
 3. **`fee` on Model is unused.** Documented as a royalty placeholder; not referenced in settlement logic.
 
-4. **Direct pay vs staking is structurally identical** except for who pays the provider at close. Duration, early-close lock, and `stakeToStipend` math are the same for both modes.
+4. **Direct pay vs staking share the duration and lock math, but the modes are not identical.** `getSessionEnd` and `stakeToStipend` run the same for both, and `_rewardUserAfterClose`'s day-lock applies to both. Two things do differ: who pays the provider at close (`fundingAccount` vs the user's escrowed stake, `SessionRouter.sol:394-402`), and one open-time check that runs **only** for direct pay — `_validateSession` reverts `SessionStakeTooLow()` when `duration_ * bid.pricePerSecond > amount_` (`SessionRouter.sol:152-153`), which the source annotates as a defensive case that "cannot be achieved in theory". The open conditions are therefore not identical either, even though the extra revert is unreachable in practice.
 
-5. **Early close requires a second transaction.** Funds parked in `userStakesOnHold[]` must be claimed via `withdrawUserStakes` — no proxy-router HTTP route exists today.
+5. **On-hold funds need a second transaction, but not a manual one.** Any close landing before `releaseAt_` parks a slice in `userStakesOnHold[]`, cleared by `withdrawUserStakes`. The proxy-router exposes `GET /blockchain/stakes/on-hold` (`blockchainapi/controller.go:73`) for the read side and auto-sweeps matured rows on the write side every 10 minutes (`blockchainapi/stake_claimer.go`, `claimInterval = 10 * time.Minute`), so anyone running a router never calls it by hand. There is still no proxy-router HTTP route for `withdrawUserStakes` itself, so a user without a router calls it on the Diamond directly.
 
 6. **Read queries are fragmented.** A complete model-market or session view requires multiple chain calls (see §5).
 
-7. **Provider reward limiter period is 365 days** in contract (`PROVIDER_REWARD_LIMITER_PERIOD`). Some product docs incorrectly describe it as 1 day — contractor should not change this without explicit product sign-off.
+7. **Provider reward limiter period is 365 days** in contract (`PROVIDER_REWARD_LIMITER_PERIOD`).
 
 ---
 
@@ -228,17 +228,17 @@ function getProviderEarningsStatus(address provider_) external view returns (
 
 #### H1 · UX · Rethink direct pay vs staking
 
-**Problem:** `isDirectPaymentFromUser` only changes **who pays the provider** (`fundingAccount` vs user escrow). Everything else — duration via stipend, early-close day-lock, `endsAt` calculation — is identical. Users expect direct pay to behave like prepayment for N seconds at the bid price.
+**Problem:** `isDirectPaymentFromUser` changes **who pays the provider** (`fundingAccount` vs user escrow) and adds a single open-time guard: `_validateSession` reverts `SessionStakeTooLow()` for direct pay when `duration_ * bid.pricePerSecond > amount_` (`SessionRouter.sol:152-153`, annotated in source as unreachable in practice). Everything else — duration via stipend, day-lock (applies to any close before the day after session end), `endsAt` calculation — is identical. Users expect direct pay to behave like prepayment for N seconds at the bid price.
 
 **Current code paths:**
 - Duration: `getSessionEnd` → `stakeToStipend(amount) / pricePerSecond` for **both** modes.
-- Early-close lock: `_rewardUserAfterClose` applies `userStakesOnHold` for **both** modes.
+ - Day-lock (applies to any close before the day after session end): `_rewardUserAfterClose` applies `userStakesOnHold` for **both** modes.
 
 **Proposal:** Split into two semantically distinct session modes:
 
-| Mode | Duration | Early-close refund | Provider paid from |
+ | Mode | Duration | Refund on close before day after session end | Provider paid from |
 |------|----------|-------------------|-------------------|
-| **Pool / stake session** | `stakeToStipend(amount) / pricePerSecond` | Existing day-lock logic (or H3 simplification) | `fundingAccount` |
+ | **Pool / stake session** | `stakeToStipend(amount) / pricePerSecond` | Existing day-lock logic (applies to any close before day after session end; or H3 simplification) | `fundingAccount` |
 | **Direct-pay session** | `amount / pricePerSecond` (capped by `maxSessionDuration`) | Immediate unused refund (no stipend lock) | User escrow in contract |
 
 **Acceptance criteria:**
@@ -253,9 +253,9 @@ function getProviderEarningsStatus(address provider_) external view returns (
 
 ---
 
-#### H3 · UX · Early-close timelock and harvest
+#### H3 · UX · Day-lock on close before day after session end and harvest
 
-**Problem:** Early close (`closedAt < endsAt`) parks a computed slice in `userStakesOnHold[user]` with `releaseAt = startOfDay(closedAt) + 1 day`. User must call `withdrawUserStakes` separately. This is the #1 "where's my MOR?" support driver after active sessions.
+**Problem:** Any close before `releaseAt_` parks a computed slice in `userStakesOnHold[user]` with `releaseAt_ = startOfTheDay(min(closedAt, endsAt)) + 1 days` (`SessionRouter.sol:296-298`, gated at `:305` on `block.timestamp < releaseAt_` — not on early close specifically). Clearing those rows takes a second transaction, `withdrawUserStakes`; the proxy-router's StakeClaimer auto-sweeps matured rows every 10 minutes (`blockchainapi/stake_claimer.go`), so a router operator never issues it by hand, while a user without a router does. This is the #1 "where's my MOR?" support driver after active sessions.
 
 **Proposal (select or combine):**
 
@@ -268,7 +268,7 @@ function getProviderEarningsStatus(address provider_) external view returns (
 
 **Acceptance criteria:**
 - [ ] Document anti-gaming rationale for any retained lock period.
-- [ ] Natural expiration path unchanged: full refund in same `closeSession` txn, no on-hold row.
+- [ ] Natural expiration path: a portion of the user's stake is placed on hold via `userStakesOnHold` when the close transaction lands before the day after the session end; this is not a full immediate refund.
 - [ ] Disputed close (`closeoutType == 1`) provider on-hold behavior preserved unless explicitly changed.
 - [ ] Tests for multi-row `userStakesOnHold` arrays and partial release.
 - [ ] Gas analysis for H3a auto-sweep on close.
@@ -281,7 +281,7 @@ function getProviderEarningsStatus(address provider_) external view returns (
 
 #### M3 · Provider onboarding · Bid update without full repost
 
-**Problem:** Changing bid price requires `deleteModelBid` + `postModelBid`, paying **0.3 MOR** fee each post. Docs already warn providers about fee accumulation during setup.
+**Problem:** Changing bid price requires a full `postModelBid` repost, paying the **0.3 MOR** fee on every price change. A separate `deleteModelBid` is *not* required — `postModelBid` deletes the provider's prior active bid for that model in the same transaction once the provider->model nonce is non-zero (`Marketplace.sol:93-98`) — but the fee is charged on the repost regardless. Docs already warn providers about fee accumulation during setup.
 
 **Proposal:**
 
@@ -475,30 +475,44 @@ Before Phase 3, Morpheus governance must resolve:
 
 ---
 
-## 5. Appendix A — Direct pay equals staking (evidence)
+## 5. Appendix A — Direct pay vs staking (evidence)
 
 ### Duration (both modes)
 
 ```solidity
-// SessionRouter.sol — getSessionEnd
-uint128 duration_ = uint128(stakeToStipend(amount_, openedAt_) / pricePerSecond_);
+// SessionRouter.sol:296-312 — _rewardUserAfterClose (excerpt)
+uint128 sessionEnd_ = uint128(session.closedAt.min(session.endsAt));
+uint128 startOfEndDay_ = startOfTheDay(sessionEnd_);
+uint128 releaseAt_ = startOfEndDay_ + 1 days;
+
+// Lock only while the epoch the stipend was drawn against is still open.
+if (block.timestamp < releaseAt_) {
+    uint256 userDuration_ = sessionEnd_ - session.openedAt.max(startOfEndDay_);
+    uint256 userInitialLock_ = userDuration_ * bid.pricePerSecond;
+    userStakeToLock_ = userStake.min(stipendToStake(userInitialLock_, startOfEndDay_));
+
+    if (userStakeToLock_ > 0) {
+        _getSessionsStorage().userStakesOnHold[session.user].push(OnHold(userStakeToLock_, releaseAt_));
+    }
+}
 ```
 
 Direct pay flag is **not** passed to `getSessionEnd`.
 
-### Early-close lock (both modes)
+### Close lock (both modes)
 
 ```solidity
 // SessionRouter.sol — _rewardUserAfterClose
-if (!isClosingLate_) {
-    userStakeToLock_ = userStake.min(stipendToStake(userInitialLock_, startOfClosedAt_));
-    userStakesOnHold[session.user].push(OnHold(userStakeToLock_, startOfClosedAt_ + 1 days));
+uint128 releaseAt_ = startOfTheDay(sessionEnd_) + 1 days;
+if (block.timestamp < releaseAt_) {
+            userStakeToLock_ = userStake.min(stipendToStake(userInitialLock_, startOfEndDay_));
+    userStakesOnHold[session.user].push(OnHold(userStakeToLock_, releaseAt_));
 }
 ```
 
 Direct pay only affects `userStakeToProvider` subtraction before lock calculation; lock still applies.
 
-### Provider payout (only difference)
+### Provider payout (differs)
 
 ```solidity
 // SessionRouter.sol — _claimForProvider
@@ -508,6 +522,21 @@ if (session.isDirectPaymentFromUser) {
     IERC20(token).safeTransferFrom(fundingAccount, bid.provider, amount_);
 }
 ```
+
+### Open-time validation (direct pay only)
+
+```solidity
+// SessionRouter.sol:151-154 — _validateSession
+// This situation cannot be achieved in theory, but just in case, I'll leave it at that
+if (isDirectPaymentFromUser_ && (duration_ * bid.pricePerSecond) > amount_) {
+    revert SessionStakeTooLow();
+}
+```
+
+The stake-pool path has no equivalent check, so "identical except for the payer"
+is not quite right — the open conditions differ too. The source comment marks the
+branch unreachable, which is why it does not change observed behaviour today; a
+rewrite of either mode still has to preserve it or drop it deliberately.
 
 ---
 
@@ -520,11 +549,11 @@ if (session.isDirectPaymentFromUser) {
 | Capability / size / TEE structure | Tags only today | M1, M7 |
 | Reduce duplicate names | No enforcement | H4 |
 | Model veracity / rating | Latency stats only | L1, L2 |
-| Early-close timelock — still needed? | Implemented; major UX pain | H3 |
-| Better post-close harvest | Manual `withdrawUserStakes` | H3 |
+| Close day-lock (fires on any close before the day after session end) — still needed? | Implemented; major UX pain | H3 |
+| Better post-close harvest | `withdrawUserStakes`, auto-swept by the router's StakeClaimer | H3 |
 | Stake → access opacity | Stipend math | H2, H1 |
-| Direct pay enhancements | Same as stake except payer | H1 |
-| Modify facets | Upsert via register; bids delete+repost | M3, M4 |
+| Direct pay enhancements | Same as stake except the payer and one direct-pay-only open-time revert | H1 |
+| Modify facets | Upsert via register; bids repost only — the repost auto-deletes the prior bid | M3, M4 |
 | Provider reward transparency | 365-day cap opaque | M6 |
 | Unused `fee` field | Confirmed unused | M5 |
 | Aggregated read faucets | Not on-chain | H5 |

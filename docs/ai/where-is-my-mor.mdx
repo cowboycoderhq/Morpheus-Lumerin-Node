@@ -6,13 +6,13 @@ product: ["proxy-router", "ui-desktop"]
 last_verified: "v7.9.0"
 ---
 
-The vast majority of "my MOR is gone" reports are **not** lost MOR. Your MOR can only be in **three on-chain places**:
+The vast majority of "my MOR is gone" reports are **not** lost MOR. For consumers, your MOR can only be in **three on-chain places**:
 
 1. **Your wallet** — standard ERC-20 `balanceOf(you)` on the MOR token.
 2. **Active session** — `openSession` moved your stake into the Inference Contract; `closedAt == 0`.
-3. **`userStakesOnHold` queue** — day-lock of the **used stipend** after close; `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`.
+3. **`userStakesOnHold` queue** — day-lock of `min(remaining stake, the stake-equivalent of the seconds consumed during the **final UTC day**)` after close — but **only if the close lands before** `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`; a close after that timestamp locks nothing and returns the whole remaining stake. The held slice scales with the seconds consumed, so it is the **whole** stake only for a session that ran inside one UTC day *and* was fully consumed; an early close parks proportionally less here and returns the rest at close.
 
-Walk this checklist top-to-bottom. The moment one matches, that is the answer.
+Walk this checklist top-to-bottom. The moment one matches, that is the answer. For providers, also check provider stake and model stake.
 
 ## Bucket 1: Active session
 
@@ -20,23 +20,23 @@ If you recently opened a session in MorpheusUI or via `POST /blockchain/models/:
 
 **Confirm:**
 
-- `GET /blockchain/sessions/user?user=0x…` lists active sessions, or use the hosted [tech.mor.org/session.html](https://tech.mor.org/session.html) wallet checker.
+- `GET /blockchain/sessions/user?user=0x…` (supports optional `offset`, `limit`, `order` query parameters) lists active sessions, or use the hosted [tech.mor.org/session.html](https://tech.mor.org/session.html) wallet checker.
 - Your wallet's transactions on Base show the `openSession` call.
 
 **Resolution:**
 
-- **Wait** for natural expiration — your consumer node will submit `closeSession` ~1 minute after `endsAt` (if online). **Unused** stake returns in that txn; the **used stipend day-locks** until the next UTC day (Bucket 2).
-- **Or close early** with `POST /blockchain/sessions/<sessionId>/close` — same split: unused immediate, used portion may go on-hold.
+- **Wait** for natural expiration — your consumer node will submit `closeSession` ~1 minute after `endsAt` (if online). The final UTC day's consumed slice **day-locks** until the next UTC day (Bucket 2) and the remainder returns in that txn — for a same-day session the remainder is typically **zero**.
+- **Or close early** with `POST /blockchain/sessions/<sessionId>/close` — same split, but a different outcome: what returns in that txn is the part you did **not** consume, and it is not zero. Only the seconds actually consumed go on-hold, so closing at 10% of the scheduled duration returns roughly **90%** of the stake immediately, same UTC day or not.
 
 See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover) for the full lifecycle.
 
 ## Bucket 2: On-hold queue (used-stipend day-lock)
 
-After a successful `closeSession`, the contract may park the **used stipend** in `userStakesOnHold[you]` with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`. This applies to **early close and same-day natural/late close** — not only early close. Until `releaseAt`, that slice is parked inside the contract — not lost, not in your wallet, not in any active session.
+After a successful `closeSession`, the contract may park `min(your remaining stake, the stake-equivalent of the final UTC day's consumed seconds)` in `userStakesOnHold[you]` with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`. This applies to **early close and same-day natural/late close** — not only early close. Until `releaseAt`, that slice is parked inside the contract — not lost, not in your wallet, not in any active session.
 
 **Confirm:**
 
-- `getUserStakesOnHold(yourAddress, iterations_)` on the Inference Contract — splits amounts into `hold_` (before `releaseAt`) vs `available_` (after).
+- `getUserStakesOnHold(yourAddress, iterations_)` on the Inference Contract — splits amounts into `available_` (matured, ready for withdrawal) vs `hold_` (still locked).
 - The hosted wallet checker at [tech.mor.org/session.html](https://tech.mor.org/session.html) shows this bucket explicitly.
 - A direct Base RPC `eth_call` works too:
   ```bash
@@ -47,7 +47,7 @@ After a successful `closeSession`, the contract may park the **used stipend** in
 
 **Resolution:**
 
-After `releaseAt`, call `withdrawUserStakes` on the Diamond contract. **There is no HTTP route on the proxy-router** for this — you submit the on-chain call yourself:
+After `releaseAt` the proxy-router sweeps matured stake automatically every 10 minutes (`stake_claimer.go`); `GET /blockchain/stakes/on-hold` reports the balance. No user action is required — calling `withdrawUserStakes` yourself is optional, and useful only if you want the withdrawal immediately:
 
 ```bash
 cast send 0x6aBE1d282f72B474E54527D93b979A4f64d3030a \
@@ -58,9 +58,9 @@ cast send 0x6aBE1d282f72B474E54527D93b979A4f64d3030a \
 
 The function selector is `0xa98a7c6b` if you're driving a non-Foundry tool. Or use MetaMask "Interact with contract" with the same ABI.
 
-## Bucket 3: Stuck close (funding account or gas)
+## Bucket 3: Stuck close (pool-mode funding account or gas)
 
-A session can sit "active" past `endsAt` because **`closeSession` is one transaction that has to succeed** — and it pays the provider from a **separate protocol funding account**, not from your stake. If that funding account is empty or has insufficient allowance to the Inference Contract, every close fails — yours included.
+A session can sit "active" past `endsAt` because **`closeSession` is one transaction that has to succeed** — and it pays the provider from your escrowed stake for direct-pay sessions, or from a **separate protocol funding account** for pool-mode sessions. If that funding account is empty or has insufficient allowance to the Inference Contract, closeSession for non-direct-pay sessions fails — yours included. Direct-pay sessions pay providers directly from the contract's token balance via `safeTransfer` and do not use the funding account.
 
 **Confirm:**
 
@@ -93,7 +93,7 @@ MorpheusUI and the proxy-router can be configured for either **BASE Mainnet (`84
 
 ## Bucket 5: Wrong wallet address
 
-MorpheusUI's mnemonic-recover only restores **tier-1 (index 0)** addresses. If your real wallet was a derived sub-account (e.g. MetaMask account #2), recovering by mnemonic gives you a different address with no funds.
+MorpheusUI's mnemonic-recover offers a picker of **10 derived accounts** (indices 0-9). If your real wallet was a derived sub-account (e.g. MetaMask account #2), recovering by mnemonic gives you a different address with no funds.
 
 **Confirm:** the lower-left address in MorpheusUI does **not** match your real ERC-20 wallet address.
 
@@ -115,7 +115,8 @@ If you tried an action and the transaction reverted because you didn't have enou
 | Symptom | Reality |
 |---------|---------|
 | "Wallet balance dropped after opening a session." | Expected — stake is in the active session (Bucket 1). |
-| "I closed (or let it expire) and only part came back." | Expected — unused returned; used stipend is in the on-hold queue (Bucket 2). Wait until after `releaseAt`, then `withdrawUserStakes`. |
+| "I closed (or let it expire) and only part came back." | Expected — the final UTC day's slice is in the on-hold queue (Bucket 2). The proxy-router automatically sweeps matured stake every 10 minutes; no manual claim needed. |
+| "I closed and **nothing** came back." | Expected when the session was fully consumed inside one UTC day — e.g. it ran to `endsAt` — because then the consumed slice is essentially the whole stake. **Not** expected from an early close, which returns the unconsumed part in the close txn. The proxy-router automatically sweeps the held part after `releaseAt`; no manual claim needed. |
 | "I can't open another session with the same MOR today." | Expected — used stake is day-locked; size wallet float for gross daily stake. |
 | "Session is past `endsAt` but still open." | Bucket 3 — close transaction hasn't succeeded yet. |
 | "I see the contract holding tokens." | The Inference Contract holds tokens for **all users' active sessions and on-hold queues** combined. Not all of it is yours. |

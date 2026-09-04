@@ -17,12 +17,12 @@ You almost certainly opened a session. The MOR is escrowed in the Diamond contra
 
 ## MorpheusUI shows zero balance after recovering my wallet
 
-You probably recovered a **derived** address from your mnemonic. MorpheusUI only resolves the top-level address from a mnemonic. Use a tier-1 wallet, or import the private key directly.
+You probably selected a different **derived account**. MorpheusUI's import flow offers 10 accounts derived from the mnemonic — pick the one holding your funds, or import the private key directly.
 
 ## "Provider not responding" or stuck mid-prompt
 
-- Confirm the proxy-router is still running (`http://localhost:8082/healthcheck`, or check the Proxy Router entry on MorpheusUI's startup screen).
-- The provider may be down. Close the session; unused stake returns immediately, and the used stipend in `userStakesOnHold` becomes claimable via `withdrawUserStakes` after ~1 UTC day:
+- Confirm the proxy-router is still running (`http://localhost:8082/healthcheck`, or check the **Proxy Router** entry under **Settings → Services** in MorpheusUI).
+- The provider may be down. Close the session; only the remainder (if any) returns immediately (**that remainder is the part you did not consume** — the day-lock is sized from the seconds actually consumed, so closing at 10% of the scheduled duration returns roughly 90% of the stake, and the return approaches zero only as consumption approaches the full scheduled duration: a session left to run to `endsAt` inside one UTC day returns approximately nothing), and the locked amount in `userStakesOnHold` is automatically swept by the proxy-router's StakeClaimer after ~1 UTC day; manual `withdrawUserStakes` is not required:
   ```bash
   curl -X POST 'http://localhost:8082/blockchain/sessions/<sessionId>/close' \
     -H 'Authorization: Basic <base64(user:pass)>' -d '{}'
@@ -31,11 +31,11 @@ You probably recovered a **derived** address from your mnemonic. MorpheusUI only
 
 ## Local model returns nonsense
 
-The local `tinyllama` demo (downloaded by the desktop app on first launch) is a **demonstration model only**. It will hallucinate, miscount, and contradict itself. Don't compare it to a real Morpheus model. See [Local vs on-chain models](/concepts/local-vs-onchain-models).
+The local `Qwen2.5-1.5B-Instruct` model (downloaded by the desktop app on first launch) is a **demonstration model only** — a 1.5B-parameter model chosen to be small enough to ship, not to be good. Its quality is far below what a real Morpheus provider hosts, so don't judge Morpheus by it. See [Local vs on-chain models](/concepts/local-vs-onchain-models).
 
 ## Swagger / API not reachable on `:8082`
 
-- Check the **Proxy Router** entry on MorpheusUI's startup screen — expand **Show logs** for errors, or use **Restart**.
+- Check the **Proxy Router** entry under **Settings → Services** in MorpheusUI — expand **Show logs** for errors, or use **Restart**. These controls are not on the first-run screen: that screen is now the setup wizard (`Startup.tsx:20-22` renders only `SetupWizard`), and the per-service panel carrying **Show logs** / **Ping** / **Restart** is rendered only from `settings/Settings.tsx:624-636`.
 - Common cause: invalid ETH node URL or wrong chain/contract addresses. See [proxy-router env reference](/reference/env-proxy-router).
 - macOS: ensure `xattr -c` removed the quarantine flag from the app.
 

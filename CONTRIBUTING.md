@@ -59,7 +59,7 @@ Prefer conventional prefixes so history stays scannable:
 
 ## Docs changes (`docs/`)
 
-- Pages are MDX with frontmatter (`title`, `description`, `audience`, `product`, `last_verified`, optional `source_url`).
+- Pages are MDX with frontmatter (`title`, `description`, `audience`, `product`, `last_verified`, plus `source_url` — **required** on mirrored ecosystem pages, absent everywhere else).
 - Add new pages to [`docs/docs.json`](docs/docs.json) navigation.
 - Preview locally: `cd docs && mint dev` (requires [Mintlify CLI](https://mintlify.com/docs/installation)).
 - Prefer linking to live status at [active.mor.org](https://active.mor.org) rather than inventing counts or prices.

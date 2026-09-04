@@ -17,10 +17,10 @@ After your proxy-router is running, register on the BASE Diamond contract. **Pre
 
 | Item | Value (wei) | Display |
 |------|-------------|---------|
-| `providerMinStake` | `200000000000000000` | `0.2` MOR |
-| `modelMinStake` | `100000000000000000` | `0.1` MOR |
-| `marketplaceBidFee` | `300000000000000000` | `0.3` MOR |
-| `bidPricePerSecondMin` | `10000000000` | `0.00000001` MOR/sec |
+| `providerMinStake` | `200000000000000000` (Base mainnet) · `200000000000000000` (Base Sepolia) | `0.2` MOR · `0.2` MOR |
+| `modelMinStake` | `100000000000000000` (both) | `0.1` MOR |
+| `marketplaceBidFee` | `300000000000000000` (Base mainnet) · `0` (Base Sepolia) | `0.3` MOR · `0` — Base Sepolia bids are free; owner-settable via `setMarketplaceBidFee`, read live with `getBidFee()` |
+| `bidMinPricePerSecond` | `10000000000` (Base mainnet — the deploy input is named `marketplaceMinBidPricePerSecond`; note that **no deploy path reads `config_base_mainnet.json`** — `deploy/helpers/config-parser.ts:20` hardcodes `deploy/data/config_base_sepolia.json` for every migration — so check the deployed contract for the live bound) | `0.00000001` MOR/sec — on Base Sepolia read `getMinMaxBidPricePerSecond()` for the live floor, `121052630917` wei/sec as of 2026-08-27; both bounds are owner-settable |
 
 ## What you'll need
 
@@ -29,7 +29,7 @@ After your proxy-router is running, register on the BASE Diamond contract. **Pre
 | Provider wallet | `0x9E26Fea97F7d644BAf62d0e20e4d4b8F836C166c` |
 | Public endpoint | `server.example.com:3333` |
 | Existing or new on-chain `modelId` | From [active.mor.org](https://active.mor.org/status) — see below |
-| Bid `pricePerSecond` | Check competitors first; floor is `10000000000` |
+| Bid `pricePerSecond` | Check competitors first; deployed floor is `10000000000` on Base mainnet (on Sepolia read `getMinMaxBidPricePerSecond()` — `121052630917` as of 2026-08-27) |
 
 ## Step 0 — Look up models before you mint
 
@@ -43,7 +43,9 @@ Browse [active.mor.org/status](https://active.mor.org/status) or pull the JSON s
 | [status](https://active.mor.org/status) | Human UI + uptime / min price views |
 
 ```bash
-# Find a model by name (field names are PascalCase in the JSON)
+# Find a model by name. Top-level model fields are PascalCase (Name, Id, Tags, Owner);
+# the nested objects are not — `health` and `bidDetail` are lowercase, and bidDetail
+# entries use camelCase (providerId, pricePerSecond).
 curl -sS https://active.mor.org/active_models.json \
   | jq '.models[] | select(.Name | test("llama-3.3"; "i")) | {Name, Id, IpfsCID, Tags, Owner, health}'
 
@@ -71,7 +73,7 @@ Any registered provider can bid on any active model — you do **not** need to o
         Open [myprovider.mor.org](https://myprovider.mor.org). Enter your proxy-router base URL and Basic Auth credentials from `.cookie` / `COOKIE_CONTENT` (not a browser wallet). Hosted MyProvider requires **HTTPS** to the node — SecretVM Traefik on `:443` fits; for plain HTTP use the [desktop app or local `npm run dev`](/providers/full/myprovider-gui#https-requirement).
       </Step>
       <Step title="Register your provider">
-        **Provider** tab → verify `:3333` reachability → create/update provider with your public `host:3333` endpoint and at least `0.2` MOR stake (`10000` MOR for a subnet provider). Approve the Diamond spend if prompted.
+        **Provider** tab → verify `:3333` reachability → create/update provider with your public `host:3333` endpoint and at least `0.2` MOR stake on Base mainnet (`0.2` on Sepolia; no subnet tier — ignore `10000` MOR for a subnet provider). Approve the Diamond spend if prompted.
       </Step>
       <Step title="Bid on an existing model (preferred)">
         **Models & Bids** → find the model under **Available Models** (or look up `Id` on active.mor.org first) → **Add Bid**. Set `pricePerSecond` from the competitor check in Step 0. Capture the returned bid id.
@@ -80,26 +82,26 @@ Any registered provider can bid on any active model — you do **not** need to o
         Use **Create Model & Bid** only for a genuinely new offering (or a required `tee` tag with no existing tee model). Include tag `tee` when applicable. Today the GUI auto-generates `modelId` / `ipfsCID` — that is fine for a true new model; it is **not** the path for joining an existing listing.
       </Step>
       <Step title="Sync models-config">
-        Use **Model Configuration Sync** to map the on-chain `modelId` to your backend `apiUrl`, copy `MODELS_CONFIG_CONTENT` / update `models-config.json`, and restart or redeploy the node so config matches the bid **before** you rely on live traffic. See [models-config.json](/reference/models-config).
+Edit `models-config.json` directly to map the on-chain `modelId` to your backend `apiUrl`, then restart the node, or delete the file and set `MODELS_CONFIG_CONTENT` again, so config matches the bid **before** you rely on live traffic. See [models-config.json](/reference/models-config).
       </Step>
     </Steps>
   </Tab>
   <Tab title="Swagger / API">
     <Steps>
       <Step title="Authorize the Diamond contract">
-        `POST /blockchain/approve` — set `spender = <DiamondContract>` and `amount` ≥ enough MOR for provider stake + (optional) model stake + bid fee. Bidding on an existing model needs provider stake + `0.3` MOR fee (≈ `0.5` MOR); minting a new model adds `0.1` MOR model stake (≈ `0.6` MOR total).
+        `POST /blockchain/approve` — set `spender = <DiamondContract>` and `amount` (in **base units**, 18 decimals — it is passed to `approve` unscaled, `service.go:1047`) ≥ enough MOR for provider stake + (optional) model stake + bid fee. Bidding on an existing model needs provider stake + the `marketplaceBidFee`: on **Base mainnet** `0.2` + `0.3` = **≈ `0.5`** MOR, on **Base Sepolia** `0.2` + `0` = **`0.2`** MOR (the Sepolia bid fee is zero). Minting a new model adds `0.1` MOR model stake (**≈ `0.6`** mainnet — `0.2` + `0.3` + `0.1`; **`0.3`** Sepolia — `0.2` + `0` + `0.1`).
       </Step>
       <Step title="Register your provider">
-        `POST /blockchain/providers` — set `addStake` (≥ `0.2` MOR; `10000` MOR for a subnet provider) and `endpoint` (your **publicly accessible** `host:port`, no protocol).
+        `POST /blockchain/providers` — set `stake` (≥ `0.2` MOR on Base mainnet, `0.2` on Sepolia; there is no subnet tier — a single `providerMinimumStake` applies to every provider) and `endpoint` (your **publicly accessible** `host:port`, no protocol).
       </Step>
       <Step title="Post a bid on an existing model (preferred)">
-        From Step 0, take the model's `Id`. `POST /blockchain/bids` with that `modelID` and `pricePerSecond` (≥ `10000000000`). Put the same `Id` in `models-config.json` and restart the proxy-router. Capture the returned `bidID`.
+        From Step 0, take the model's `Id`. `POST /blockchain/bids` with that `modelID` and `pricePerSecond` (≥ `10000000000` on Base mainnet; on Sepolia, ≥ whatever `getMinMaxBidPricePerSecond()` returns — `121052630917` as of 2026-08-27). Put the same `Id` in `models-config.json` and restart the proxy-router. Capture the returned `bidID`.
       </Step>
       <Step title="Only if needed — create a new model">
         `POST /ipfs/add` (and `POST /ipfs/pin`) for a real CID when you have one, then `POST /blockchain/models` with:
-        - `modelId`: random 32-byte hex (base id; on-chain id becomes `keccak256(owner ‖ baseId)`).
-        - `ipfsCID`, `Fee`, `addStake` (`0.1` MOR min), `Owner`, `name`, `tags`.
-        - **TEE providers must include `"tee"`** (case-insensitive).
+        - `id`: optional random 32-byte hex (base id; the on-chain id becomes `keccak256(owner ‖ baseId)`). Omit it and one is generated.
+        - `ipfsID`, `fee`, `stake` (`0.1` MOR min), `name`, `tags`. There is no `Owner` field — the owner is the signing wallet.
+        - `tags` **must include a type tag** or the request is rejected with 400: one of `llm`/`textgeneration`/`text2text`/`t2t`, `stt`/`transcribe`/`s2t`/`speech`, `tts`/`text-to-speech`, or `embedding`/`embeddings` (`model_tags.go:20-35`). TEE providers add `"tee"` **in addition** (case-insensitive). Note the router's 400 message names `chat`, which is not an accepted tag.
         Capture the response `modelID` (combined id) for `models-config.json` and the bid.
       </Step>
       <Step title="Update models-config.json">
@@ -126,7 +128,7 @@ See [TEE overview](/concepts/tee-overview) and [TEE reference](/providers/full/t
 
 - Your provider on chain: `GET /blockchain/providers`
 - Models on chain: `GET /blockchain/models`
-- Your bids on chain: `GET /blockchain/bids`
+- Your bids on chain: `GET /blockchain/providers/<your-address>/bids` (append `/active` for live bids only)
 - Live network listings: [active.mor.org](https://active.mor.org/status)
 - Operator dashboard: [MyProvider](/providers/full/myprovider-gui)
 
@@ -136,15 +138,16 @@ To stop offering a model **without deregistering it** (so you keep any model sta
 
 ```bash
 # Find your active bid
-curl -sS -u 'admin:admin' 'http://localhost:8082/blockchain/bids' \
-  | jq '.bids[] | select(.Provider=="0xYOUR_PROVIDER")'
+curl -sS -u 'admin:admin' \
+  'http://localhost:8082/blockchain/providers/0xYOUR_PROVIDER/bids/active' \
+  | jq '.bids'
 
 # Delete the bid
-curl -X POST -u 'admin:admin' \
-  'http://localhost:8082/blockchain/bids/0xYOUR_BID_ID/delete'
+curl -X DELETE -u 'admin:admin' \
+  'http://localhost:8082/blockchain/bids/0xYOUR_BID_ID'
 ```
 
-The model record stays on chain. To resume, post a new bid (which charges the `0.3 MOR` `marketplaceBidFee` again — see [pricing](/providers/full/pricing)).
+The model record stays on chain. To resume, post a new bid (which charges the `marketplaceBidFee` again — `0.3` MOR on Base mainnet; on Base Sepolia the fee is `0`, so reposting there costs only gas; see [pricing](/providers/full/pricing)).
 
 If you **own** a model and want to **completely remove** it: delete all of its bids first, then call `modelDeregister` to recover the `0.1 MOR` model stake. The contract refuses `modelDeregister` while any bid for that model is still active. If you only ever bid on someone else's model, deleting your bid is enough — you have no model stake to recover.
 
@@ -154,6 +157,6 @@ For typical staked sessions, the protocol pays you **inside `closeSession`** via
 
 What this means for you operationally:
 
-- Keep your provider wallet ready to **receive** MOR; you don't need to call a claim function.
+- Keep your provider wallet ready to **receive** MOR; you don't need to call a claim function in the standard flow. The exception is an **early close with a dispute** — `_rewardProviderAfterClose` withholds part of that session's reward, and you release it later with `claimForProvider(sessionId)` (see [Rewards and economics](/concepts/rewards-and-economics)).
 - For the **direct-payment** carve-out (a separate flow some sessions use), behavior differs — see the contract source and [tech.mor.org/session.html](https://tech.mor.org/session.html) for the canonical breakdown.
 - If `closeSession` ever fails because the protocol funding account is empty or under-approved, **no provider gets paid until operators top it up** — that's a network-wide failure mode, not a per-provider one.

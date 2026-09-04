@@ -27,13 +27,13 @@ You can also confirm via `http://localhost:8082/swagger/index.html` (or whatever
 
 ### Likely cause 1: `.env` misconfiguration
 
-These four values **must** match your chain and OS. Use `proxy-router/env.main.example` as the canonical reference:
+These four values **must** match your chain and OS. Use `proxy-router/.env.example` as the canonical reference (there is no `env.main.example`; Windows has `.env.example.win`):
 
 - `DIAMOND_CONTRACT_ADDRESS=`
 - `MOR_TOKEN_ADDRESS=`
 - `BLOCKSCOUT_API_URL=`
 - `ETH_NODE_CHAIN_ID=`
-- `PROXY_STORAGE_PATH=`
+- `PROXY_STORAGE_PATH=./data/badger/` (or omit; default is `./data/badger/`)
 
 If running the proxy-router headless (without the UI), set:
 
@@ -41,28 +41,62 @@ If running the proxy-router headless (without the UI), set:
 
 If you bring your own ETH node (Alchemy, Infura, etc.):
 
-- Confirm `ETH_NODE_URL=` (or `ETH_NODE_ADDRESS=`) is correct for the chain.
+- Confirm `ETH_NODE_ADDRESS=` is correct for the chain (`proxy-router/internal/config/config.go:29`). There is no `ETH_NODE_URL` variable.
 - Recommended: HTTPS over WSS, with `ETH_NODE_USE_SUBSCRIPTIONS=false`.
 
 Full reference: [Env: proxy-router](/reference/env-proxy-router).
 
-### Likely cause 2: `models-config.json` misconfiguration
+### Likely cause 2: the ETH node or contract addresses are unreachable
 
-- `MODELS_CONFIG_PATH=` in `.env` must point to the actual file with read permissions.
-- The JSON must follow [models-config.json](/reference/models-config).
-- Restart the proxy-router after edits.
+This is the most common startup abort in practice (`main.go:242-254`). A wrong
+`ETH_NODE_ADDRESS`, an unreachable RPC, or an `ETH_NODE_CHAIN_ID` that disagrees
+with the node's own chain ID all exit non-zero with `cannot connect to ethereum node`.
+
+Earlier aborts, in the order `main.go` reaches them, if the log stops before the
+RPC lines: `SYS_ENABLE=true` with insufficient privileges (`:146-149`), a
+`PROXY_STORAGE_PATH` that cannot be created or opened (`:204-207`), an
+unparseable `proxy.conf` (`:217-219`), and a `COOKIE_CONTENT` without a `:`
+separator (`:222-224`). If the log stops even earlier than those and the exit
+status is **0**, it is not an abort at all — see the next section.
+
+### Not a crash: exits 0 immediately, nothing listening
+
+If the process ends straight away with **no error output and exit code 0**, check
+`APP_RESET_KEYCHAIN`. Set `true` it is a one-shot maintenance wipe, not a startup
+modifier: `proxy-router/cmd/main.go:181-199` deletes the stored wallet and the
+stored ETH-node URLs and then returns `nil` before any of the node exists —
+storage, the RPC client and the HTTP server all start at `:204` — so
+`proxy-router/cmd/main.go:47-53` exits 0. Nothing listens on `:8082` or `:3333`,
+and because the exit is clean, a Docker `restart:` policy, a systemd unit or a
+Kubernetes probe reads it as a successful run rather than a failure. Unset the
+variable (or set it `false`) and restart. It is also not macOS-specific: the
+keychain lane uses `go-keyring`, which ships macOS, Windows and Linux/BSD
+backends, and `proxy-router/cmd/main.go` has no platform guard.
+
+### Not a cause: `models-config.json`
+
+A missing, unreadable, or malformed `models-config.json` does **not** stop the
+proxy-router. `ModelConfigLoader.Init` returns an error, and `main.go:311-315`
+logs `failed to load model config, running with empty` at warn level and
+continues — the node starts, answers `/healthcheck`, and serves **zero models**.
+The same is true of `agents-config.json` (`main.go:317-321`). So if your node is
+crash-looping, the models config is the wrong place to look; and if it is running
+but no one can open a session against you, this is exactly what that looks like.
+Check the `models` array in `GET /healthcheck`, not the exit code.
 
 ### Resolution
 
-1. Fix `.env` and `models-config.json`.
+1. Fix `.env` — chain values first, then `ETH_NODE_ADDRESS`.
 2. Restart the proxy-router.
 3. Watch the log for connection errors to the ETH node and the Diamond contract.
+4. Once it stays up, confirm the model set separately (see above) — startup
+   succeeding says nothing about `models-config.json` having loaded.
 
 ---
 
 ## Wallet shows zero MOR / ETH after recovering from mnemonic
 
-You probably recovered a **derived address**. The MorpheusUI mnemonic flow only works with **top-level (tier-1)** addresses. Either:
+You probably selected a different **derived account**. The import flow lets you pick any of 10 accounts derived from the mnemonic (`ImportFlow.jsx:113`) — check you chose the one holding your funds. Either:
 
 - Use a wallet that was originally created from this mnemonic at index 0, or
 - Import the **private key** directly instead of the mnemonic.
@@ -81,7 +115,7 @@ Almost always: it's escrowed in the Diamond contract because of an open or recen
 
 ## Local model returns nonsense
 
-The bundled `tinyllama` is a **demo** model. It will hallucinate, miscount, and contradict itself. Compare quality only against real Morpheus models. See [Local vs on-chain models](/concepts/local-vs-onchain-models).
+The bundled `Qwen2.5-1.5B-Instruct` is a **demo** model — 1.5B parameters, chosen to be small enough to ship rather than to be good. Compare quality only against real Morpheus models. See [Local vs on-chain models](/concepts/local-vs-onchain-models).
 
 ---
 
@@ -96,7 +130,7 @@ The bundled `tinyllama` is a **demo** model. It will hallucinate, miscount, and 
 ## Provider-side: TEE attestation fails on the consumer
 
 - Confirm your model is registered with the `tee` tag.
-- Confirm the consumer is on `v6.0.0+` (Phase 1) or `v7.0.0+` for full benefit.
+- Confirm the consumer is on `v6.0.0+` (Phase 1) — Phase 2 benefits are provided transparently by the v7+ provider; no consumer upgrade is required.
 - Recheck the SecretVM portal at https://secretai.scrtlabs.com/attestation with your compose and VM URL — all three layers must pass.
 - Use `cosign verify` and `cosign verify-attestation` on your `-tee` image. See [TEE reference](/providers/full/tee-reference).
 

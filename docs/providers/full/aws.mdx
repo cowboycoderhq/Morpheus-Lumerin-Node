@@ -73,7 +73,13 @@ flowchart LR
     For a real production deployment use a properly sized model and consider [vLLM](https://github.com/vllm-project/vllm) or another GPU-optimized server. See [Model setup](/providers/full/model-setup) for backend options.
   </Step>
   <Step title="Validate the model is reachable">
-    From a browser: `http://<model_host>:<model_port>` should show the llama.cpp UI. From the proxy-router instance: `curl http://<model_host>:<model_port>/v1/chat/completions ...` should respond.
+    From the proxy-router instance: `curl -X POST http://<model_host>:<model_port>/v1/chat/completions -d '{...}'` should respond — that endpoint is POST-only, so a plain `curl` (which sends GET) proves nothing. That is the only path the Part 1 security group admits — inbound `8080` is open to the proxy-router instance's SG and to nothing else, so a browser on your own machine pointed at `http://<model_host>:<model_port>` times out by design, not by fault. To see the llama.cpp UI, forward the port through an SSH session to the proxy-router instance first:
+
+    ```bash
+    ssh -L 8080:<model-instance-private-dns>:8080 ec2-user@<proxy-router-public-dns>
+    ```
+
+    then open `http://localhost:8080` on your machine. Do not widen the security group to make a browser check pass.
   </Step>
 </Steps>
 
@@ -104,6 +110,24 @@ flowchart LR
     cp .env.example .env
     vi .env
     ```
+
+<Warning>
+**Set your own API password before starting.** `.env.example` ships
+`COOKIE_CONTENT=admin:admin`, and that becomes the Basic Auth credential for the
+local API. Either **delete the line** — the proxy-router then generates a random
+32-character password on first start (`internal/system/auth.go:226-232`) — or set
+it to `admin:<your-own-password>`.
+
+Either way the credential is written to `.cookie` (default `./.cookie`, next to
+the binary — `proxy-router/internal/config/config.go:212`) with `0600` permissions. **Read the generated
+password with `cat .cookie`**; the file contains a single `admin:<password>`
+line, and that is what you enter in Swagger's **Authorize** box and in every
+`curl -u` below.
+
+The file is only written when it does **not** already exist (`auth.go:215`), so
+if you have started the router before, delete `.cookie` first or the change has
+no effect.
+</Warning>
     Set:
     - `WALLET_PRIVATE_KEY` — your provider wallet's private key.
     - `ETH_NODE_ADDRESS` — your BASE RPC URL (e.g. Alchemy `wss://base-mainnet.g.alchemy.com/v2/<key>` or HTTPS).

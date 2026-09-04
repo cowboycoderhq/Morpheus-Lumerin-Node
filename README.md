@@ -4,12 +4,12 @@
 
 The purpose of this software is to enable interaction with distributed, decentralized LLMs on the Morpheus network through a desktop chat experience.
 
-> **v7.0.0 — Full TEE capability.** The v7 release completes a two-hop Trusted Execution Environment (TEE) trust chain for any model registered on-chain with the `tee` tag:
+> **v7.0.0 — TEE capability (Intel TDX only).** The v7 release completes a two-hop Trusted Execution Environment (TEE) trust chain for Intel TDX models registered on-chain with the `tee` tag; SEV per-template verification is not yet wired, so SEV-based providers cannot be fully verified by consumers at this time:
 >
 > - **Phase 1** — *consumer → P-Node.* A consumer proxy-router (v6.0.0+) cryptographically verifies the provider's P-Node runs the exact official hardened `-tee` image inside a genuine Intel TDX SecretVM, with TLS pinning, at session open and on every prompt.
 > - **Phase 2 (new in v7)** — *P-Node → backend LLM.* The v7+ P-Node itself verifies the backend LLM it forwards inference to (CPU TDX quote, TLS pinning, workload RTMR3 replay of the backend's `docker-compose.yaml`, CPU-GPU nonce binding, and NVIDIA NRAS GPU attestation) at startup and on every prompt.
 >
-> Because Phase 2 runs inside the attested P-Node, **any v6+ consumer is forward-compatible with a v7+ provider** and gains the Phase 2 guarantees automatically — no client-side upgrade required. See the [TEE reference](https://nodedocs.mor.org/providers/full/tee-reference), the [SecretVM quickstart](https://nodedocs.mor.org/providers/full/secretvm-quickstart), and the [TEE backend verification developer reference](https://nodedocs.mor.org/providers/full/tee-backend-verification).
+> Because Phase 2 runs inside the attested P-Node, **any v6+ consumer is forward-compatible with a v7+ Intel TDX provider** and gains the Phase 2 guarantees automatically — no client-side upgrade required. SEV-based providers are not yet fully verifiable by consumers. See the [TEE reference](https://nodedocs.mor.org/providers/full/tee-reference), the [SecretVM quickstart](https://nodedocs.mor.org/providers/full/secretvm-quickstart), and the [TEE backend verification developer reference](https://nodedocs.mor.org/providers/full/tee-backend-verification).
 
 ## What this fork adds
 
@@ -75,7 +75,7 @@ The site is structured around **role-based journeys** (consumer / prosumer / pro
 ## What's in this repo
 
 - Lumerin `proxy-router` — background process that monitors blockchain contract events, manages secure sessions between consumers and providers, and routes prompts and responses between them.
-- `ui-desktop/` (**MorpheusUI**) — Electron desktop app for consumers. Release assets are `*-morpheus-app-*` installers (`.dmg` / `.AppImage` / portable `.exe`); on first launch the app downloads the proxy-router, a local `llama.cpp` + tinyllama demo model, and an IPFS (kubo) node. There is no zip / `mor-launch` package in current releases.
+- `ui-desktop/` (**MorpheusUI**) — Electron desktop app for consumers. Release assets are `*-morpheus-app-*` installers (`.dmg` / `.AppImage` / portable `.exe`); on first launch the app downloads the proxy-router, a local `llama.cpp` runtime + the `Qwen2.5-1.5B-Instruct` demo model, and an IPFS (kubo) node. There is no zip / `mor-launch` package in current releases.
 - `cli/` — CLI client (`*-morpheus-cli-*` release binaries; local builds produce `mor-cli`).
 - Standalone `*-morpheus-router-*` release binaries for headless / provider deployments.
 
@@ -101,6 +101,40 @@ The site is structured around **role-based journeys** (consumer / prosumer / pro
 
 You will need both **MOR** (for stake / fees / session payment) and **ETH on BASE** (for gas) in your wallet.
 
+> **Do not deploy the contracts to Base mainnet from this branch.**
+> `smart-contracts/deploy/helpers/config-parser.ts:20` hardcodes
+> `deploy/data/config_base_sepolia.json` and takes no network argument, so
+> `parseConfig()` returns the **Base Sepolia** parameters whatever `--network`
+> says — no deploy path reads the mainnet config file at all. The mainnet
+> commands documented in the migration comment blocks
+> (`smart-contracts/deploy/1_full_protocol.migration.ts:132-133`, and the
+> equivalent lines in migrations 2, 3 and 4) therefore write the *testnet* token
+> address, funding account and bid bounds into a **Base mainnet** deployment,
+> and `1_full_protocol.migration.ts:119` ends by calling
+> `transferOwnership(config.owner)` — handing that deployment to the Sepolia
+> owner, which is a plain single-key account, where the Diamond in the table
+> above is held by a 5-of-9 multisig.
+>
+> **Nothing fails first.** Each initialiser stores its address argument without
+> ever calling it (`Marketplace.sol:29-38`, `SessionRouter.sol:39-52`,
+> `Delegation.sol:11-13`), so a token address that does not exist on the target
+> chain does not revert: the run succeeds silently and `--verify` then publishes
+> it as verified source. This does **not** take the Diamond listed above away
+> from its owners — migration 1 deploys a *new* one — so the exposure is a
+> second, official-looking mainnet protocol controlled by a single testnet key,
+> not loss of the existing one. Note also that
+> `2_change_bid_price.migration.ts:22-23` documents its own mainnet command as
+> `--only 1`, so a reader who meant only to inspect bid prices would run the
+> full protocol deploy.
+>
+> **Fixing the parser is necessary but not sufficient.**
+> `config_base_mainnet.json:7` still carries a bid price floor that the live
+> contract has never returned at any block, so a parser that honoured
+> `--network` would faithfully deploy that wrong floor instead. A mainnet deploy
+> needs both changes — the parser selecting its config by network, and the
+> mainnet config reconciled against the deployed contract — before any
+> `migrate --network base` command here is safe to run.
+
 ## Quickstart
 
 The linked pages below are the official Morpheus docs — accurate for wallet
@@ -124,8 +158,30 @@ one path on this fork that is actually current.
 
 ## Build the desktop app from source
 
-Requires **Node >= 20** — nothing else. One line builds an installer for the
-machine you are on and puts it in your Downloads folder:
+> **macOS only, in practice.** The build itself succeeds on Linux and Windows,
+> but the app it produces cannot finish first-run setup — and you only find
+> that out after a full build plus a ~2GB service download. This fork has no
+> proxy-router binary uploaded for either platform, so
+> `SERVICE_PROXY_DOWNLOAD_URL_LINUX_*` / `_WINDOWS_*` ship commented out
+> (`ui-desktop/.env.example:57-64`) and `yarn app` copies that file verbatim
+> to `.env` (`ui-desktop/scripts/ensure-env.mjs:51-57`). With no URL,
+> `downloadProxyRouter()` downloads nothing yet still sets its status to
+> `'success'` (`ui-desktop/src/main/orchestrator/orchestrator.ts:193-209`),
+> the router is then started out of a directory that was never created
+> (`:360-363`), and `calculateOrchestratorStatus()` never reaches `'ready'`
+> because the router is not running (`:684-703`) — so the setup wizard sits
+> on "Connecting to the Morpheus network" indefinitely, with no error shown.
+>
+> Only the from-source desktop app is affected. **CI-built releases are
+> fine** — `.github/workflows/build.yml` injects a real per-platform URL
+> (`:3043` Linux x64, `:3236` Windows x64). And the proxy-router itself
+> builds and runs everywhere (`cd proxy-router && make build`), so the
+> API-only consumer path
+> ([Install from source](https://nodedocs.mor.org/consumers/install-from-source))
+> works on Linux and Windows today.
+
+Requires **Node >= 20** — nothing else. On **macOS**, one line builds an
+installer for the machine you are on and puts it in your Downloads folder:
 
 ```bash
 (git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git || (cd Morpheus-Lumerin-Node && git fetch -q && git merge --ff-only -q @{u} || true)) && cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
@@ -180,6 +236,10 @@ yarn install
 yarn build:mac-arm64        # or build:mac-x64 / build:win-x64 / build:linux-x64
 ```
 
+`build:win-x64` and `build:linux-x64` build and install cleanly; the app they
+produce then freezes on the first-run wizard — see the caveat at the top of
+this section.
+
 The installer lands in `ui-desktop/dist/`. `scripts/release.sh` is the signed
 and notarized path and works only for the publisher.
 
@@ -190,6 +250,10 @@ and notarized path and works only for the publisher.
 ```bash
 cd ui-desktop && yarn dev
 ```
+
+`yarn dev` reads the same `.env`, so on Linux and Windows it hits the same
+first-run freeze as a from-source packaged build (caveat at the top of
+"Build the desktop app from source").
 
 ### The checks
 

@@ -7,7 +7,7 @@ last_verified: "v7.7.0"
 source: "docs/01-model-setup.md"
 ---
 
-The Morpheus proxy-router does **not** run inference itself. It forwards prompts to whatever OpenAI-compatible HTTP endpoint you point it at via [`models-config.json`](/reference/models-config). That endpoint is your "backend LLM" or "model server."
+The Morpheus proxy-router does **not** run inference itself. It forwards prompts to the backend endpoint configured in [`models-config.json`](/reference/models-config). The proxy-router supports multiple API types, including OpenAI, claudeai, prodia-v2, and hyperbolic-sd, with their respective endpoint formats, as defined in the models-config schema. That endpoint is your "backend LLM" or "model server."
 
 <Note>
 This page is intentionally short. Picking, sizing, and operating an inference engine is its own discipline; we link to the canonical references rather than maintaining our own.
@@ -32,11 +32,7 @@ This page is intentionally short. Picking, sizing, and operating an inference en
 
 ## What the proxy-router needs from your backend
 
-- **OpenAI-compatible** route appropriate for the model type:
-  - LLM: `/v1/chat/completions`
-  - Embeddings: `/v1/embeddings`
-  - STT: `/v1/audio/transcriptions`
-  - TTS: `/v1/audio/speech`
+- The proxy-router supports multiple API types (OpenAI, claudeai, prodia-v2, hyperbolic-sd). Configure the `apiType` in `models-config.json` and use the appropriate endpoint format for that type.
 - A **stable, private URL** the proxy-router can reach (e.g. `http://10.0.0.5:8080/v1/chat/completions`).
 - Enough **concurrency** to satisfy the `concurrentSlots` you advertise in `models-config.json`.
 

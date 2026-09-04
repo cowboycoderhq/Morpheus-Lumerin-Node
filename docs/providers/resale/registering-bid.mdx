@@ -31,12 +31,12 @@ You should `pricePerSecond ≥ upstream_$_per_second + your_margin + risk_buffer
 
 | Item | Value |
 |------|-------|
-| `bidPricePerSecondMin` | `10000000000` wei (`0.00000001` MOR/sec) |
-| Marketplace bid fee (paid once) | `0.3` MOR |
-| Provider stake (refundable) | `0.2` MOR (or `10000` MOR for subnet) |
+| `bidMinPricePerSecond` | `10000000000` wei on Base mainnet (`0.00000001` MOR/sec); on Base Sepolia read `getMinMaxBidPricePerSecond()` — `121052630917` wei/sec as of 2026-08-27, set by an owner call after deployment — the number's origin is not recorded, and no migration computes it, so a redeploy would reset the floor to the deploy config's figure rather than reproduce this one. Owner-settable. |
+| Marketplace bid fee (charged on every `postModelBid`, not once) | `0.3` MOR on Base mainnet (live on-chain); `0` on Base Sepolia — testnet bids are free. Owner-settable. |
+| Provider stake (returned on deregister, net of rewards claimed in the current 365-day limiter period, which restarts on the first payout made after it lapses) | `0.2` MOR mainnet (live on-chain) / `0.2` MOR Sepolia — no subnet tier |
 | Model stake (refundable) | `0.1` MOR |
 
-You **cannot** post below the floor. There is no upper limit, but consumer rating algorithms will skip you if you're far above other providers serving the same model.
+You **cannot** post below the floor **or above the ceiling** — `Marketplace.sol:80-84` reverts `MarketplaceBidPricePerSecondInvalid` outside `[bidMinPricePerSecond, bidMaxPricePerSecond]`, both owner-set. Within that band, consumer rating algorithms will still skip you if you're far above other providers serving the same model.
 
 ## A worked example
 
@@ -56,7 +56,7 @@ If `1 MOR ≈ $X` (check live), then `MOR/sec ≈ 0.0003 / X`. Add a `~30%` marg
 
 ## Updating an existing bid
 
-Bids are immutable on chain — to change pricing, **delete** the old bid (`DELETE /blockchain/bids/:id`) and post a new one. Plan for the bid fee on each post.
+To change pricing, post a new bid via `POST /blockchain/bids`. The contract automatically replaces the previous active bid for the same provider and model when the new bid's nonce indicates an existing bid (see `Marketplace.sol:93-98`). No separate delete call is required. Plan for the bid fee on each post.
 
 ## Risk hygiene
 

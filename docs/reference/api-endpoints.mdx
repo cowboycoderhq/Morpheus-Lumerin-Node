@@ -7,7 +7,7 @@ last_verified: "v7.9.0"
 source: "docs/proxy-router-api-endpoints.md"
 ---
 
-This page gives prose context for the endpoints integrators reach for first when calling **the proxy-router HTTP API** (i.e. the API your local node exposes on `:8082`). The complete schema lives at [`proxy-router/docs/swagger.yaml`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/docs/swagger.yaml) and is browsable at `http://localhost:8082/swagger/index.html` when your node is running.
+This page gives prose context for the endpoints integrators reach for first when calling **the proxy-router HTTP API** (i.e. the API your local node exposes on `:8082`). The generated schema lives at [`proxy-router/docs/swagger.yaml`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/docs/swagger.yaml) and is browsable at `http://localhost:8082/swagger/index.html` when your node is running. It is generated from the handler annotations and currently carries an entry for every route the server registers — see [Full schema](#full-schema) for what keeps it that way.
 
 <Note>
 If you're looking for the **hosted** OpenAI-compatible Morpheus product (no node required), that is a separate service — see [Inference API overview](/inference-api/overview) and [apidocs.mor.org](https://apidocs.mor.org).
@@ -15,11 +15,29 @@ If you're looking for the **hosted** OpenAI-compatible Morpheus product (no node
 
 ## Authentication
 
-All endpoints require **Basic Authentication**:
+Nearly all endpoints require **Basic Authentication**:
 
 ```
 Authorization: Basic <base64(username:password)>
 ```
+
+<Warning>
+**Five routes are served without authentication.** Each is registered with no
+`CheckAuth` middleware, and the global auth middleware in
+`proxy-router/internal/handlers/httphandlers/http.go:67-85` is commented out:
+
+| Route | Registered at |
+|---|---|
+| `GET /healthcheck` | `internal/system/controller.go:67` |
+| `POST /proxy/provider/ping` | `internal/proxyapi/controller_http.go:88` |
+| `POST /auth/users/request` | `internal/authapi/controller_http.go:35` |
+| `GET /auth/cookie/path` | `internal/authapi/controller_http.go:45` |
+| `GET /swagger/*any` | `internal/handlers/httphandlers/http.go:64` |
+
+`GET /auth/cookie/path` returns the filesystem path of the admin credential file.
+Treat the proxy-router's listen address as trusted-network-only; do not expose it
+to the public internet on the assumption that Basic Auth covers every route.
+</Warning>
 
 See [API auth](/reference/api-auth).
 
@@ -36,7 +54,7 @@ OpenAI-compatible chat. The request body is forwarded to the provider; you don't
 | `session_id` (hex32) | Required for remote provider routing |
 
 ```bash
-curl --location 'http://localhost:8084/v1/chat/completions' \
+curl --location 'http://localhost:8082/v1/chat/completions' \
   --header 'Accept: application/json' \
   --header 'session_id: 0x8e12df2f764b416c0ea1936a253c2a4be01005651c2d73f22dd0d72520f93ca1' \
   --header 'Content-Type: application/json' \
@@ -72,7 +90,7 @@ Response: `200 OK`, `text/event-stream` (streaming) or `application/json`.
 | `enable_diarization` | Boolean |
 
 ```bash
-curl --location 'http://localhost:8084/v1/audio/transcriptions' \
+curl --location 'http://localhost:8082/v1/audio/transcriptions' \
   --header 'session_id: 0x9fe60aa88c4e8d44414431dd565353efb762a923d639f54f856b3ac657e16263' \
   --header 'Authorization: Basic YWRtaW46YWRtaW4=' \
   --form 'file=@"/path/to/harvard.wav"'
@@ -87,7 +105,7 @@ curl --location 'http://localhost:8084/v1/audio/transcriptions' \
 JSON. Common fields: `input` (required), `voice`, `response_format` (`mp3`/`opus`/`aac`/`flac`/`wav`/`pcm`; default `mp3`), `speed`.
 
 ```bash
-curl --location 'http://localhost:8085/v1/audio/speech' \
+curl --location 'http://localhost:8082/v1/audio/speech' \
   --header 'session_id: 0xf38101fbd00ed4db25444e9d9a65b737d4cd3d464da3aeb118b749c10ee48b10' \
   --header 'Content-Type: application/json' \
   --header 'Authorization: Basic YWRtaW46YWRtaW4=' \
@@ -101,7 +119,7 @@ curl --location 'http://localhost:8085/v1/audio/speech' \
 `POST /v1/embeddings`
 
 ```bash
-curl --location 'http://localhost:8084/v1/embeddings' \
+curl --location 'http://localhost:8082/v1/embeddings' \
   --header 'session_id: 0xbd5585da9c1e62b4ac89152e7770cdc2779400afa181f831484c60aabc2422f4' \
   --header 'Content-Type: application/json' \
   --header 'Authorization: Basic YWRtaW46YWRtaW4=' \
@@ -142,7 +160,7 @@ curl --location 'http://localhost:8082/blockchain/providers' \
 | `failover` | optional | |
 
 ```bash
-curl --location 'http://localhost:8084/blockchain/models/0xe086adc275c99e32bb10b0aff5e8bfc391aad18cbb184727a75b2569149425c6/session' \
+curl --location 'http://localhost:8082/blockchain/models/0xe086adc275c99e32bb10b0aff5e8bfc391aad18cbb184727a75b2569149425c6/session' \
   --header 'Content-Type: application/json' \
   --header 'Authorization: Basic YWRtaW46YWRtaW4=' \
   --data '{ "sessionDuration": 600, "failover": false, "directPayment": false }'
@@ -157,7 +175,7 @@ Response includes `sessionID`.
 `POST /blockchain/sessions/:id/close`
 
 ```bash
-curl --location 'http://localhost:8084/blockchain/sessions/0xf343b654cc8a21d0666c38606146ae68ef67b4445643deba02991a72f0d09785/close' \
+curl --location 'http://localhost:8082/blockchain/sessions/0xf343b654cc8a21d0666c38606146ae68ef67b4445643deba02991a72f0d09785/close' \
   --header 'Content-Type: application/json' \
   --header 'Authorization: Basic YWRtaW46YWRtaW4=' \
   --data '{}'
@@ -165,7 +183,7 @@ curl --location 'http://localhost:8084/blockchain/sessions/0xf343b654cc8a21d0666
 
 Response includes the on-chain transaction hash.
 
-**Note on refunds:** **unused** stake is `safeTransfer`'d back in this same transaction. The **used stipend** may be parked in `userStakesOnHold` with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day` — including same-day natural/late close. Call `withdrawUserStakes` (below) after the timelock. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
+**Note on refunds:** the refund is `remaining stake − the day-locked slice`, not "unused stake" — the lock is sized from the **final UTC day's** consumption, so a multi-day session gets earlier days' *consumed* stake back at close too, while a session left to run to `endsAt` inside one UTC day is fully consumed and returns approximately **nothing** — the lock scales with the seconds consumed, so it equals the whole remaining stake only as consumption approaches the full scheduled duration, not because the session was same-day. An early close returns the unconsumed part: roughly 90% of the stake at 10% of the scheduled duration. Whatever is left is `safeTransfer`'d back in this same transaction. The **final UTC day's consumed slice** may be parked in `userStakesOnHold` with `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day` — including same-day natural/late close. The proxy-router's StakeClaimer automatically sweeps matured stakes; manual `withdrawUserStakes` is not required. Use `GET /blockchain/stakes/on-hold` to check the balance. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
 
 ---
 
@@ -184,7 +202,7 @@ Variant for IDs only: `GET /blockchain/sessions/user/ids?user=0x…`. Fetch one:
 
 ## Claim day-locked on-hold balance (no node HTTP route)
 
-There is **no proxy-router HTTP route** for `withdrawUserStakes` today. You send a transaction to the Diamond (Inference) contract on Base directly:
+The proxy-router automatically claims matured on-hold stakes via its internal StakeClaimer (see `proxy-router/internal/blockchainapi/stake_claimer.go`). While there is no dedicated HTTP endpoint, manual claiming via `cast send` or wallet UI is an alternative for direct contract interaction.
 
 ```bash
 cast send 0x6aBE1d282f72B474E54527D93b979A4f64d3030a \
@@ -199,4 +217,8 @@ Function selector: `0xa98a7c6b`. The caller must be the delegatee allowed for th
 
 ## Full schema
 
-The complete OpenAPI schema lives at [`proxy-router/docs/swagger.yaml`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/docs/swagger.yaml). When your proxy-router is running, the same spec is browsable interactively at `http://localhost:8082/swagger/index.html`.
+The generated OpenAPI schema lives at [`proxy-router/docs/swagger.yaml`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/docs/swagger.yaml). When your proxy-router is running, the same spec is browsable interactively at `http://localhost:8082/swagger/index.html`.
+
+That committed file is generated from the godoc annotations on the handlers by `swag init`, and it is **current**: every route the proxy-router registers has a spec entry with a summary. The only registration with no operation in the spec is `GET /swagger/*any` (`internal/handlers/httphandlers/http.go:64`), the gin catch-all that serves the Swagger UI itself rather than an API operation. The spec's auth surface matches the registrations too: the only operations without a `security` block are the other four unauthenticated routes listed under [Authentication](#authentication) above.
+
+Regeneration is still a manual `cd proxy-router && make swagger`, but forgetting it no longer ships a stale spec. The `spec-fresh` job in `.github/workflows/proxy-router-ci.yml:210-233` runs `scripts/check-spec-fresh.sh`, which lifts the real `swag init` line out of `make -n swagger`, regenerates into a scratch directory and compares `docs.go`, `swagger.json` and `swagger.yaml` byte-for-byte, failing the build on any difference (see [API overview](/reference/api-overview#where-the-schema-lives)). Where a route registration and the spec ever do disagree, the registration is upstream of the spec and wins.

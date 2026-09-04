@@ -28,7 +28,7 @@ Mount a host directory into `/app/data` so these files persist:
 | File | Purpose |
 |------|---------|
 | `proxy-router.env` | Per-[Env reference](/reference/env-proxy-router) |
-| `.cookie` | Auto-generated admin credentials |
+| `.cookie` | Admin credentials for the local API — taken from `COOKIE_CONTENT` if set, otherwise generated randomly |
 | `proxy.conf` | API user/permission whitelist |
 | `models-config.json` | Models served (see [reference](/reference/models-config)) |
 | `rating-config.json` | Provider rating ([reference](/reference/rating-config)) |
@@ -104,12 +104,32 @@ docker run -d \
 
 If you want to customize, build locally:
 
+<Warning>
+**Set your own API password before starting.** `.env.example` ships
+`COOKIE_CONTENT=admin:admin`, and that becomes the Basic Auth credential for the
+local API. Either **delete the line** — the proxy-router then generates a random
+32-character password on first start (`internal/system/auth.go:226-232`) — or set
+it to `admin:<your-own-password>`.
+
+Either way the credential is written to the `COOKIE_FILE_PATH` set below,
+`/app/data/.cookie`, with `0600` permissions. That path is inside the container,
+so **read the generated password from the host mount**. With the
+`-v /path/to/local/data:/app/data` bind used here, that is
+`cat /path/to/local/data/.cookie`. The file holds a single `admin:<password>`
+line, and that is what you enter in Swagger's **Authorize** box.
+
+The file is only written when it does **not** already exist (`auth.go:215`), so
+if you have started the container before, delete it first or the change has no
+effect.
+</Warning>
+
 ```bash
 git clone -b main https://github.com/MorpheusAIs/Morpheus-Lumerin-Node.git
 cd Morpheus-Lumerin-Node/proxy-router
 
 # Copy and edit configs
 cp .env.example .env  # or .env.example.win on Windows
+# then remove COOKIE_CONTENT=admin:admin from .env — see the warning above
 vi .env
 cp models-config.json.example models-config.json
 vi models-config.json
@@ -120,6 +140,7 @@ vi rating-config.json
 ./docker_build.sh --build
 ./docker_build.sh --run
 ```
+
 
 ## Validate & register
 

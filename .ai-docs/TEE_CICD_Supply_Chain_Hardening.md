@@ -4,7 +4,7 @@
 **First successful run (Phase 1a — signing):** [#22920492249](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/actions/runs/22920492249)
 **First end-to-end run (Phase 1b — deploy + verify):** [#22969993910](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/actions/runs/22969993910)
 
-> **v7.x release status (with AMD SEV-SNP).** The CI/CD hardening described here is the foundation that every downstream trust check depends on. Both **Phase 1c** (consumer-side proxy-router verification of the P-Node) and **Phase 2** (P-Node verifies its own backend LLM) have shipped on top of it — see [`TEE_Attestation_Architecture.md`](TEE_Attestation_Architecture.md) §7.4 and §7.7. **As of this release the pipeline now also publishes AMD SEV-SNP launch-digest goldens (one per portal template), pins SecretVM `v0.0.27` for both TDX and SEV rootfs, and bakes the proxy-router's privacy-sensitive `LOG_LEVEL_*` fields into the cosign-signed manifest's `baked_env` block.** The new SEV path mirrors the TDX one — Python compute script in CI (`compute-sev-measurement.py`) backed by the runtime Go source-of-truth (`sev_gctx.go`) with a parity test gating drift between the two.
+> **v7.x release status (with AMD SEV-SNP).** The CI/CD hardening described here is the foundation that every downstream trust check depends on. Both **Phase 1c** (consumer-side proxy-router verification of the P-Node) and **Phase 2** (P-Node verifies its own backend LLM) have shipped on top of it — see [`TEE_Attestation_Architecture.md`](TEE_Attestation_Architecture.md) §7.4 and §7.7. **As of this release the pipeline now also publishes AMD SEV-SNP launch-digest goldens (one per portal template), pins SecretVM `v0.0.27` for both TDX and SEV rootfs (**superseded — the pin is now `v0.0.31`; `.github/tee/secretvm.env:22` is the source of truth**), and bakes the proxy-router's privacy-sensitive `LOG_LEVEL_*` fields into the cosign-signed manifest's `baked_env` block.** The new SEV path mirrors the TDX one — Python compute script in CI (`compute-sev-measurement.py`) backed by the runtime Go source-of-truth (`sev_gctx.go`) with a parity test gating drift between the two.
 
 ---
 
@@ -152,7 +152,7 @@ This is the most important new artifact. It's a signed JSON document that record
       "ovmf_hash":     "<sha384 of ovmf-v0.0.27-sev.fd, registry value>",
       "kernel_cmdline": "console=ttyS0 loglevel=7 docker_compose_hash=<...> rootfs_hash=<...>",
       "artifact_registry": {
-        "url": "https://raw.githubusercontent.com/scrtlabs/secretvm-verify/main/artifacts_registry/sev.json",
+        "url": "https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/sev.json",
         "sha256": "<sha256 of sev.json at build time>"
       },
       "per_template": {
@@ -175,13 +175,13 @@ This manifest is signed with cosign and attached to the image using `cosign atte
 - **Image chain**: The TEE image's digest AND the base image's digest. You can verify both independently.
 - **Config integrity**: SHA256 hashes of `docker-compose.tee.yml` and `Dockerfile.tee`. If either file was modified between the build and a deployment, the hashes won't match.
 - **Baked configuration**: The exact environment variables frozen into the image. A verifier can confirm that:
-  - `PROXY_STORE_CHAT_CONTEXT=false` (no chat logging) and `ENVIRONMENT=production` are immutable — not overridable at runtime.
-  - The four `LOG_LEVEL_*` fields (`APP=info`, `TCP=warn`, `ETH_RPC=warn`, `STORAGE=warn`) are explicit, not assumed defaults — this guarantees the running TEE image is not silently elevated to `debug`-level app logging (which could expose request/prompt payloads). The pipeline hard-fails the build if `LOG_LEVEL_APP=debug` is detected in `Dockerfile.tee`.
+  - the image was **built** with `PROXY_STORE_CHAT_CONTEXT=false` (no chat logging) and `ENVIRONMENT=production`. Neither is immutable at runtime: both are Docker `ENV` defaults, and the deployed compose points at an unmeasured `env_file` (`proxy-router/docker-compose.tee.yml:15-16`) that outranks them. Both of these `baked_env` entries are also workflow literals (`.github/workflows/build.yml:957`, `:965`), not values read back out of the image.
+  - The four `LOG_LEVEL_*` fields (`APP=info`, `TCP=warn`, `ETH_RPC=warn`, `STORAGE=warn`) are explicit, not assumed defaults — the pipeline hard-fails the build if `LOG_LEVEL_APP=debug` is detected in `Dockerfile.tee`, so a published manifest cannot claim `info` over an image built for `debug` (which could expose request/prompt payloads). That binds the build, not the running container, whose level can still be raised from the unmeasured `env_file`.
   - The `network` field ("mainnet" or "testnet") and corresponding blockchain values (contract addresses, chain ID, blockscout URL) are set at build time based on the branch: `main` → mainnet (Base Mainnet 8453), `test` → testnet (Base Sepolia 84532). All other hardened settings are identical across networks.
-- **Runtime secret boundary**: Explicitly lists the 5 variables that ARE injectable at runtime. Everything else is sealed.
+- **Runtime secret boundary**: Lists the 5 variables the deployment is expected to inject (`.github/workflows/build.yml:944-950`). It is a **declaration in the manifest, not an enforced boundary** — nothing reads it back, the config loader accepts every `env:`-tagged variable with no allowlist (`proxy-router/internal/config/loader.go:54-61`), and the `env_file` the measured compose points at is itself unmeasured, so nothing else is sealed.
 - **Platform targets**: Confirms the image is built for both Intel TDX and AMD SEV-SNP TEE platforms.
 - **TDX golden**: One `rtmr3` value (template-independent). Consumers compare it byte-for-byte to the live TDX quote.
-- **SEV-SNP golden**: A `per_template` map with one launch digest per portal-selectable VM size (small/medium/large/2xlarge/4xlarge). Consumers parse the live quote's `family_id` (`<vmType>-<template>-sev`) to pick the correct entry — `attestation.GoldenValues.MatchSEVMeasurement` does the lookup. The asymmetry vs. TDX exists because the SEV launch digest folds in one VMSA page per vCPU; TDX RTMR3 does not.
+- **SEV-SNP golden**: A `per_template` map with one launch digest per portal-selectable VM size (small/medium/large/2xlarge/4xlarge). `attestation.GoldenValues.MatchSEVMeasurement` exists (`attestation/golden.go:107`) but has **no callers**, and matches on measurement value rather than `family_id`. The live consumer path compares only the legacy single `golden.Measurement` (`verifier.go:473-475`), so per-template SEV selection is **not yet wired**. The asymmetry vs. TDX exists because the SEV launch digest folds in one VMSA page per vCPU; TDX RTMR3 does not.
 
 ---
 
@@ -269,13 +269,13 @@ This CI/CD hardening is the **foundation layer** for the full TEE attestation lo
 │     Phase 2  — P-Node verifies its Backend LLM (DONE in v7.0.0)      │
 │                                                                      │
 │  P-Node (-tee image, v7.0.0+) startup + every prompt:                │
-│    1. GET backend :29343/cpu → backend TDX quote (portal-verified)   │
+│    1. GET backend :21434/cpu (fallback to :29343) → backend TDX quote (portal-verified)   │
 │    2. TLS pinning via reportData[0:32]                               │
 │    3. Artifact-registry lookup for MRTD + RTMR0-2                    │
 │    4. Replay RTMR3 from backend docker-compose.yaml (SHA-384 chain)  │
-│    5. GET backend :29343/gpu → CPU-GPU binding via reportData[32:64] │
+│    5. GET backend :21434/gpu → CPU-GPU binding via reportData[32:64] │
 │    6. NVIDIA NRAS v4 attestation of GPU evidence                     │
-│    7. Fast-verify on every prompt; PinnedHTTPClient for inference    │
+│    7. Fast-verify on every prompt; default HTTP client (no TLS pinning for inference)    │
 │    8. State exposed at GET /v1/models/attestation                    │
 │  (attestation/backend_verifier.go, workload_verifier.go,             │
 │   nras_verifier.go, artifacts_registry.go; PR #699, #700, #708-#709) │
@@ -305,9 +305,9 @@ This CI/CD hardening is the **foundation layer** for the full TEE attestation lo
 | `proxy-router/scripts/compute-sev-measurement.py` | **NEW** — Standalone SEV-SNP launch-digest computation script. Byte-for-byte port of `attestation/sev_gctx.go::CalcSevMeasurement`. Computes one measurement per vCPU template (small/medium/large/2xlarge/4xlarge). Parity-tested against the runtime Go via `internal/attestation/sev_python_parity_test.go`. |
 | `proxy-router/internal/attestation/sev_python_parity_test.go` | **NEW** — Hermetic regression guard: runs `compute-sev-measurement.py` as a subprocess against a frozen fixture (snapshotted from the v0.0.31 prod registry entry) and asserts byte-for-byte match against `CalcSevMeasurement` for all 5 templates. Skips gracefully when `python3` is unavailable. |
 | `proxy-router/internal/attestation/golden.go` | Renamed JSON tag `amd_sev` → `amd_sev_snp` to align with the manifest schema; added `SEVMeasurements.PerTemplate map[string]string`, `GoldenValues.SEVPerTemplate`, and the `MatchSEVMeasurement` helper that looks up the golden by template-keyed live measurement. |
-| `proxy-router/Dockerfile.tee` | Bakes immutable ENV config into the TEE image. Blockchain values are parameterized via `ARG` with mainnet defaults; overridden via `--build-arg` for testnet builds. **Logging values (`LOG_LEVEL_APP=info`, `LOG_LEVEL_TCP=warn`, `LOG_LEVEL_ETH_RPC=warn`, `LOG_LEVEL_STORAGE=warn`, plus `LOG_COLOR=false`, `LOG_JSON=true`, `LOG_IS_PROD=true`) are baked here and surfaced into the cosign-signed manifest's `baked_env` block — the privacy gate ensures the live TEE image cannot silently revert to `debug`-level app logging.** |
+| `proxy-router/Dockerfile.tee` | Bakes immutable ENV config into the TEE image. Blockchain values are parameterized via `ARG` with mainnet defaults; overridden via `--build-arg` for testnet builds. **Logging values (`LOG_LEVEL_APP=info`, `LOG_LEVEL_TCP=warn`, `LOG_LEVEL_ETH_RPC=warn`, `LOG_LEVEL_STORAGE=warn`, plus `LOG_COLOR=false`, `LOG_JSON=true`, `LOG_IS_PROD=true`) are baked here and surfaced into the cosign-signed manifest's `baked_env` block — the privacy gate refuses to publish a manifest whose `Dockerfile.tee` bakes `debug`-level app logging; it constrains the build, not the running container, which takes its level from the unmeasured `env_file` the compose points at.** |
 | `proxy-router/docker-compose.tee.yml` | Canonical compose template for TEE deployment with 5 runtime secrets. |
-| `docs/02.3-proxy-router-tee.md` | Provider setup and consumer verification guide. |
+| `docs/providers/full/tee-reference.mdx` | Provider setup and consumer verification guide (was `docs/02.3-proxy-router-tee.md` before the Mintlify docs migration). |
 
 ---
 
@@ -341,7 +341,7 @@ This CI/CD hardening is the **foundation layer** for the full TEE attestation lo
 | **`FastVerifyBackend`** | Per-prompt hot-path re-check with hash + TLS fingerprint; no TTL | **Done** — PR #699 |
 | **`ArtifactRegistry`** | Auto-refreshed SecretVM TDX artifact CSV for MRTD + RTMR0-2 lookup | **Done** — PR #699 |
 | **`NrasVerifier`** | NVIDIA NRAS v4 API integration for GPU attestation | **Done** — PR #699 |
-| **`PinnedHTTPClient`** | Onward inference rejects any TLS cert whose SHA-256 differs from attested fingerprint | **Done** — PR #699 |
+| **`PinnedHTTPClient`** | Onward inference rejects any TLS cert whose SHA-256 differs from attested fingerprint | **Not wired** — landed in PR #699 but has no production caller; onward inference uses a default `http.Client` |
 | **`GET /v1/models/attestation`** | Per-model attestation state endpoint for monitoring and forensics | **Done** — PR #699 |
 | **New env vars** | `TEE_PORTAL_URL`, `TEE_IMAGE_REPO`, `ARTIFACT_REGISTRY_URL`, `ARTIFACT_REGISTRY_REFRESH_INTERVAL` | **Done** — PR #699 |
 
@@ -355,7 +355,7 @@ This CI/CD hardening is the **foundation layer** for the full TEE attestation lo
 | **SEV measurement compute (5 templates)** | `Compute SEV-SNP measurement (per template)` step runs `compute-sev-measurement.py --all-templates` and emits per-template digests as job outputs | **Done** |
 | **Per-template SEV measurements in cosign-signed manifest** | `measurements.amd_sev_snp.per_template` block under the existing `cosign attest` flow | **Done** |
 | **Baked log-level fields in `baked_env`** | `Extract baked log levels from Dockerfile.tee` step reads the four `LOG_LEVEL_*` ENV lines plus `LOG_COLOR`/`LOG_JSON`/`LOG_IS_PROD` and writes them to the manifest. Hard-fails if any are missing or if `LOG_LEVEL_APP=debug` (privacy gate) | **Done** |
-| **Consumer parser update** | `internal/attestation/golden.go` renamed `amd_sev` → `amd_sev_snp` JSON tag, added `PerTemplate` map and `MatchSEVMeasurement` lookup helper | **Done** |
+| **Consumer parser update** | `internal/attestation/golden.go` renamed `amd_sev` → `amd_sev_snp` JSON tag, added `PerTemplate` map and `MatchSEVMeasurement` lookup helper | **Partially wired** — the rename and `PerTemplate` map are in place; `MatchSEVMeasurement` (`golden.go:107`) has no caller anywhere, including tests |
 | **Python ↔ Go parity regression test** | `internal/attestation/sev_python_parity_test.go` runs `compute-sev-measurement.py` as a subprocess and asserts identical hex output to `CalcSevMeasurement` for all 5 templates | **Done** |
 
 ### Remaining (Lower Priority / Future)

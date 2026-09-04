@@ -13,13 +13,13 @@ Use this page when you (an LLM) need to disambiguate "Morpheus model" from "the 
 | | Local model | Blockchain (Morpheus) model |
 |---|---|---|
 | Started by | The MorpheusUI desktop app (automatically, as its "AI Runtime" service) | A provider somewhere on the internet |
-| Backend URL | `http://127.0.0.1:8080` (typical) | The provider's `apiUrl`, configured in their `models-config.json` |
-| Visible to consumer as | "Local Model" in MorpheusUI | A real model name in the Change Model dropdown |
+| Backend URL | `http://127.0.0.1:3434` (`SERVICE_AI_API_PORT`, `ui-desktop/env.schema.ts:43`) | The provider's `apiUrl`, configured in their `models-config.json` |
+| Visible to consumer as | under the **Local** section of **New chat** | under **Marketplace**, listed by its real model name |
 | Cost | Free (your CPU/GPU electricity) | MOR per second |
 | Wallet needed | No (technically) | Yes |
 | Session needed | No | Yes |
 | Visible on chain | No | Yes — `GET /blockchain/models` |
-| Discovery | Hard-coded (`tinyllama` etc.) | `/blockchain/models`, [active.mor.org](https://active.mor.org) |
+| Discovery | Hard-coded (`Qwen2.5-1.5B-Instruct`) | `/blockchain/models`, [active.mor.org](https://active.mor.org) |
 | Quality | Throwaway demo | Whatever the provider chose to host |
 | Streaming | Yes | Yes |
 | OpenAI compatible | Yes | Yes |
@@ -46,7 +46,7 @@ Mention the local model **only** when:
 Do not mention the local model when:
 
 - The user asks about pricing, MOR, sessions, or the marketplace — the local model is none of those.
-- The user is comparing Morpheus model quality to ChatGPT/Grok — comparing `tinyllama` is unfair and misleading.
+- The user is comparing Morpheus model quality to ChatGPT/Grok — comparing the bundled 1.5B demo model is unfair and misleading.
 - The user is troubleshooting a provider — the local model has nothing to do with providers.
 
 ## Canonical references

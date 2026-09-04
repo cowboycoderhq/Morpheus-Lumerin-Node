@@ -29,7 +29,7 @@ The Phase 2 backend verification system provides cryptographic proof that AI inf
 - **Full attestation** (`AttestBackend`) runs at startup and whenever the fast verify detects a backend change. It performs end-to-end cryptographic verification of the backend's CPU TEE quote, GPU attestation evidence, workload integrity, and TLS binding.
 - **Fast verification** (`FastVerifyBackend`) runs on every inference prompt. It always re-fetches the CPU quote and compares its hash and TLS binding against the cached attestation snapshot. If the quote changes, it triggers full re-attestation. There is no TTL — the fast check runs on every request unconditionally.
 
-Together, these ensure that every inference request forwarded by this P-Node reaches a verified, tamper-proof backend — from the hardware root of trust down to the specific AI models loaded inside the TEE.
+Together, these establish that every inference request forwarded by this P-Node reaches a backend whose hardware, firmware and workload are verified against its own attestation quote. The attestation probe connection is TLS-pinned; the inference data path is not pinned, so a TLS-terminating CDN in front of the backend would not be detected. They do **not** establish which models the workload declares — see [what is actually proven today](#what-is-actually-proven-today).
 
 ## Security guarantees
 
@@ -37,9 +37,9 @@ The verification system proves the following properties:
 
 - **Hardware authenticity** — The backend runs inside a genuine Intel TDX confidential VM with a hardware-signed attestation quote that chains back to Intel's root of trust.
 - **Firmware and OS integrity** — The measured boot chain (MRTD, RTMR0-2) matches entries in the SecretVM artifact registry, confirming the VM runs an authentic, unmodified SecretVM image.
-- **Workload integrity** — RTMR3 is recalculated from the backend's `docker-compose.yaml` and root filesystem data, proving the exact workload configuration running inside the TEE has not been altered.
-- **Model identity** — The `docker-compose.yaml` declares which AI models are loaded. Because RTMR3 covers this file byte-for-byte, swapping, adding, or removing any model changes the hash and fails verification.
-- **TLS channel binding** — A digest of the TLS certificate is embedded in the CPU quote's `reportData`, binding the attested environment to a specific TLS identity. Current SecretVMs bind SHA-256 of the certificate's SPKI (public key); legacy VMs bind SHA-256 of the full certificate. Either is accepted so a mixed fleet keeps verifying. This prevents man-in-the-middle attacks: inference data can only reach the attested endpoint.
+- **Workload integrity** — RTMR3 is recalculated from the backend's `docker-compose.yaml` and root filesystem data and checked against the quote, proving the workload has not been altered **since it was measured at boot**. The rootfs half is anchored externally, against entries in the signed SecretVM artifact registry; the compose half is anchored only to the backend's own quote.
+- **Model identity — only partly.** The `docker-compose.yaml` declares which AI models are loaded, and RTMR3 covers it byte-for-byte, so the file the backend shows you is provably the one measured into its own quote: it cannot report one compose while running another. This does **not** establish which models that file *should* declare. The expected RTMR3 is recomputed from the compose the backend itself serves (`workload_verifier.go:68-85`), not compared against a published value for the model — so a provider who edits the compose and redeploys produces a new file and a matching new RTMR3, and verification passes. See [What is actually proven today](#what-is-actually-proven-today).
+- **TLS channel binding** — A digest of the TLS certificate is embedded in the CPU quote's `reportData`, binding the attested environment to a specific TLS identity. Current SecretVMs bind SHA-256 of the certificate's SPKI (public key); legacy VMs bind SHA-256 of the full certificate. Either is accepted so a mixed fleet keeps verifying. This only secures the attestation probe connection; the inference data path is not pinned, so a TLS-terminating CDN in front of the backend would not be detected and inference data could be intercepted.
 - **CPU-GPU binding** — The GPU attestation nonce is embedded in the second half of the CPU `reportData`, cryptographically linking the GPU evidence to the same CPU TEE quote and preventing GPU attestation replay.
 - **GPU hardware authenticity** — GPU attestation evidence is independently verified by NVIDIA's Remote Attestation Service (NRAS), confirming the GPU hardware is genuine and uncompromised.
 - **Continuous verification** — Every inference prompt triggers a fast re-check of the backend's identity. TLS binding or quote changes between attestations are detected immediately.
@@ -48,10 +48,10 @@ The verification system proves the following properties:
 
 | # | Check | What it proves | Failure meaning |
 |---|-------|---------------|-----------------|
-| 1 | CPU quote fetch and portal verification | The backend runs in an Intel TDX TEE; the quote is cryptographically valid | Backend is not running in a TEE, or the quote is forged |
+| 1 | CPU quote fetch and portal verification | The backend runs in a TEE (Intel TDX or AMD SEV-SNP); the quote is cryptographically valid | Backend is not running in a TEE, or the quote is forged |
 | 2 | TLS binding (reportData first 32 bytes = SHA-256 of SPKI or full cert) | The TLS channel terminates inside the attested TEE | Possible MITM — traffic may be intercepted before reaching the TEE |
 | 3 | Workload verification — MRTD + RTMR0-2 registry lookup | The VM firmware, config, kernel, and initramfs match a known SecretVM build | The VM image has been modified or is not an authentic SecretVM |
-| 4 | Workload verification — RTMR3 recalculation | The exact `docker-compose.yaml` and rootfs running inside the TEE match expectations | The workload has been tampered with (different models, altered config) |
+| 4 | Workload verification — RTMR3 recalculation | The `docker-compose.yaml` the backend reports is the one measured into its own quote, on a registry-known rootfs | The reported compose does not match the quote — the workload was altered after measurement. **Not** a model-substitution check; see [What is actually proven today](#what-is-actually-proven-today) |
 | 5 | GPU attestation fetch | The backend exposes GPU attestation evidence | No GPU attestation available; GPU integrity unknown |
 | 6 | CPU-GPU binding (reportData second 32 bytes = GPU nonce) | The GPU evidence was generated in the same session as the CPU quote | GPU attestation may be replayed from a different machine |
 | 7 | NVIDIA NRAS verification | NVIDIA independently confirms the GPU hardware and certificate chain | GPU hardware is not genuine, or evidence has been tampered with |
@@ -72,26 +72,24 @@ sequenceDiagram
     Note over P: AttestBackend begins
 
     P->>B: GET :21434/cpu
-    B-->>P: CPU attestation quote (TDX)
+     B-->>P: CPU attestation quote (TDX or SEV-SNP)
 
-    P->>S: POST /quote-parse (CPU quote)
+P->>S: POST /quote-parse (TDX) or /api/quote-parse-sev (SEV-SNP)
     S-->>P: Verification result (valid/invalid)
 
     Note over P: Compute TLS cert digests (SPKI + full cert)<br/>Compare with reportData[0:32]
 
-    alt Artifact Registry loaded
-        P->>B: GET :21434/docker-compose
-        B-->>P: docker-compose.yaml
+    P->>B: GET :21434/docker-compose
+    B-->>P: docker-compose.yaml
 
-        Note over P: Parse TDX quote:<br/>extract MRTD, RTMR0-3
+    Note over P: Parse TDX quote:<br/>extract MRTD, RTMR0-3
 
-        P->>R: Lookup MRTD + RTMR0-2
-        R-->>P: Matching registry entries + rootfs_data
+    P->>R: Lookup MRTD + RTMR0-2
+    R-->>P: Matching registry entries + rootfs_data
 
-        Note over P: Calculate expected RTMR3:<br/>SHA-384 extend chain of<br/>SHA-256(docker-compose) + rootfs_data
+    Note over P: Calculate expected RTMR3:<br/>SHA-384 extend chain of<br/>SHA-256(docker-compose) + rootfs_data
 
-        Note over P: Compare calculated RTMR3<br/>vs quote RTMR3
-    end
+    Note over P: Compare calculated RTMR3<br/>vs quote RTMR3<br/>RTMR3 mismatch, unfetchable compose,<br/>or an unloaded registry: attestation fails
 
     P->>B: GET :21434/gpu
     B-->>P: GPU attestation JSON (nonce, arch, evidence_list)
@@ -107,18 +105,29 @@ sequenceDiagram
 ### Step by step
 
 1. **Fetch CPU quote** — The proxy-router requests the raw TDX attestation quote from the backend's attestation port (`:21434/cpu`).
-2. **Verify CPU quote** — The quote is sent to the SecretAI Portal's `quote-parse` API, which performs cryptographic verification against Intel's root of trust.
+2. **Verify CPU quote** — The quote is sent to the SecretAI Portal's `quote-parse` API (for Intel TDX) or `quote-parse-sev` API (for AMD SEV-SNP), which performs cryptographic verification against the respective root of trust.
 3. **TLS binding** — The proxy-router computes both the SHA-256 of the connection certificate's SPKI (current binding) and of the full certificate DER (legacy binding) and compares the first 32 bytes of the quote's `reportData` against either. A match proves the TLS endpoint is inside the attested TEE.
-4. **Workload verification** (if artifact registry is loaded):
+4. **Workload verification** (mandatory — there is no skip path):
    - Fetch `docker-compose.yaml` from the backend. Old attest-rest serves it wrapped in an HTML `<pre>` block, newer attest-rest serves the raw bytes; both the raw response and the HTML-extracted content are tried against the measurement.
    - Parse the TDX quote to extract measurement registers (MRTD, RTMR0-3).
    - Look up MRTD + RTMR0-2 in the artifact registry to confirm this is a recognized SecretVM build.
    - Recalculate the expected RTMR3 from `SHA-256(docker-compose.yaml)` combined with `rootfs_data` using a SHA-384 extend chain.
    - Compare the calculated RTMR3 against the quote's RTMR3 to prove workload integrity.
+   - Two distinct failures here both **fail closed**, and they have different causes and different remedies. An unfetchable `docker-compose` returns before `VerifyWorkload` is ever called, storing the error `could not fetch docker-compose: …` (`backend_verifier.go:195-199`) — the backend's own attestation port is unreachable. An artifact registry that is `nil` or was never loaded makes `VerifyWorkload` return `artifact_registry_not_available`, stored as `artifact registry not available; cannot verify workload` (`backend_verifier.go:211-213`; `workload_verifier.go:96-113` for the TDX and SEV branches) — the CDN the registry is fetched from was unreachable at startup. Either way the model's snapshot is stored as `failed`. Failing closed has been the behaviour since v7.4.0 — v7.0.0 through v7.3.0 logged "workload verification skipped" and continued, which is the behaviour older copies of this page described.
 5. **Fetch GPU attestation** — Retrieve GPU attestation data (JSON containing nonce, architecture, and evidence list) from `:21434/gpu`.
 6. **CPU-GPU binding** — Verify that the second 32 bytes of the CPU `reportData` match the GPU nonce, proving both attestations originate from the same machine and session.
 7. **NRAS verification** — Submit GPU evidence to NVIDIA's Remote Attestation Service (`/v4/attest/gpu`) for independent hardware validation. NRAS returns a signed JWT (Entity Attestation Token); the proxy-router requires the request to succeed, the `x-nvidia-overall-att-result` claim to be true, and the attested `eat_nonce` to equal the CPU-bound nonce. **NRAS failure is fatal by design**: attestation fails and the model's snapshot is stored as `failed`. The attesting node therefore needs network access to `nras.attestation.nvidia.com` (NVIDIA's edge blocks some IPs/regions with a 403).
 8. **Cache snapshot** — Store the attestation result (quote hash, TLS binding, workload status) for use by the fast verification path. The cache has no TTL — it remains valid as long as the backend's CPU quote and TLS certificate haven't changed.
+
+### What a failed step costs you
+
+Steps 4 and 7 both fail closed, so it is worth knowing what that means for uptime. Startup attestation failing does not stop the node booting — `cmd/main.go:363-365` only logs a warning. What it does is leave a `failed` snapshot, and every subsequent prompt for that model re-runs full attestation (`backend_verifier.go:349-352`), fails again, and is refused (`proxyapi/proxy_receiver.go:424`, `:491`). So a single unreachable dependency takes all TEE inference for that model offline, and the model is reported as `tee_unverified` in the `models[]` array of `GET /healthcheck` (`system/structs.go:37`, assembled at `system/controller.go:102-118`). That is a model-health status, not a field of the attestation snapshot: on `GET /v1/models/attestation` the same condition appears as `status: failed` plus the error text.
+
+The recovery property is the useful half, and it has two triggers — only one of which always fires. A prompt for the model re-runs the full flow rather than trusting the cached failure (`backend_verifier.go:349-352`), so the first prompt after the dependency comes back succeeds on its own. That trigger can stall, though: while the model reports `tee_unverified`, consumers skip the provider when opening a session (`blockchainapi/service.go:1698`), so a provider with no in-flight sessions may receive no prompt at all. What cannot stall is the model-health sweep, which calls `ReattestBackend` on every sweep after the first regardless of the current snapshot status (`modelhealth/checker.go:369-384`). Recovery is automatic either way — no restart, no manual clear.
+
+The artifact registry's failure mode is asymmetric, which changes how alarming it should be. The registry is fetched from a CDN at startup and refreshed hourly. `ArtifactRegistry.Start` only *warns* if the **initial** fetch fails (`artifacts_registry.go:63-65`) and `IsLoaded()` is `!lastFetched.IsZero()` (`:243-247`) — so a CDN or DNS failure at startup leaves the registry unloaded and every TEE model fails step 4. A *later* refresh failure is harmless: the stale cache is kept (`artifacts_registry.go:76`). Only the startup window is dangerous.
+
+None of this changes what attestation proves. Failing closed narrows what the node is willing to serve; the properties in [what is actually proven today](#what-is-actually-proven-today) — and the three that are not proven — are exactly as before.
 
 ## Trust chain
 
@@ -132,7 +141,7 @@ flowchart TD
     RTMR1 --> RTMR2[RTMR2<br/>Initramfs]
     RTMR2 --> RTMR3[RTMR3<br/>Rootfs + docker-compose.yaml]
     RTMR3 --> DC[docker-compose.yaml<br/>defines MODELS env var]
-    DC --> MI[Model Identity Proven<br/>e.g. deepseek-r1:70b, llama3.3:70b]
+    DC --> MI[Compose matches its own quote<br/>which models it declares is NOT anchored]
 
     HW --> RD[reportData<br/>64 bytes in CPU quote]
     RD --> RD1[Bytes 0-31<br/>TLS certificate digest<br/>SPKI or full cert]
@@ -192,7 +201,7 @@ There is no TTL or cache expiry. The fast verify runs the same check on every pr
 
 As long as the backend hasn't changed (same quote, same TLS cert), the fast path always passes without needing to re-run the expensive full attestation. Full re-attestation only triggers when something actually changes.
 
-## Model identity guarantee
+## Model identity — what RTMR3 anchors, and what it does not
 
 The `docker-compose.yaml` inside a SecretVM backend declares the AI models to be loaded via the `MODELS` environment variable:
 
@@ -206,7 +215,9 @@ RTMR3 is computed as a SHA-384 extend chain covering the root filesystem data an
 - The TDX hardware enforces that measurement registers reflect the actual loaded software. Values cannot be faked or overridden from within the VM.
 - The proxy-router independently recalculates the expected RTMR3 and compares it against the hardware-reported value. Any discrepancy fails verification.
 
-This provides a cryptographic guarantee that the backend is running exactly the declared set of models, with no substitutions or additions.
+Together these prove the workload is **authentic and self-consistent**: the VM runs a genuine, unmodified SecretVM image, and the `docker-compose.yaml` the backend reports is the one measured into its quote. Hardware prevents faking the registers, so a provider cannot serve one compose and run another.
+
+They do **not** prove which models that compose ought to declare. The expected RTMR3 is recomputed from the file the backend serves, and no published golden value exists per model — the interface for one is wired to a placeholder that returns nothing (`NoopGoldenSource`, `proxy-router/cmd/main.go:342`; `backend_verifier.go:28-34`). A provider who swaps a model and redeploys yields a new compose and a new quote that agree with each other. This is stated plainly in [What is actually proven today](#what-is-actually-proven-today) below; the two must not be read apart.
 
 ## Configuration reference
 
@@ -246,11 +257,11 @@ Example: a model registered on-chain with the `tee` tag and `apiUrl` set to `htt
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `TEE_PORTAL_URL` | Yes (for `tee`-tagged models) | — | SecretAI Portal API URL for CPU quote verification |
+| `TEE_PORTAL_URL` | Yes (for `tee`-tagged models) | https://secretai.scrtlabs.com/api/quote-parse | SecretAI Portal API URL for CPU quote verification |
 | `TEE_IMAGE_REPO` | No | — | GHCR image repo for cosign attestation manifest verification (e.g. `ghcr.io/morpheusais/morpheus-lumerin-node-tee`). Used by consumer-side P-Node attestation to fetch the signed golden RTMR3 values for the provider image |
-| `ARTIFACT_REGISTRY_URL` | No | [tdx.csv via npm](https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/tdx.csv) | URL to the TDX artifact registry CSV ([secretvm-verify on npm](https://www.npmjs.com/package/secretvm-verify) / [PyPI](https://pypi.org/project/secretvm-verify/)) |
-| `SEV_ARTIFACT_REGISTRY_URL` | No | [sev.json via npm](https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/sev.json) | URL to the AMD SEV-SNP artifact registry JSON |
-| `ARTIFACT_REGISTRY_REFRESH_INTERVAL` | No | `1h` | How often to re-download the artifact registries (shared by TDX and SEV) |
+| `ARTIFACT_REGISTRY_URL` | No | `https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/tdx.csv` | URL to the TDX artifact registry CSV ([secretvm-verify on npm](https://www.npmjs.com/package/secretvm-verify) / [PyPI](https://pypi.org/project/secretvm-verify/)) |
+| `SEV_ARTIFACT_REGISTRY_URL` | No | `https://cdn.jsdelivr.net/npm/secretvm-verify@0.13.0/data/sev.json` | URL to the AMD SEV-SNP artifact registry JSON |
+| `ARTIFACT_REGISTRY_REFRESH_INTERVAL` | No | `1h` | How often to re-download the artifact registries (shared by TDX and SEV); if unset or set to `0`, the constructor falls back to `1h` (`artifacts_registry.go:51-53`) |
 
 ## Health endpoint
 
@@ -260,10 +271,10 @@ GET /v1/models/attestation
 
 Returns the current attestation status for each TEE-enabled model. The response includes:
 
-- Attestation state (verified, pending, failed)
-- Timestamp of last successful attestation
-- Workload verification result (`authentic_match`, `authentic_mismatch`, `not_authentic`)
-- TLS binding kind that matched (`spki` or `certificate`)
+- Attestation state — the snapshot's `status` field. Three constants are declared, `passed`, `failed` and `unknown` (`backend_verifier.go:38-41`), but only two are ever assigned: `passed` on success (`:296`) and `failed` on every failure (`:551`). `unknown` has no assignment site anywhere in the tree, though it is published in the generated OpenAPI enum (`proxy-router/docs/swagger.json:3400-3404`).
+- Timestamp of the last attestation attempt (`verifiedAt`) — set on failure as well as on success (`backend_verifier.go:295` and `:553`), so it is not a last-success marker
+- Workload verification result (`workloadStatus`) — in practice only ever `authentic_match`, or absent. `VerifyWorkload` can return four values (`workload_verifier.go:13-16`), but the snapshot field is assigned at exactly one site, inside the success block (`backend_verifier.go:299`); the `switch` above it returns on mismatch, not-authentic and registry-unavailable (`:202-214`). Every failure path instead builds a fresh snapshot through `storeFailure` (`:544-555`), which leaves `WorkloadStatus` empty, and `omitempty` (`:58`) then drops it from the JSON. A missing or unloaded registry therefore surfaces here not as a `workloadStatus` value but as `"status":"failed"` with `"error":"artifact registry not available; cannot verify workload"` (`backend_verifier.go:211-213`).
+- TLS binding kind that matched (`spki` or `certificate` — `verifier.go:98`, `:101`), present only on a snapshot that passed: it is set in the success block (`backend_verifier.go:291`) and `omitempty` (`:51`) drops it otherwise
 - Error details if verification failed
 
 Use this endpoint for monitoring and operational visibility into the TEE verification state.
@@ -278,7 +289,7 @@ All TEE verification code resides in `proxy-router/internal/attestation/`:
 | `workload_verifier.go` | Workload verification | Verifies workload integrity: registry lookup, RTMR3 recalculation, docker-compose validation (raw and HTML-wrapped forms) |
 | `artifacts_registry.go` | `ArtifactRegistry` | Downloads and caches the TDX artifact registry CSV; refreshes on a configurable interval |
 | `sev_registry.go` / `sev_gctx.go` / `sev_workload.go` | SEV verification | AMD SEV-SNP registry, GCTX launch digest computation, and workload verification — see [SEV verification](/providers/full/sev-verification) |
-| `nras_verifier.go` | `NRASVerifier` | Sends GPU evidence to NVIDIA NRAS and validates the returned JWT Entity Attestation Tokens |
+| `nras_verifier.go` | `NRASVerifier` | Sends GPU evidence to NVIDIA NRAS and checks the claims in the returned JWT Entity Attestation Token (`x-nvidia-overall-att-result`, `eat_nonce`). The JWT signature is not verified; the trust anchor is the TLS-authenticated connection to `nras.attestation.nvidia.com` (`nras_verifier.go:166-168`) |
 | `tdx_quote.go` | TDX quote parsing | Parses raw TDX quotes to extract MRTD, RTMR0-3, and reportData |
 | `rtmr.go` | RTMR calculation | Implements the SHA-384 extend chain used to calculate expected RTMR3 values |
 | `verifier.go` | General verification | Core attestation verification logic, TLS binding (SPKI + full cert), and types |

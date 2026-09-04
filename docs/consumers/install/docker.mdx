@@ -62,11 +62,49 @@ For provider-side Docker (with model registration, public `:3333`, etc.), see [P
 
 ## Networks
 
-Switch to BASE Sepolia by replacing the four blockchain values in the `.env`. See [Networks and tokens](/get-started/networks-and-tokens).
+Switch to BASE Sepolia by replacing **four** values in the `proxy-router.env` written above — `DIAMOND_CONTRACT_ADDRESS`, `MOR_TOKEN_ADDRESS`, `BLOCKSCOUT_API_URL` and `ETH_NODE_CHAIN_ID` (`84532`) — with the Base Sepolia values from the commented TESTNET block in `proxy-router/.env.example:22-26`. Then set a **fifth**, `ENVIRONMENT=development`: `.env.example` switches it alongside the other four (`:15-19,22-26`), but the env file written above never sets it at all, so this is a line to **add**, not a value to replace. `ENVIRONMENT` is not a chain selector, so on its own it cannot point the node at the wrong network.
+
+<Warning>
+**Change `ETH_NODE_ADDRESS` as well — or delete it.** The variable is optional *in general*: `proxy-router/internal/config/config.go:29` marks it `omitempty`, and when it is empty `proxy-router/cmd/main.go:238-242` passes no endpoint at all, so `ConfigureRPCClientStore` falls back to the keychain or to built-in public RPCs. But step 1 above had you point it at a **Base mainnet** Alchemy URL, and the router hard-fails at startup when the configured chain ID disagrees with the one the node reports — `configured chainID (84532) does not match eth node chain ID (8453)` (`proxy-router/cmd/main.go:252-253`). Point it at a Base Sepolia endpoint (`https://base-sepolia.g.alchemy.com/v2/<your_alchemy_key>`) or remove the line.
+</Warning>
+
+See [Networks and tokens](/get-started/networks-and-tokens).
 
 ## Pairing with MorpheusUI
 
-If you also want the desktop UI, install the packaged **MorpheusUI** app ([Consumer quickstart](/consumers/quickstart), or per-OS: [Windows](/consumers/install/windows) / [Linux](/consumers/install/linux)). Then stop the app-managed proxy-router from the startup screen (or quit the app), run your Docker proxy-router, and point MorpheusUI at it with `PROXY_WEB_URL=http://localhost:8082` (see [Env: MorpheusUI](/reference/env-ui-desktop)). For building the UI from source, see [macOS install (from source)](/consumers/install/macos).
+If you also want the desktop UI, install the packaged **MorpheusUI** app ([Consumer quickstart](/consumers/quickstart), or per-OS: [Windows](/consumers/install/windows) / [Linux](/consumers/install/linux)). Then **quit MorpheusUI** — there is no stop control for a managed service anywhere in the UI. The only service IPC channels are `start-services`, `restart-service` and `ping-service` (`ui-desktop/src/main/src/client/subscriptions/index.ts:89-91`), and the per-service panel under **Settings → Services** offers Ping and Restart only. Then run your Docker proxy-router and publish your container's API port on the host as `8082` — MorpheusUI always connects to `localhost`, so the container must be reachable there rather than the app pointed elsewhere. **Publishing on 8082 is necessary but not sufficient**, and the shortfall is silent — see the warning below.
+
+<Warning>
+**MorpheusUI only adopts a router whose auth cookie it can read on the host.** At startup it reads `http://localhost:8082/auth/cookie/path` and must be able to open that exact path itself (`ui-desktop/src/main/orchestrator/resolve-router-endpoint.ts:28-51`, called from `src/main/index.ts:282`). With the `COOKIE_FILE_PATH=/app/data/.cookie` and `-v ~/morpheus-data:/app/data` from the Quickstart above, the container reports `/app/data/.cookie` — a path that exists only inside the container. The app therefore leaves your container alone and starts **a second proxy-router of its own on the next free port** (8083 unless taken), rewriting `config.chain.localProxyRouterUrl` to match (`:85-129`). Nothing errors: the UI works, but it is talking to its own router, with its own wallet and sessions, while your container sits idle on 8082.
+</Warning>
+
+To make the container adoptable, give the cookie the **same absolute path inside and outside** it by bind-mounting the host directory onto itself. This overrides the `COOKIE_FILE_PATH` line from the Quickstart `.env` and **adds a second mount — it does not replace the first**. Keep `-v ~/morpheus-data:/app/data` as well: the one host directory is then bound at both paths, so the cookie the router writes and the cookie MorpheusUI reads are the same file, while the four Quickstart values that still point inside `/app/data` keep resolving to the host directory:
+
+```bash
+docker run -d \
+  --name morpheus-proxy-consumer \
+  --env-file proxy-router.env \
+  -e COOKIE_FILE_PATH=$HOME/morpheus-data/.cookie \
+  -v ~/morpheus-data:/app/data \
+  -v ~/morpheus-data:$HOME/morpheus-data \
+  -p 8082:8082 \
+  ghcr.io/morpheusais/morpheus-lumerin-node:latest
+```
+
+<Warning>
+**Do not drop the `/app/data` mount when you add the second one — nothing will tell you that you did.** `AUTH_CONFIG_FILE_PATH`, `RATING_CONFIG_PATH`, `PROXY_STORAGE_PATH` and `MODELS_CONFIG_PATH` from the Quickstart `.env` all still point inside `/app/data`. The image has no `/app/data` to fall back on — `proxy-router/Dockerfile:33-34` is `FROM scratch` with `WORKDIR /app` — but the router creates it anyway: `storages.NewStorage` calls `os.MkdirAll` on the storage path (`proxy-router/internal/storages/storage.go:34`) at `proxy-router/cmd/main.go:204`, before `EnsureConfigFilesExist` writes `proxy.conf` at `:222`. So startup succeeds and no error is logged, but the Badger session store and `proxy.conf` — which is where your per-agent auth users live — are in the container's writable layer instead of on the host, and `docker rm` destroys them.
+</Warning>
+
+The path must be absolute and identical on both sides: the router resolves a relative `COOKIE_FILE_PATH` against its working directory at startup and reports the absolute result (`proxy-router/internal/config/config.go:266-268`, `proxy-router/internal/authapi/controller_http.go:338-364`). The cookie is written `0600` by the container's root user (`proxy-router/internal/system/auth.go:235-238`); if your desktop user cannot read the result, create it **before** starting the container — an existing cookie file is never overwritten (`proxy-router/internal/system/auth.go:215`):
+
+```bash
+printf 'admin:%s\n' "$(openssl rand -hex 24)" > ~/morpheus-data/.cookie
+chmod 600 ~/morpheus-data/.cookie
+```
+
+**Check which router won.** The relocation is logged at `warn` — the default `LOG_LEVEL` — as `Port 8082 is held by a router we can't authenticate with (foreign/containerized). Starting our own on API 8083, P2P 8084.` (macOS: `~/Library/Logs/morpheus-app/main.log` — that directory is Electron's package name from `ui-desktop/package.json:2`, not the `MorpheusUI` product name, which is set only at `ui-desktop/electron.builder.config.ts:36` and names the macOS bundle; there is no `~/Library/Logs/MorpheusUI`). If that line is present, pairing did not happen and the UI is on the app's own router at the API port named there; the app takes the next free port above 8082, so read it from the line rather than assuming 8083. Confirm with `curl -s "http://localhost:$PORT/auth/cookie/path"` for that port — anything answering means your container was not adopted. Adoption logs only at `info`, which the default level hides, so the positive signal is that warning's absence. The full decision table is in [Env: MorpheusUI](/reference/env-ui-desktop).
+
+If you publish on a different port, `SERVICE_PROXY_API_PORT` has to match it — but **only a from-source build can do that.** That key is substituted into the bundle at build time: `ui-desktop/electron.vite.config.ts:38-42` rewrites every `process.env.<KEY>` for the keys declared in `env.schema.ts` (`SERVICE_PROXY_API_PORT` is declared at `env.schema.ts:40`) into a JSON literal, and the map is passed as `define:` for **all three bundles** — main (`electron.vite.config.ts:55`), preload (`:71`) and renderer (`:85`) — so the readers at `orchestrator.config.ts:23-24` and `src/main/config/index.ts:11` are constants in the shipped code. A packaged install has no runtime override: `.env` is excluded from the app bundle (`electron.builder.config.ts:46`) and nothing under `ui-desktop/src/` loads dotenv. So on a packaged app, publish the container on `8082`; to use any other port, set `SERVICE_PROXY_API_PORT` in `ui-desktop/.env` and rebuild (see [Env: MorpheusUI](/reference/env-ui-desktop) and [macOS install (from source)](/consumers/install/macos)).
 
 ## Direct API use
 

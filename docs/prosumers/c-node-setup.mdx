@@ -64,17 +64,21 @@ Approve the Diamond contract for some MOR allowance so opening sessions doesn't 
 
 ```bash
 curl -X POST \
-  'http://127.0.0.1:8082/blockchain/approve?spender=0x6aBE1d282f72B474E54527D93b979A4f64d3030a&amount=20' \
+  'http://127.0.0.1:8082/blockchain/approve?spender=0x6aBE1d282f72B474E54527D93b979A4f64d3030a&amount=20000000000000000000' \
   -H 'Authorization: Basic <base64(user:pass)>' -d ''
 ```
 
 This authorizes 20 MOR. Set higher if you expect heavy use; lower if you want tighter risk control.
 
+<Warning>
+**`amount` is in base units, not whole tokens.** The value is passed to the ERC-20 `approve` call verbatim with no decimal scaling (`blockchainapi/service.go:1047`), and the token has 18 decimals. `amount=3` approves 3 base units — about 10⁻¹⁸ of a token — which leaves the allowance effectively zero and makes every later session-open fail. Three whole tokens is `3000000000000000000`.
+</Warning>
+
 ## Health and metrics
 
 - `GET /healthcheck` — JSON status / version / uptime.
 - `GET /v1/models/attestation` — TEE per-model attestation state (only meaningful when using `tee`-tagged models).
-- Logs — see `./data/` (or `docker logs`).
+- Logs — **stdout/stderr** by default (`docker logs`, or `journalctl` for a systemd unit). There is no log *file* unless you set `LOG_FOLDER_PATH`; with it set, each run writes `<LOG_FOLDER_PATH>/<start-timestamp>/main.log` (`proxy-router/cmd/main.go:74-82`). `./data/` is the Badger store, not logs.
 
 ## Updating
 

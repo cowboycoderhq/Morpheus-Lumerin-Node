@@ -52,7 +52,7 @@ flowchart LR
     Connect MyProvider to your node → **Provider** tab → register `host:3333`. **Models & Bids → Available Models → Add Bid** on the Id from step 2. Do **not** use the `tee` tag.
   </Step>
   <Step title="Price above your Venice cost">
-    See [Pricing a resale bid](/providers/resale/registering-bid). Every bid costs a non-refundable `0.3 MOR` fee — finish config before posting.
+    See [Pricing a resale bid](/providers/resale/registering-bid). Every bid costs a non-refundable `marketplaceBidFee` (`0.3` MOR on Base mainnet; `0` on Base Sepolia, where bids are free) — finish config before posting.
   </Step>
   <Step title="Verify">
     Follow [Verify your provider setup](/providers/full/verify-setup). Watch Venice usage limits so a busy session cannot blow your Diem quota.

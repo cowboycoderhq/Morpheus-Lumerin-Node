@@ -23,19 +23,25 @@ Token addresses by network are listed in [Networks and tokens](/get-started/netw
 
 <AccordionGroup>
   <Accordion title="Consumer session stake">
-    Total = `pricePerSecond * sessionDuration` (minimum `5` MOR). Paid in MOR, escrowed in the Inference Contract on `openSession`. On close, **unused** stake returns immediately; the **used stipend** day-locks in `userStakesOnHold` until the next UTC day (`withdrawUserStakes`) — including same-day natural expiration. The provider is paid from a separate protocol `fundingAccount`, not from your stake in real time. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
+In **pool mode**, the session duration is derived from the staked amount: the system converts the stake to a stipend using the inverse of `stipendToStake`, then divides by `pricePerSecond`. The required stake for a desired duration D is approximately `D * pricePerSecond * totalMORSupply * 100 / computeBalance` (`SessionRouter.sol:408-414`). This stake is typically much larger than the direct-payment cost (`price × duration`) because of the pool parameters. There is **no MOR minimum**; the only floor is a 5-minute duration. Paid in MOR, escrowed in the Inference Contract on `openSession`. On close, the lock is only applied when the close time is before the start of the next UTC day (`releaseAt`). If the close happens after `releaseAt`, the entire remaining stake is returned immediately and no day-lock is created. The locked amount (if any) is automatically swept by the proxy-router's StakeClaimer after the next UTC day; manual `withdrawUserStakes` is not required. The provider is paid from a separate protocol `fundingAccount` for pool-mode sessions, or from your escrowed stake for direct-pay sessions, not from your stake in real time. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
   </Accordion>
 
   <Accordion title="Provider stake">
-    Refundable bond posted when registering a provider. Minimum `0.2` MOR for a normal provider, `10000` MOR for a subnet provider. Returned (minus penalties) on provider deregistration.
+    Bond posted when registering a provider. Minimum `0.2` MOR on Base mainnet (`0.2` on Sepolia); a single `providerMinimumStake` applies to every provider — there is no subnet tier, and no `10000` tier. On deregistration the full stake is returned only after a 365-day limiter period ends **with no payout landing after it**, and `stake − limitPeriodEarned` before that (`ProviderRegistry.sol:99-105`) — rewards already claimed in the open period are netted out. The period **renews**: the first payout that lands once `limitPeriodEnd` has passed resets the end to another 365 days and zeroes `limitPeriodEarned` (`SessionRouter.sol:378-381`), and that rollover runs inside the ordinary `closeSession` payout path (`SessionRouter.sol:290`), not only on an explicit `claimForProvider`. A provider who keeps serving sessions is therefore always inside a live window, so waiting out the year that started at registration does not by itself reach the full-stake branch. That netting is not a penalty, and there is no slashing.
   </Accordion>
 
   <Accordion title="Model stake">
-    Refundable bond posted when registering a model. Minimum `0.1` MOR.
+    Bond posted when registering a model. Refundable **in full** on `modelDeregister`: `ModelRegistry.sol:87-95` sets `withdrawAmount_ = model.stake` and transfers the whole amount back, with no limiter branch. The 365-day `stake − limitPeriodEarned` netting is a **provider**-only rule — `ProviderRegistry.sol:99-105` takes a `Provider`, and the `Model` struct has no `limitPeriodEnd`/`limitPeriodEarned` fields at all (`interfaces/storage/IModelStorage.sol:16-25`). The contract refuses `modelDeregister` while any bid for that model is still active. Minimum `0.1` MOR.
   </Accordion>
 
   <Accordion title="Marketplace bid fee">
-    Non-refundable fee paid when posting a bid. `0.3` MOR.
+    Non-refundable fee charged on **every** `postModelBid`, not once: `0.3` MOR on Base
+    mainnet, `0` on Base Sepolia — testnet bids are free. Read the live value with
+    `getBidFee()`; `config_base_sepolia.json:6` does not track it — it still lists
+    `300000000000000000`, which the live Sepolia contract does not charge.
+    `config_base_mainnet.json:6` does match the live mainnet fee (and no deploy
+    path reads that file, so it is not a source either way).
+    Owner-settable via `setMarketplaceBidFee` (`Marketplace.sol:40`).
   </Accordion>
 
   <Accordion title="Gas">
@@ -45,24 +51,43 @@ Token addresses by network are listed in [Networks and tokens](/get-started/netw
 
 ## Net cost to become a provider (one-time minimum)
 
-```
-provider stake (0.2)
-  + model stake (0.1)
-  + bid fee     (0.3)
-  ----------------
-  ~ 0.6 MOR  + ETH gas
-```
+| Component | Amount |
+|---|---|
+| Provider stake (`providerMinStake`) | `0.2` MOR (Base mainnet) · `0.2` MOR (Base Sepolia) |
+| Model stake (`modelMinStake`) | `0.1` MOR (Base mainnet and Base Sepolia) |
+| Bid fee (`marketplaceBidFee`, charged on every `postModelBid`) | `0.3` MOR (Base mainnet) · `0` (Base Sepolia — bids are free) |
+| **One-time minimum** | **`~0.6` MOR** (Base mainnet) · **`0.3` MOR** (Base Sepolia — stake only, the bid fee is zero), plus ETH gas |
 
-Plus you must approve at least `~0.6` MOR to the Diamond contract. See [Register on chain](/providers/full/register-onchain).
+The bid fee is charged on **every** `postModelBid`, not once — reposting during
+configuration adds a further fee each time. Both the fee and the stakes are
+owner-settable on chain; the figures above are what the deployed contracts return,
+not what the deploy configs say. No deploy path reads `config_base_mainnet.json`
+(`deploy/helpers/config-parser.ts:20` hardcodes the Sepolia file), and
+`config_base_sepolia.json` still lists a bid fee of `300000000000000000` that the
+live Base Sepolia contract does not charge.
+
+Plus you must approve at least that much MOR to the Diamond contract. See [Register on chain](/providers/full/register-onchain).
 
 ## Net cost to consume (per session)
 
 ```
-session stake = pricePerSecond * sessionDuration
-   (minimum 5 MOR escrowed at open)
+direct payment (directPayment: true)   cost   = pricePerSecond × sessionDuration
+pool mode (the default)                escrow = stipendToStake(pricePerSecond × sessionDuration)
+                                              = cost × totalMORSupply × 100 / computeBalance
+                                              = 0  when computeBalance == 0  (SessionRouter.sol:410-411)
 ```
 
-The full stake is escrowed at open. On close, unused stake returns immediately; the used stipend day-locks until the next UTC day (`withdrawUserStakes`). Plan consumer float for gross daily stake — used MOR is not reusable the same UTC day. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
+**The escrow is not the cost.** In pool mode none of your stake reaches the
+provider — `SessionRouter.sol:300` gives the provider `0` of the user stake
+unless `isDirectPaymentFromUser`, and the provider is paid from the protocol
+`fundingAccount` instead (`SessionRouter.sol:397-401`). Your whole stake comes
+back: the **unconsumed** remainder immediately on close — near zero only for a
+fully consumed session, e.g. one left to run to `endsAt` inside one UTC day —
+and the final day's locked slice after `releaseAt`
+(`SessionRouter.sol:305-316`). What a pool-mode session costs you is
+the time your stake is locked, not tokens spent.
+
+The full stake is escrowed at open. On close, the remainder returns immediately (**that remainder is the part you did not consume** — the day-lock is sized from the seconds actually consumed, so closing at 10% of the scheduled duration returns roughly 90% of the stake, and the return approaches zero only as consumption approaches the full scheduled duration: a session left to run to `endsAt` inside one UTC day returns approximately nothing); the final UTC day's consumed slice day-locks until the next UTC day (`withdrawUserStakes`). Plan consumer float for gross daily stake — used MOR is not reusable the same UTC day. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
 
 ## Two reward systems (do not conflate)
 

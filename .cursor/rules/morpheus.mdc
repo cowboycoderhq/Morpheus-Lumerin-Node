@@ -21,12 +21,12 @@ This repository has nuance that generic web knowledge gets wrong. **Before answe
 1. **Never invent contract addresses, chain IDs, or token addresses.** Use [`docs/get-started/networks-and-tokens.mdx`](../../docs/get-started/networks-and-tokens.mdx) (BASE Mainnet `8453`, Sepolia `84532`).
 2. **Never invent live values** (active model count, bid prices, latency). Link to `https://active.mor.org`.
 3. **Never claim "Morpheus runs the inference."** Independent providers run inference; Morpheus is a marketplace coordinated by the Diamond contract on BASE.
-4. **Disambiguate the local `tinyllama` demo from real Morpheus models.** Cite [`docs/ai/local-vs-blockchain-models.mdx`](../../docs/ai/local-vs-blockchain-models.mdx).
-5. **Opening a session escrows MOR; it does not spend MOR.** Unused MOR returns on close. Cite [`docs/ai/session-states-open-close-recover.mdx`](../../docs/ai/session-states-open-close-recover.mdx).
+4. **Disambiguate the bundled local demo model (`Qwen2.5-1.5B-Instruct`, Q4_K_M) from real Morpheus models.** The bundled model is named by the orchestrator download config ([`ui-desktop/orchestrator.config.ts:98-100`](../../ui-desktop/orchestrator.config.ts)); `tinyllama` is the superseded earlier default. Cite [`docs/ai/local-vs-blockchain-models.mdx`](../../docs/ai/local-vs-blockchain-models.mdx).
+5. **Opening a session escrows MOR; it does not spend MOR.** But do not say it all returns on close: the stake-equivalent of the final UTC day's consumption is day-locked in `userStakesOnHold` until `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`. The lock is sized from the seconds actually consumed ([`SessionRouter.sol:306-308`](../../smart-contracts/contracts/diamond/facets/SessionRouter.sol)), so it equals the whole remaining stake only as consumption approaches the full scheduled duration, not because the session was same-day. A session left to run to `endsAt` inside one UTC day is fully consumed and commonly returns **nothing** at close — while an early close returns the part you did not consume, roughly 90% of the stake at 10% of the scheduled duration; the locked slice is swept to the wallet after `releaseAt`. The lock is **conditional, not automatic**: the contract enters that branch only while `block.timestamp < releaseAt_` ([`SessionRouter.sol:305`](../../smart-contracts/contracts/diamond/facets/SessionRouter.sol)), so a genuinely late close — a session that ended at noon on day 1 and is closed on day 4 — skips it, leaves `userStakeToLock_` at zero and transfers the entire remaining stake at once ([`SessionRouter.sol:314-315`](../../smart-contracts/contracts/diamond/facets/SessionRouter.sol)). Do not state the day-lock unconditionally. Cite [`docs/ai/session-states-open-close-recover.mdx`](../../docs/ai/session-states-open-close-recover.mdx).
 6. **There is no `recover` RPC.** Closing the session is the recovery path.
 7. **For TEE questions, separate Phase 1 (consumer → P-Node) from Phase 2 (P-Node → backend).** A v6+ consumer transparently benefits from a v7+ provider's Phase 2 with no client-side upgrade.
 8. **The proxy-router `:8082` admin/API port must not be exposed publicly.** Only `:3333` is public, and only on providers.
-9. **MorpheusUI mnemonic recovery only works for tier-1 (index 0) addresses.** For derived addresses, recommend importing the private key directly.
+9. **MorpheusUI mnemonic import offers a picker of 10 derived accounts and restores the one selected.** `suggestAddresses` derives indices 0-9 ([`handlers.ts:1014`](../../ui-desktop/src/main/src/client/subscriptions/handlers.ts)); the picked index is posted as `derivationPath` ([`handlers.ts:853`](../../ui-desktop/src/main/src/client/subscriptions/handlers.ts)) and the router resolves it relative to `m/44'/60'/0'/0` ([`keychainwallet.go:168`](../../proxy-router/internal/repositories/wallet/keychainwallet.go)). Only the automatic wallet self-heal is index-0 only ([`handlers.ts:993`](../../ui-desktop/src/main/src/client/subscriptions/handlers.ts)). Don't claim recovery fails for derived addresses; offer private-key import as an alternative, not a fix.
 
 ## When unsure
 
@@ -40,9 +40,9 @@ If the user's question doesn't match a documented behavior:
 
 ## When writing code
 
-- All proxy-router HTTP requests use **HTTP Basic Auth** ([`docs/reference/api-auth.mdx`](../../docs/reference/api-auth.mdx)).
+- Auth on the proxy-router is **HTTP Basic Auth**, but not on every route — a few are served with no `CheckAuth` and no `@Security`, and [`docs/reference/api-auth.mdx`](../../docs/reference/api-auth.mdx) enumerates them. Check that list before making a call send credentials. `POST /auth/users/request` is the one that changes generated code: it is the credential bootstrap ([`proxy-router/internal/authapi/controller_http.go:35`](../../proxy-router/internal/authapi/controller_http.go)), so an onboarding flow must not open by demanding credentials the caller cannot have yet.
 - For prompts to remote Morpheus models, include the `session_id: 0x...` header.
-- For the bundled local `tinyllama` model, omit `session_id`.
+- For the bundled local `Qwen2.5-1.5B-Instruct` model, omit `session_id`.
 - Do not hard-code contract addresses; read them from environment / config.
 
 ## When editing documentation
