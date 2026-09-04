@@ -8,13 +8,14 @@
 // `containerRuntime` (Docker) is intentionally absent from every phase below
 // — the design spec treats it as optional/non-blocking chrome, so the wizard
 // never surfaces it, never shows it as an error, and never self-heals it.
-// NOTE (boundary): the main-process orchestrator's `orchestratorStatus` still
-// factors containerRuntime into its 'ready' calculation (see
-// src/main/orchestrator/orchestrator.ts `calculateOrchestratorStatus`) — that
-// is out of scope for this renderer-only pass (main/ is a no-edit boundary).
-// If Docker is genuinely stuck, the wizard will look "almost done" longer
-// than the spec's happy path promises; fixing that requires the phase-2
-// "Orchestrator auto-heal" work called out in the design doc.
+// The main-process orchestrator agrees: `calculateOrchestratorStatus()` (in
+// src/main/orchestrator/orchestrator.ts) reads only the proxy-router's download
+// state and `requiredServicesRunning()`. containerRuntime is started
+// best-effort via `startOptionalService` and appears nowhere in that
+// calculation, so a stuck Docker cannot hold the wizard short of 'ready'.
+// This note used to assert the opposite. The orchestrator was fixed and the
+// note was not, and the stale mechanism was copied out of here into
+// docs/consumers/install/linux.mdx — keep the two in step.
 // ============================================================================
 
 import type {

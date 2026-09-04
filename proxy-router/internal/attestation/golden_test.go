@@ -242,7 +242,7 @@ func TestGoldenSource_RealImage(t *testing.T) {
 //   TEE_TEST_IMAGE=ghcr.io/morpheusais/morpheus-lumerin-node-tee \
 //   TEE_TEST_VERSION=v5.14.6 \
 //   TEE_TEST_PROVIDER_URL=morpheus.example.com:3333 \
-//   TEE_PORTAL_URL=https://secretai.scrtlabs.com/api/parse-quote \
+//   TEE_PORTAL_URL=https://secretai.scrtlabs.com/api/quote-parse \
 //   go test -v -run TestFullVerification -count=1 ./internal/attestation/
 // ---------------------------------------------------------------------------
 

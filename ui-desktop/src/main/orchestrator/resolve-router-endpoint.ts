@@ -20,11 +20,11 @@ type RouterState = 'absent' | 'usable' | 'unusable'
 // ProcessFactory then adopts the IPv6 router anyway. Probing the endpoint keeps
 // this decision consistent with adoption.
 //
-// 'usable' requires more than a health response: we must be able to READ the
-// auth cookie the router points at. A container reports its cookie at a path
-// that only exists inside the container (/app/app/data/.cookie), so every
-// authenticated call (onboarding, balances, sessions) fails with ENOENT on the
-// host. "Responds" is not enough; "we can authenticate against it" is the bar.
+// 'usable' requires more than a health response: we must be able to READ the auth cookie
+// the router points at. A container reports the path it sees inside itself: /app/data/.cookie
+// under the documented Docker quickstart, or /app/.cookie from the bare ./.cookie default
+// under WORKDIR /app. Neither exists on the host, so authenticated calls fail with ENOENT.
+// Pairing works when COOKIE_FILE_PATH matches on both sides: docs/consumers/install/docker.mdx.
 async function probeRouter(origin: string, log?: LogFunctions): Promise<RouterState> {
   let cookiePath: unknown
   try {
