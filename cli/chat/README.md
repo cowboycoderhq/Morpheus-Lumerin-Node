@@ -38,6 +38,26 @@ Examples:
 $ mor-cli healthcheck
 ```
 
+### Pagination flags (`listBlockchainSession`, `blockchainProviderBid`)
+
+`listBlockchainSession` (`lbs`) and `blockchainProviderBid` (`bpb`) both accept:
+
+* `--offset` — page offset into the results; must be `>= 0`. Default: `0`.
+* `--limit` — max results per page, `1`-`255`. The server binds this to a
+  `uint8` (`structs.QueryOffsetLimitOrder.Limit`), so the CLI **rejects**
+  anything above `255` rather than truncating it, and rejects `0` too (the
+  server returns an empty page for it). Default: `10`.
+
+`listBlockchainSession` additionally accepts:
+
+* `--order` — sort order, `asc` or `desc` (case-insensitive). If the flag is
+  **not** passed, the command sends no order parameter at all, which keeps a
+  bare `listBlockchainSession` returning whatever it always returned before
+  pagination was added to this command — do not assume that is ascending
+  order.
+
+`blockchainProviderBid` does not accept `--order`.
+
 ### Interactive
 
 The TUI mode is accessed by running either `chat-local` or `chat` (or their aliases `cl` and `c` respectively), as shown in the CLI help text included in the file. Upon executing the command, you will be prompted to provide the necessary configuration inputs that are required to use the language model.

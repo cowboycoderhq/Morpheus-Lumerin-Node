@@ -326,7 +326,16 @@ func (c *ApiGatewayClient) GetBidsByModelAgent(ctx context.Context, modelAgentId
 func (c *ApiGatewayClient) ListUserSessions(ctx context.Context, user string, offset *big.Int, limit uint8, order string) (result []SessionListItem, err error) {
 	response := map[string][]SessionListItem{}
 
-	err = c.getRequest(ctx, fmt.Sprintf("/blockchain/sessions/user?user=%s&offset=%s&limit=%d&order=%s", user, offset.String(), limit, order), &response)
+	endpoint := fmt.Sprintf("/blockchain/sessions/user?user=%s&offset=%s&limit=%d", user, offset.String(), limit)
+	// order == "" means the caller (see resolveOrder in cli/main.go) wants
+	// the order parameter omitted entirely, not sent as an empty value --
+	// that's what lets a bare `listBlockchainSession` reach the server
+	// exactly as the pre-pagination CLI did.
+	if order != "" {
+		endpoint += fmt.Sprintf("&order=%s", order)
+	}
+
+	err = c.getRequest(ctx, endpoint, &response)
 	if err != nil {
 		return nil, fmt.Errorf("internal error: %v", err)
 	}
@@ -337,7 +346,13 @@ func (c *ApiGatewayClient) ListUserSessions(ctx context.Context, user string, of
 func (c *ApiGatewayClient) ListProviderSessions(ctx context.Context, provider string, offset *big.Int, limit uint8, order string) (result []SessionListItem, err error) {
 	response := map[string][]SessionListItem{}
 
-	err = c.getRequest(ctx, fmt.Sprintf("/blockchain/sessions/provider?provider=%s&offset=%s&limit=%d&order=%s", provider, offset.String(), limit, order), &response)
+	endpoint := fmt.Sprintf("/blockchain/sessions/provider?provider=%s&offset=%s&limit=%d", provider, offset.String(), limit)
+	// See ListUserSessions above: order == "" omits the parameter entirely.
+	if order != "" {
+		endpoint += fmt.Sprintf("&order=%s", order)
+	}
+
+	err = c.getRequest(ctx, endpoint, &response)
 	if err != nil {
 		return nil, fmt.Errorf("internal error: %v", err)
 	}
