@@ -38,7 +38,7 @@ The Morpheus consumer node (proxy-router) does **not** custody tokens — it jus
     `openSession` does `transferFrom(you, InferenceContract, amount)`. While `closedAt == 0`, your stake lives inside the session record — not in your wallet, not yet in the on-hold queue.
   </Card>
   <Card title="3. On-hold queue" icon="lock">
-`userStakesOnHold[user]` array. Holds `min(your remaining stake, the stake-equivalent of the seconds consumed during the **final UTC day**)` until `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day` — but only when the close lands **before** `releaseAt` (`SessionRouter.sol:305`). A later close skips the lock entirely and the whole remaining stake returns at close, matching the walkthrough's "if you close before that timestamp" below. Cleared automatically by the proxy-router's StakeClaimer; manual `withdrawUserStakes` is not required.
+`userStakesOnHold[user]` array. Holds `min(your remaining stake, the stake-equivalent of the seconds consumed during the **final UTC day**)` until `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day` — but only when the close lands **before** `releaseAt` (`SessionRouter.sol:305`). A later close skips the lock entirely and the whole remaining stake returns at close, matching the walkthrough's "if you close before that timestamp" below. Cleared automatically by the proxy-router's StakeClaimer — but only while your own node is running and only for the wallet it holds, so with the node off, or for a session opened from another wallet, a manual `withdrawUserStakes` is required.
   </Card>
 </CardGroup>
 
@@ -142,7 +142,7 @@ Older docs (and even some early Morpheus discussion) used the word "recover" loo
 - **`closeSession`** stops the session and triggers refund logic.
 - **`withdrawUserStakes`** is the *separate* claim action for day-locked balances.
 
-If a session is genuinely stuck (e.g. pool-mode funding account empty, your consumer node offline past `endsAt`), the resolution is still a successful `closeSession`. The follow-up `withdrawUserStakes` is submitted for you by the proxy-router's StakeClaimer once the day-lock matures — you only call it yourself to take the withdrawal sooner. There is no other path on chain.
+If a session is genuinely stuck (e.g. pool-mode funding account empty, your consumer node offline past `endsAt`), the resolution is still a successful `closeSession`. The follow-up `withdrawUserStakes` is submitted for you by the proxy-router's StakeClaimer once the day-lock matures — but only if that node is yours and running, and only for the wallet it holds. The StakeClaimer is started inside `Proxy.Run` (`proxy-router/internal/proxyctl/proxyctl.go:237-240`) and withdraws for `GetMyAddress` alone (`proxy-router/internal/blockchainapi/service.go:1118-1124`), so in exactly the case this paragraph describes — a consumer node offline past `endsAt` — nothing sweeps, and you must submit `withdrawUserStakes` yourself as well as the close. With the node running you call it only to take the withdrawal sooner. There is no other path on chain.
 
 ## On-chain calls (consumer, via proxy-router)
 
@@ -154,7 +154,7 @@ If a session is genuinely stuck (e.g. pool-mode funding account empty, your cons
 | List session IDs only (lighter) | `GET /blockchain/sessions/user/ids?user=0x…` |
 | Fetch one session | `GET /blockchain/sessions/0x…` |
 | Close a session | `POST /blockchain/sessions/0x…/close` |
-| Claim day-locked on-hold balance | The proxy-router automatically claims matured on-hold stakes via its internal StakeClaimer (see `proxy-router/internal/blockchainapi/stake_claimer.go`). While there is no dedicated HTTP endpoint, manual claiming via `cast send` or wallet UI is an alternative for direct contract interaction. |
+| Claim day-locked on-hold balance | A **running** proxy-router claims matured on-hold stakes automatically via its internal StakeClaimer (`proxy-router/internal/blockchainapi/stake_claimer.go`), and only for its own wallet. There is no dedicated HTTP endpoint; manual claiming via `cast send` or a wallet UI is the alternative — and the only route when the node is off or the stake belongs to another wallet. |
 
 See [API endpoints](/reference/api-endpoints) for full curl examples.
 

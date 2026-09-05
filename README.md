@@ -47,7 +47,8 @@ adds a consumer desktop experience on top of it, in two areas:
   and until when — closing before a block's `EndsAt` time-locks that stake for
   ~24h on-chain, which is the network's behavior, not a bug in this app; you
   just weren't told beforehand. Held stakes past their lock are auto-claimed
-  back for you.
+  back for you while your own node is running — with it stopped, or for stakes
+  held against a different wallet, the claim is a manual on-chain call.
 
 **Your terminal, not just the app window.**
 

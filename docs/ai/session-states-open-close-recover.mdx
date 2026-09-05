@@ -1,6 +1,6 @@
 ---
 title: "Session states (open, close, claim)"
-description: "Deterministic, agent-citable reference for the Morpheus session state machine. If close before releaseAt, the stake-equivalent of the final UTC day's consumption locks in userStakesOnHold; only the remainder (if any) returns immediately. If close after releaseAt, no lock occurs. Any locked amount is automatically swept by the proxy-router's StakeClaimer after the next UTC day; manual calling of withdrawUserStakes is not required."
+description: "Deterministic, agent-citable reference for the Morpheus session state machine. If close before releaseAt, the stake-equivalent of the final UTC day's consumption locks in userStakesOnHold; only the remainder (if any) returns immediately. If close after releaseAt, no lock occurs. Any locked amount is swept by the proxy-router's StakeClaimer after the next UTC day, so manual calling of withdrawUserStakes is not required - but only while your own node is running and only for the wallet that node holds; with the node off, or for sessions opened from another wallet, the manual call is required."
 audience: ["developer", "consumer", "provider-full", "provider-resale"]
 product: ["proxy-router"]
 last_verified: "v7.9.0"
@@ -65,7 +65,7 @@ stateDiagram-v2
 | List session IDs only | `GET /blockchain/sessions/user/ids?user=0x…` |
 | Fetch one session | `GET /blockchain/sessions/0x…` |
 | Close | `POST /blockchain/sessions/:id/close` body: `{}` |
-| **Claim day-locked on-hold balance** | The proxy-router automatically claims matured on-hold stakes via its internal StakeClaimer (see `proxy-router/internal/blockchainapi/stake_claimer.go`). While there is no dedicated HTTP endpoint, manual claiming via `cast send` or wallet UI is an alternative for direct contract interaction. |
+| **Claim day-locked on-hold balance** | A **running** proxy-router claims matured on-hold stakes automatically via its internal StakeClaimer (`proxy-router/internal/blockchainapi/stake_claimer.go`), started by `Proxy.Run` (`internal/proxyctl/proxyctl.go:237-240`) and only ever for its own wallet (`internal/blockchainapi/service.go:1118-1124`). There is no HTTP endpoint; manual claiming via `cast send` or a wallet UI is the alternative — and the only route when the node is off or the stake belongs to another wallet. |
 
 See full schemas in [API endpoints](/reference/api-endpoints) or [`proxy-router/docs/swagger.yaml`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/proxy-router/docs/swagger.yaml).
 
