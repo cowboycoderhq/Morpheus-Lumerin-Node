@@ -111,9 +111,17 @@ func main() {
 						Value: 10,
 						Usage: "max results per page, 1-255 (the server binds this to a uint8; values above 255 are rejected rather than truncated, and 0 is rejected too since the server returns an empty page for it)",
 					},
+					// Empty on purpose. urfave/cli renders `(default: "<Value>")` in
+					// --help, and any non-empty default here is a lie: resolveOrder
+					// ignores this value unless the caller set the flag (IsSet), and an
+					// unset flag sends no order parameter at all, so the SERVER default
+					// applies -- effectively descending, not "asc". Empty suppresses the
+					// rendered default and changes nothing else, since the value is only
+					// read after IsSet and orderToServerString still rejects "" when the
+					// flag IS set explicitly. See cli/chat/README.md and resolveOrder.
 					&cli.StringFlag{
 						Name:  "order",
-						Value: "asc",
+						Value: "",
 						Usage: "sort order, \"asc\" or \"desc\" (case-insensitive); omit the flag entirely to keep the tool's pre-pagination default order",
 					},
 				},
