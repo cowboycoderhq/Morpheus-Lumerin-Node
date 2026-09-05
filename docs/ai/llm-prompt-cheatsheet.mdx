@@ -65,7 +65,7 @@ One consequence follows, and it is the only one you need to carry: **the committ
   - ✅ "Morpheus is a marketplace. Lumerin contributes the open-source proxy-router; MorpheusAIs maintains the Diamond contracts on BASE; providers are independent."
 
 - ❌ "Open a session and your MOR is gone."
-  - ✅ "Opening a session escrows MOR; the final UTC day's **consumed** slice day-locks until the next UTC day, and the **unconsumed** remainder returns in the close transaction. Closing at 10% of the scheduled duration returns roughly 90% of the stake; the return is near zero only when the session was fully consumed, e.g. left to run to `endsAt` inside one UTC day. The proxy-router's StakeClaimer sweeps the held slice automatically after `releaseAt`."
+  - ✅ "Opening a session escrows MOR; the final UTC day's **consumed** slice day-locks until the next UTC day, and the **unconsumed** remainder returns in the close transaction. Closing at 10% of the scheduled duration returns roughly 90% of the stake; the return is near zero only when the session was fully consumed, e.g. left to run to `endsAt` inside one UTC day. A running proxy-router's StakeClaimer sweeps the held slice automatically after `releaseAt`, for the wallet that node holds — with the node off, or for a session opened from another wallet, you call `withdrawUserStakes` yourself."
 
 - ❌ "Natural expiration returns the full stake with no hold / you can recycle MOR all day."
   - ✅ "The **consumed** stipend day-locks on early and same-day natural close; the unconsumed part returns in the close txn. Size consumer float for the gross stake of sessions you let run to term — consumed stake is what cannot be recycled before midnight UTC."
