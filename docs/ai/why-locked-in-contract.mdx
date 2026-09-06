@@ -58,7 +58,7 @@ flowchart TD
   Start[MOR appears 'locked'] --> Q1{Active session?}
   Q1 -->|Yes| A1[Wait for endsAt or close manually — consumed final-day slice day-locks; unconsumed remainder returns now, near 0 only if fully consumed]
   Q1 -->|No| Q2{Closed in last ~24-48h?}
-  Q2 -->|Yes| A2[Consumed slice likely in userStakesOnHold — a running node auto-sweeps after releaseAt for its own wallet only, otherwise call withdrawUserStakes yourself]
+  Q2 -->|Yes| A2[Consumed slice likely in userStakesOnHold — a running node auto-sweeps after releaseAt for its own wallet only; with that node off or the stake held against a different wallet, nothing sweeps until a proxy-router holding that wallet runs — starting one claims it immediately on startup, or call withdrawUserStakes yourself]
   Q2 -->|No| Q3{Session past endsAt but still active?}
   Q3 -->|Yes| A3[Stuck close — funding account or your node's gas]
   Q3 -->|No| Q4{Active provider/model stake?}

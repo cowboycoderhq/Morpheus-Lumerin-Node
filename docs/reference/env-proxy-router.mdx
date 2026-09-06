@@ -182,7 +182,7 @@ Neither marketplace address has a compiled default, and unlike the chain ID neit
 | `LOG_LEVEL_ETH_RPC` | `info` | Ethereum RPC log level. `.env.example` ships `warn` as a recommendation |
 | `LOG_LEVEL_STORAGE` | `info` | Badger storage log level. `.env.example` ships `warn` as a recommendation |
 
-The `-tee` image ships production / JSON / reduced-verbosity values for all of these as Docker `ENV` defaults (`proxy-router/Dockerfile.tee:30-36`). Like any `ENV` default they are overridable with `-e` or a Compose `environment:` entry; what pins them in practice is a measured SecretVM deployment, not the image itself — see the `PROXY_STORE_CHAT_CONTEXT` note above.
+The `-tee` image ships production / JSON / reduced-verbosity values for all of these as Docker `ENV` defaults (`proxy-router/Dockerfile.tee:30-36`). Like any `ENV` default they are overridable with `-e` or a Compose `environment:` entry, and a measured SecretVM deployment does not pin them either: `CalculateRTMR3` measures the compose file's bytes and the rootfs hash and nothing else (`proxy-router/internal/attestation/rtmr.go:12-19`), while the compose declares `env_file: - usr/.env` (`proxy-router/docker-compose.tee.yml:15-16`) whose contents are outside those measured bytes and sit above the image's `ENV` in Docker precedence. Treat them as the values you get by default, not as guarantees — see the `PROXY_STORE_CHAT_CONTEXT` note above.
 
 ## Network ports & URLs
 
@@ -198,7 +198,7 @@ The `-tee` image ships production / JSON / reduced-verbosity values for all of t
 |----------|---------|-------|
 | `MAX_CACHED_DESTS` | – | Not consumed; Config struct has no field for it |
 | `PROXY_STORAGE_PATH` | `./data/badger/` | Local Badger / runtime state |
-| `PROXY_STORE_CHAT_CONTEXT` | `true` | Persist chat context. The `-tee` image ships `false` as a Docker `ENV` default — pinned by a measured SecretVM deployment, not by the image; see precedence above |
+| `PROXY_STORE_CHAT_CONTEXT` | `true` | Persist chat context. The `-tee` image ships `false` as a Docker `ENV` default — pinned neither by the image nor by a measured SecretVM deployment, since the compose's `env_file: - usr/.env` is outside the measured bytes; treat `false` as the default you get, not a guarantee. See precedence above |
 | `PROXY_FORWARD_CHAT_CONTEXT` | `false` | Prepend stored history to prompts. Default OFF: the client owns the transcript, so forwarding would duplicate context for any OpenAI-compatible client |
 | `MODELS_CONFIG_PATH` | `models-config.json` — but **not** from `SetDefaults()`, which assigns this one nothing (measured: empty). Empty is a **sentinel**: `ModelConfigLoader.Init` substitutes `ConfigPathDefault` before reading (`proxy-router/internal/config/models_config.go:15,73-76`), exactly as the agent pair below does | See [models-config](/reference/models-config). See precedence above. |
 | `MODELS_CONFIG_CONTENT` | (unset) | **Seeds the models config file on first start only.** See precedence above. |
