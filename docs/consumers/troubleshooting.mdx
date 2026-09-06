@@ -22,10 +22,22 @@ You probably selected a different **derived account**. MorpheusUI's import flow 
 ## "Provider not responding" or stuck mid-prompt
 
 - Confirm the proxy-router is still running (`http://localhost:8082/healthcheck`, or check the **Proxy Router** entry under **Settings → Services** in MorpheusUI).
-- The provider may be down. Close the session; only the remainder (if any) returns immediately (**that remainder is the part you did not consume** — the day-lock is sized from the seconds actually consumed, so closing at 10% of the scheduled duration returns roughly 90% of the stake, and the return approaches zero only as consumption approaches the full scheduled duration: a session left to run to `endsAt` inside one UTC day returns approximately nothing), and the locked amount in `userStakesOnHold` is automatically swept by the proxy-router's StakeClaimer after ~1 UTC day — but only while your own node is running and only for the wallet it holds, so if the router you just checked is not running, or the session was opened from another wallet, nothing sweeps and you must call `withdrawUserStakes` yourself:
+- The provider may be down. Close the session:
+
   ```bash
   curl -X POST 'http://localhost:8082/blockchain/sessions/<sessionId>/close' \
     -H 'Authorization: Basic <base64(user:pass)>' -d '{}'
+  ```
+
+  Only the remainder (if any) returns immediately — **that remainder is the part you did not consume**. The day-lock is sized from the seconds actually consumed, so closing at 10% of the scheduled duration returns roughly 90% of the stake; the return approaches zero only as consumption approaches the full scheduled duration, and a session left to run to `endsAt` inside one UTC day returns approximately nothing.
+
+  The locked amount in `userStakesOnHold` is swept back by the proxy-router's StakeClaimer after ~1 UTC day — but only while your own node is running, and only for the wallet it holds. If the router you just checked is stopped, or the session was opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs: starting one claims matured stake immediately on startup (`stake_claimer.go:87-89`). Claiming it by hand is the alternative:
+
+  ```bash
+  cast send 0x6aBE1d282f72B474E54527D93b979A4f64d3030a \
+    "withdrawUserStakes(address,uint8)" 0xYOUR_WALLET 20 \
+    --rpc-url https://mainnet.base.org \
+    --private-key "$PRIVATE_KEY_OF_DELEGATEE"
   ```
 - Try a different model from a different provider.
 
