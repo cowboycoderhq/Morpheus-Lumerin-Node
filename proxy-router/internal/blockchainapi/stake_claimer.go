@@ -58,9 +58,9 @@ func (s *StakeClaimer) claimOnce(ctx context.Context) *big.Int {
 
 	if available == nil || available.Sign() == 0 {
 		if hold != nil && hold.Sign() > 0 {
-			// The common case after an early close: money exists but is not due
-			// yet. Log it so "where is my MOR" has an answer in the log.
-			s.log.Infof("%s wei of stake still time-locked from early session closes, nothing matured yet", hold.String())
+			// Common after any close landing before releaseAt, not only an early one:
+			// money exists but is not due yet. Log it so "where is my MOR" has an answer.
+			s.log.Infof("%s wei of stake still time-locked from session closes that landed before releaseAt - any close, not only an early one; nothing matured yet", hold.String())
 		}
 		return nil
 	}

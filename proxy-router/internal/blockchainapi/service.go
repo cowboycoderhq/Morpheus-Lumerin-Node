@@ -1099,8 +1099,8 @@ func (s *BlockchainService) ClaimProviderBalance(ctx context.Context, sessionID 
 // leave their money behind.
 const stakeOnHoldIterations uint8 = 255
 
-// GetUserStakesOnHold reports this wallet's stake locked by early session
-// closes: `available` is withdrawable now, `hold` is still time-locked.
+// GetUserStakesOnHold reports this wallet's stake locked by any close landing
+// before releaseAt: `available` is withdrawable now, `hold` is still time-locked.
 func (s *BlockchainService) GetUserStakesOnHold(ctx context.Context) (available *big.Int, hold *big.Int, err error) {
 	userAddr, err := s.GetMyAddress(ctx)
 	if err != nil {
