@@ -88,7 +88,7 @@ func (c *BlockchainController) RegisterRoutes(r interfaces.Router) {
 // GetStakesOnHold godoc
 //
 //	@Summary		Get stake on hold from early session closes
-//	@Description	MOR time-locked by closing sessions before they ended. `available` has matured and is swept home automatically by the stake auto-claimer; `hold` is still locked (released a day after the UTC day the session was closed).
+//	@Description	MOR time-locked by closing sessions before they ended. `available` has matured: a running proxy-router sweeps it for its own wallet, otherwise it needs a manual `withdrawUserStakes`. `hold` is still locked (released a day after the UTC day the session was closed).
 //	@Tags			wallet
 //	@Produce		json
 //	@Success		200	{object}	structs.StakesOnHoldRes
