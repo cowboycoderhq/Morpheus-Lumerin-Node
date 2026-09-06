@@ -23,7 +23,7 @@ Token addresses by network are listed in [Networks and tokens](/get-started/netw
 
 <AccordionGroup>
   <Accordion title="Consumer session stake">
-In **pool mode**, the session duration is derived from the staked amount: the system converts the stake to a stipend using the inverse of `stipendToStake`, then divides by `pricePerSecond`. The required stake for a desired duration D is approximately `D * pricePerSecond * totalMORSupply * 100 / computeBalance` (`SessionRouter.sol:408-414`). This stake is typically much larger than the direct-payment cost (`price × duration`) because of the pool parameters. There is **no MOR minimum**; the only floor is a 5-minute duration. Paid in MOR, escrowed in the Inference Contract on `openSession`. On close, the lock is only applied when the close time is before the start of the next UTC day (`releaseAt`). If the close happens after `releaseAt`, the entire remaining stake is returned immediately and no day-lock is created. The locked amount (if any) is automatically swept by the proxy-router's StakeClaimer after the next UTC day — but only while your own node is running and only for the wallet it holds; with the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs: starting one claims matured stake immediately on startup, and a manual `withdrawUserStakes` is the alternative. The provider is paid from a separate protocol `fundingAccount` for pool-mode sessions, or from your escrowed stake for direct-pay sessions, not from your stake in real time. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
+In **pool mode**, the session duration is derived from the staked amount: the system converts the stake to a stipend using the inverse of `stipendToStake`, then divides by `pricePerSecond`. The required stake for a desired duration D is approximately `D * pricePerSecond * totalMORSupply * 100 / computeBalance` (`SessionRouter.sol:408-414`). This stake is typically much larger than the direct-payment cost (`price × duration`) because of the pool parameters. There is **no MOR minimum**; the only floor is a 5-minute duration. Paid in MOR, escrowed in the Inference Contract on `openSession`. On close, the lock is only applied when the close lands before `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day` (`SessionRouter.sol:296-298`, gated at `:305`) — the start of the UTC day after the one the session **ended** in, not after the one the close landed in. If the close lands after `releaseAt` — a session that ended at 11:00Z on day 1 and is closed on day 3 — the entire remaining stake is returned immediately and no day-lock is created. The locked amount (if any) is automatically swept by the proxy-router's StakeClaimer after `releaseAt` — but only while your own node is running and only for the wallet it holds; with the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs: starting one claims matured stake immediately on startup, and a manual `withdrawUserStakes` is the alternative. The provider is paid from a separate protocol `fundingAccount` for pool-mode sessions, or from your escrowed stake for direct-pay sessions, not from your stake in real time. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
   </Accordion>
 
   <Accordion title="Provider stake">
@@ -49,14 +49,15 @@ In **pool mode**, the session duration is derived from the staked amount: the sy
   </Accordion>
 </AccordionGroup>
 
-## Net cost to become a provider (one-time minimum)
+## Net cost to become a provider (minimum to get started)
 
 | Component | Amount |
 |---|---|
-| Provider stake (`providerMinStake`) | `0.2` MOR (Base mainnet) · `0.2` MOR (Base Sepolia) |
-| Model stake (`modelMinStake`) | `0.1` MOR (Base mainnet and Base Sepolia) |
-| Bid fee (`marketplaceBidFee`, charged on every `postModelBid`) | `0.3` MOR (Base mainnet) · `0` (Base Sepolia — bids are free) |
-| **One-time minimum** | **`~0.6` MOR** (Base mainnet) · **`0.3` MOR** (Base Sepolia — stake only, the bid fee is zero), plus ETH gas |
+| Provider stake (`providerMinStake`) — always; enforced in `providerRegister` (`ProviderRegistry.sol:40-44`) | `0.2` MOR (Base mainnet) · `0.2` MOR (Base Sepolia) |
+| Bid fee (`marketplaceBidFee`) — always, and on **every** `postModelBid`, not once (`Marketplace.sol:86`) | `0.3` MOR (Base mainnet) · `0` (Base Sepolia — bids are free) |
+| Model stake (`modelMinStake`) — **only when minting a new model**; enforced in `modelRegister` (`ModelRegistry.sol:44-48`). `postModelBid` never requires it | `0.1` MOR (Base mainnet and Base Sepolia) |
+| **Minimum to bid on an existing model** (the preferred path) | **`0.5` MOR** (Base mainnet) · **`0.2` MOR** (Base Sepolia — the bid fee is zero there), plus ETH gas |
+| **Minimum if you also mint a new model** | **`0.6` MOR** (Base mainnet) · **`0.3` MOR** (Base Sepolia), plus ETH gas |
 
 The bid fee is charged on **every** `postModelBid`, not once — reposting during
 configuration adds a further fee each time. Both the fee and the stakes are
