@@ -43,9 +43,11 @@ adds a consumer desktop experience on top of it, in two areas:
 - **See who's actually serving you** — the provider's endpoint and the MOR you
   actually have locked, not an abbreviated on-chain address and a cost figure
   that used to be computed wrong.
-- **A warning before an early close locks your MOR**, naming the exact figure
-  and until when — closing before a block's `EndsAt` time-locks that stake for
-  ~24h on-chain, which is the network's behavior, not a bug in this app; you
+- **A warning before a close locks your MOR**, naming the exact figure
+  and until when — any close landing before the start of the UTC day after the
+  session ended time-locks that stake until then, natural expiry included
+  (`SessionRouter.sol:305` gates on `block.timestamp < releaseAt_`, not on
+  `EndsAt`), which is the network's behavior, not a bug in this app; you
   just weren't told beforehand. Held stakes past their lock are auto-claimed
   back for you while your own node is running, and only for the wallet it holds
   — with it stopped, or for stakes held against a different wallet, nothing
