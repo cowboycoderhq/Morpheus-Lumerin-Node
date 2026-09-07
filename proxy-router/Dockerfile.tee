@@ -1,5 +1,5 @@
 # TEE-hardened image for Confidential VM deployment (Intel TDX / AMD SEV)
-# Layers immutable environment defaults on top of the standard proxy-router image.
+# Layers Docker ENV defaults (overridable at runtime) on top of the standard proxy-router image.
 # Only runtime secrets (wallet key, RPC URL, models config) need to be injected.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
