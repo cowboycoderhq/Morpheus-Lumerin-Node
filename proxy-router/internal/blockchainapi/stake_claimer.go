@@ -24,8 +24,8 @@ import (
 // Safety: withdrawUserStakes(user_, ...) transfers to `user_` and nowhere else,
 // and we only ever pass our own address, so this job cannot send funds anywhere
 // but home. Its blast radius is gas. It never claims a stake that has not
-// matured — the contract would skip the entry and we would pay a fee for a
-// transfer of zero.
+// matured - the contract reverts SessionUserAmountToWithdrawIsZero in that case
+// (SessionRouter.sol:461-463), so an early call fails rather than transferring 0.
 type StakeClaimer struct {
 	blockchainService *BlockchainService
 	interval          time.Duration
@@ -33,9 +33,9 @@ type StakeClaimer struct {
 }
 
 // claimInterval: the lock releases on a 1-day boundary, so nothing is gained by
-// polling hard — but a user who reopens the app expecting their MOR back should
-// not wait long. Ten minutes costs two cheap eth_calls an hour and bounds the
-// "why isn't it back yet" window.
+// polling hard - but a user who reopens the app expecting their MOR back should
+// not wait long. Ten minutes is six ticks an hour, each costing one cheap
+// eth_call (claimOnce reads stakes on hold at :51), and bounds the wait.
 const claimInterval = 10 * time.Minute
 
 func NewStakeClaimer(blockchainService *BlockchainService, log lib.ILogger) *StakeClaimer {

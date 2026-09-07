@@ -66,12 +66,12 @@ func (c *BlockchainController) RegisterRoutes(r interfaces.Router) {
 	// Stake time-locked by closing a session before the end of the UTC day it ended in
 	// (any close, not only an early one - SessionRouter.sol:305 gates on
 	// block.timestamp < releaseAt_, with releaseAt_ from :296-298). The Diamond has always had
-	// getUserStakesOnHold/withdrawUserStakes, but nothing called either until this
-	// route and the auto-claimer, so the money was invisible to the UI and
-	// unreachable by the user. Both halves are covered now: the GET below is the
-	// read side, and StakeClaimer (stake_claimer.go, started in proxyctl.go) is the
-	// write side — it withdraws matured stake on start and every claimInterval
-	// (10m), so the money comes home whether or not anyone looks.
+	// getUserStakesOnHold/withdrawUserStakes, but no proxy-router surface called
+	// either until this route and the auto-claimer. withdrawUserStakes is external
+	// (SessionRouter.sol:435), so it was always callable on the Diamond directly;
+	// there is still no HTTP route for it here. The GET below is the read side, and
+	// StakeClaimer is the write side - but only while this node runs and only for the
+	// wallet it holds, so otherwise nothing sweeps until such a node runs.
 	r.GET("/blockchain/stakes/on-hold", c.authConf.CheckAuth("get_balance"), c.getStakesOnHold)
 	r.GET("/blockchain/sessions/user", c.authConf.CheckAuth("get_sessions"), c.getSessionsForUser)
 	r.GET("/blockchain/sessions/user/ids", c.authConf.CheckAuth("get_sessions"), c.getSessionsIdsForUser)

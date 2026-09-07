@@ -27,9 +27,9 @@ type BalanceRes struct {
 
 // StakesOnHoldRes reports stake time-locked by closing a session before the end
 // of the UTC day it ended in - any close, not only an early one.
-// `available` has passed its release time (the auto-claimer sweeps it home);
-// `hold` is still locked and cannot be released early by anyone — the contract
-// skips unmatured entries rather than reverting.
+// `available` has passed its release time (a running claimer sweeps it home);
+// `hold` is still locked and cannot be released early by anyone - the contract
+// skips unmatured entries in its loop, then reverts because nothing was taken.
 type StakesOnHoldRes struct {
 	Available *lib.BigInt `json:"available" swaggertype:"string"`
 	Hold      *lib.BigInt `json:"hold" swaggertype:"string"`
