@@ -252,11 +252,11 @@ func (g *SessionRouter) ClaimProviderBalance(opts *bind.TransactOpts, sessionId 
 	return tx.Hash(), nil
 }
 
-// GetUserStakesOnHold reports the stake a user has locked from closing sessions
-// EARLY. `available` has passed its release time and can be withdrawn now;
-// `hold` is still locked. Closing a session before it ends pushes an
-// OnHold(amount, startOfDay(closedAt)+1day) entry onto this list — see
-// SessionRouter._rewardUserAfterClose. Closing late locks nothing.
+// GetUserStakesOnHold reports the stake a user has locked by any close landing
+// before releaseAt, not only an early one. `available` has passed its release
+// time and can be withdrawn now; `hold` is still locked. Such a close pushes an
+// OnHold(amount, startOfTheDay(min(closedAt, endsAt))+1day) entry onto this list
+// (SessionRouter._rewardUserAfterClose, :296-298). Only a LATER-day close locks nothing.
 func (g *SessionRouter) GetUserStakesOnHold(ctx context.Context, userAddr common.Address, iterations uint8) (available *big.Int, hold *big.Int, err error) {
 	res, err := g.sessionRouter.GetUserStakesOnHold(&bind.CallOpts{Context: ctx}, userAddr, iterations)
 	if err != nil {
