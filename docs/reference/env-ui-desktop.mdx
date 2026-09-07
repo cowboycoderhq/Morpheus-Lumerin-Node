@@ -7,7 +7,7 @@ last_verified: "v7.6.0"
 source: "docs/ui-desktop.all.env"
 ---
 
-MorpheusUI configuration lives in `ui-desktop/.env`, and it is read **only at build time**. `electron.vite.config.ts:41-43` substitutes `process.env.<KEY>` with a JSON literal for every key `env.schema.ts` declares, and passes that map as `define:` for all three bundles — main (`:55`), preload (`:71`) and renderer (`:85`) — so these values are compiled in as constants. A **packaged install carries no configuration file**: `.env` is excluded from the app bundle (`electron.builder.config.ts:46`) and nothing under `ui-desktop/src/` loads dotenv, so editing a `.env` beside an installed app does nothing, silently. That is a claim about the *file*; the *process environment* is a separate channel, and for one variable it still reaches the code — see the note below. Changing any value on this page means rebuilding from source ([macOS install (from source)](/consumers/install/macos)). The complete annotated dump is at [`docs/ui-desktop.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/ui-desktop.all.env). Source of truth: [`ui-desktop/env.schema.ts`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/ui-desktop/env.schema.ts) — the build injects exactly the keys it declares. A variable absent from it is never substituted, so it is not compiled in — but neither is it erased: the `process.env.<KEY>` read survives into the shipped bundle as a live runtime lookup. The app consumes those keys in three places (`src/main/config/index.ts`, `orchestrator.config.ts`, `src/main/logger.ts`), so no single reader is the full list.
+MorpheusUI configuration lives in `ui-desktop/.env`, and it is read **only at build time**. `electron.vite.config.ts:41-43` substitutes `process.env.<KEY>` with a JSON literal for every key `env.schema.ts` declares, and passes that map as `define:` for all three bundles — main (`:55`), preload (`:71`) and renderer (`:85`) — so these values are compiled in as constants. A **packaged install carries no configuration file**: `.env` is excluded from the app bundle (`electron.builder.config.ts:46`) and nothing under `ui-desktop/src/` loads dotenv, so editing a `.env` beside an installed app does nothing, silently. That is a claim about the *file*; the *process environment* is a separate channel, and for one variable it still reaches the code — see the note below. Changing any value on this page means rebuilding from source ([macOS install (from source)](/consumers/install/macos)). The complete annotated dump is at [`docs/ui-desktop.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/ui-desktop.all.env) — a reference listing, not a drop-in `.env`. `CHAIN_ID` is deliberately blank there, and it is required with no schema default, so an as-is copy fails the build's own ajv check (`ui-desktop/electron.vite.config.ts:14-24`) with `Invalid environment variables: ENV/CHAIN_ID must be number`; fill it in for your network first. Every other key in that file validates as written. Source of truth: [`ui-desktop/env.schema.ts`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/ui-desktop/env.schema.ts) — the build injects exactly the keys it declares. A variable absent from it is never substituted, so it is not compiled in — but neither is it erased: the `process.env.<KEY>` read survives into the shipped bundle as a live runtime lookup. The app consumes those keys in five places (`src/main/config/index.ts`, `orchestrator.config.ts`, `src/main/logger.ts`, `src/main/core/logger.js` and `src/preload/index.ts`), so no single reader is the full list.
 
 <Note>
 **One undeclared variable is still live at runtime.** `IGNORE_DEBUG_LOGS` is read at
@@ -17,7 +17,7 @@ but is **absent from `ui-desktop/env.schema.ts`**, so the `define:` map built at
 `process.env` lookup in a packaged build: launching the app with `IGNORE_DEBUG_LOGS` set **in the
 process environment** still suppresses `config.debug`. Putting it in a `.env` file next to the
 installed app does nothing, because that file is never read. It also still ships in
-`ui-desktop/.env.example:70`, where it has no build-time effect.
+`ui-desktop/.env.example:75`, where it has no build-time effect.
 
 The only other `process.env` keys under `ui-desktop/src/` that the schema does not declare are
 Electron tooling rather than settings, and neither is a runtime input for a packaged build:
@@ -78,7 +78,7 @@ build with none set has nowhere to fetch the proxy-router from.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `LOG_LEVEL` | `warn` | Verbosity of the **desktop app's own** logger, console and file (`src/main/logger.ts:36-37`). One of `error`, `warn`, `info`, `verbose`, `debug`, `silly` |
+| `LOG_LEVEL` | `warn` | Verbosity of the **desktop app's own** logger, console and file. Read by two loggers, not one: `src/main/logger.ts:36-37` and `src/main/core/logger.js:39-40`. One of `error`, `warn`, `info`, `verbose`, `debug`, `silly` |
 
 <Warning>
 This is not the proxy-router's logging. That process has no plain `LOG_LEVEL` —

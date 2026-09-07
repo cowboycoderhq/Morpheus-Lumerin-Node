@@ -169,7 +169,7 @@ one path on this fork that is actually current.
 > that out after a full build plus a ~2GB service download. This fork has no
 > proxy-router binary uploaded for either platform, so
 > `SERVICE_PROXY_DOWNLOAD_URL_LINUX_*` / `_WINDOWS_*` ship commented out
-> (`ui-desktop/.env.example:57-64`) and `yarn app` copies that file verbatim
+> (`ui-desktop/.env.example:66-69`) and `yarn app` copies that file verbatim
 > to `.env` (`ui-desktop/scripts/ensure-env.mjs:51-57`). With no URL,
 > `downloadProxyRouter()` downloads nothing yet still sets its status to
 > `'success'` (`ui-desktop/src/main/orchestrator/orchestrator.ts:193-209`),
