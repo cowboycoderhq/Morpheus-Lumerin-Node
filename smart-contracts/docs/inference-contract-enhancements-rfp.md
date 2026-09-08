@@ -41,7 +41,7 @@ The Inference Contract is a Diamond proxy with four primary write facets and sha
 | Facet | Role today |
 |-------|------------|
 | **ModelRegistry** | Any wallet meeting min stake registers a model. `modelId = keccak256(owner, baseModelId)`. Re-registering with the same `baseModelId` **upserts** metadata and adds stake. |
-| **Marketplace** | Providers post bids (`pricePerSecond`). Reposting auto-deletes the prior active bid for that provider↔model pair. The fee is 0.3 MOR on Base mainnet and 0.3 MOR on Base Sepolia, as specified in `smart-contracts/deploy/data/config_base_*.json` and documented in `tokens-and-fees.mdx`. |
+| **Marketplace** | Providers post bids (`pricePerSecond`). Reposting auto-deletes the prior active bid for that provider↔model pair. The fee is `0.3` MOR on Base mainnet and `0` on Base Sepolia — testnet bids are free. Read the live value with `getBidFee()`, not from the deploy inputs: `config_base_sepolia.json:6` still lists the mainnet figure, which the live Sepolia contract does not charge (`docs/concepts/tokens-and-fees.mdx:37-44`). |
 | **ProviderRegistry** | Provider bond + endpoint string. Re-register upserts endpoint and adds stake. |
 | **SessionRouter** | Open/close sessions, stipend-based duration, close day-lock (gated at `SessionRouter.sol:305` on `block.timestamp < releaseAt_`, so it fires on *any* close before the day after session end, natural expiry included — not on early closes only), provider payouts from `fundingAccount` or user escrow. |
 
@@ -281,7 +281,7 @@ function getProviderEarningsStatus(address provider_) external view returns (
 
 #### M3 · Provider onboarding · Bid update without full repost
 
-**Problem:** Changing bid price requires a full `postModelBid` repost, paying the **0.3 MOR** fee on every price change. A separate `deleteModelBid` is *not* required — `postModelBid` deletes the provider's prior active bid for that model in the same transaction once the provider->model nonce is non-zero (`Marketplace.sol:93-98`) — but the fee is charged on the repost regardless. Docs already warn providers about fee accumulation during setup.
+**Problem:** Changing bid price requires a full `postModelBid` repost, paying the mainnet **`0.3` MOR** fee on every price change (on Base Sepolia the fee is `0`). A separate `deleteModelBid` is *not* required — `postModelBid` deletes the provider's prior active bid for that model in the same transaction once the provider->model nonce is non-zero (`Marketplace.sol:93-98`) — but the fee is charged on the repost regardless. Docs already warn providers about fee accumulation during setup.
 
 **Proposal:**
 
