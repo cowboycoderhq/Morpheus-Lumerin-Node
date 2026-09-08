@@ -31,7 +31,7 @@ func TestListSessionsOrderQueryString(t *testing.T) {
 		wantQuery string
 	}{
 		{
-			name:      "no --order flag: omit the parameter, matching the pre-pagination CLI's wire behaviour",
+			name:      "no --order flag: omit the parameter, so the server applies the default the pre-pagination CLI relied on",
 			order:     "",
 			wantQuery: "user=0xabc&offset=0&limit=10",
 		},
@@ -79,7 +79,7 @@ func TestListProviderSessionsOrderQueryString(t *testing.T) {
 		wantQuery string
 	}{
 		{
-			name:      "no --order flag: omit the parameter, matching the pre-pagination CLI's wire behaviour",
+			name:      "no --order flag: omit the parameter, so the server applies the default the pre-pagination CLI relied on",
 			order:     "",
 			wantQuery: "provider=0xdef&offset=0&limit=10",
 		},
