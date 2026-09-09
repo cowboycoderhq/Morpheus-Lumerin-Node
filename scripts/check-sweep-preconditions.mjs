@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // check-sweep-preconditions.mjs — standalone. Run by hand:
-//   node scripts/check-sweep-preconditions.mjs                   (repo root; exit 1 on violations)
+//   node scripts/check-sweep-preconditions.mjs                   (repo root; exit 1 on violations, 2 could-not-run)
 //   node scripts/check-sweep-preconditions.mjs --info            (also list out-of-scope mentions)
 //   node scripts/check-sweep-preconditions.mjs --selftest        (gate the gate; corpus-independent)
 //   node scripts/check-sweep-preconditions.mjs --verify-fixtures (fixture provenance vs the tree)
@@ -97,6 +97,33 @@
 //     claim in it was listed forever and could fail nothing. It is hand-written
 //     prose an integrator reads and cites; neither exclusion reason applied.
 //
+//   * ui-desktop/**. The fourth instance of the identical hole, found by looking
+//     for it deliberately rather than by it failing: `ui-desktop` has been in
+//     SCAN_ROOTS since this file was written, and walk() admitted none of the
+//     extensions its source uses. Nineteen files (a package.json, a tsconfig, a
+//     yml) were read; the 437 .jsx/.tsx/.ts/.js files holding every sentence the
+//     desktop app paints on screen were not. `PASS: 0` was never evidence about
+//     the UI at any wording, exactly as it was never evidence about
+//     smart-contracts/docs. See the ui units section for the three JSX text
+//     kinds and which of them is in scope.
+//
+// WHAT THE UI LEG STILL CANNOT SEE, stated so the gap is on the record:
+//   * ATTRIBUTE strings. `title="..."`, `placeholder=`, `aria-label=`, `alt=`
+//     are human-facing and are NOT cut into units -- only children text and
+//     literals inside a children expression container are. Measured before
+//     accepting the gap: zero attribute strings in ui-desktop/src match
+//     /automatic|returns|swept|comes back/ today, so the omission costs nothing
+//     in this corpus and would cost something in another.
+//   * .mjs. ui-desktop/tools/ui-verify/run.mjs is a test harness and is neither
+//     walked nor in scope; its assertions about UI copy are invisible here.
+//   * The JSX reader is a MASK AND A TAG SCANNER, not a parser. It decides
+//     whether `<` opens a tag from the preceding token, so a construct that
+//     breaks that heuristic loses a subtree silently. The forms that were
+//     actually tried -- TS generics, comparisons, `return <Tag>`, an apostrophe
+//     in text, a `//` inside a string, a styled-components template -- are each
+//     pinned in legWiring so a later refactor cannot quietly drop one. Forms
+//     nobody tried are not covered by that and are not claimed to be.
+//
 // Mermaid node labels joined the frontmatter tier for the same structural
 // reason — see DICTATES_ASSERTIONS, which also records where the line is drawn
 // and what was measured before drawing it.
@@ -161,6 +188,15 @@ const GO_SOURCE_ROOTS = [
 const IS_SCANNED_GO = (rel) =>
   /\.go$/.test(rel) && GO_SOURCE_ROOTS.some((r) => rel === r || rel.startsWith(r + sep));
 
+// The UI source whose rendered strings are scanned. Bounded to `src/` on purpose:
+// `ui-desktop/tools/**` and `ui-desktop/scripts/**` are test harnesses and build
+// scripts whose strings are read by a developer running them, not by a user --
+// the same reader distinction that keeps a Go comment out of scope. They are
+// still walked, so they appear under --info and the enumeration stays complete.
+const UI_SOURCE_ROOTS = [`ui-desktop${sep}src`];
+const IS_SCANNED_UI = (rel) =>
+  /\.(jsx|tsx|ts|js)$/.test(rel) && UI_SOURCE_ROOTS.some((r) => rel === r || rel.startsWith(r + sep));
+
 // `kind` may be a sub-unit kind ("frontmatter/bold-lead"); scope and tier are
 // decided by the kind it was cut from.
 const baseKind = (k) => String(k ?? 'para').split('/')[0];
@@ -171,7 +207,12 @@ const baseKind = (k) => String(k ?? 'para').split('/')[0];
 // without having chosen to read documentation at all. So printed strings in the
 // scanned Go packages are IN scope; comments in the very same file are not.
 const IN_SCOPE = (rel, kind) =>
-  PROSE_IN_SCOPE(rel) || (baseKind(kind) === 'go-log-string' && IS_SCANNED_GO(rel));
+  PROSE_IN_SCOPE(rel)
+  || (baseKind(kind) === 'go-log-string' && IS_SCANNED_GO(rel))
+  // A string the app PAINTS is the same case one screen further out: the user is
+  // reading it about their own balance, having chosen no documentation at all.
+  // A JSX comment beside it stays INFO, exactly as a Go comment does.
+  || (baseKind(kind) === 'ui-rendered' && IS_SCANNED_UI(rel));
 
 // Text that dictates what an AI assistant ASSERTS, rather than describing a
 // mechanism to a human. In these, a bare "it is swept back" is itself a
@@ -212,6 +253,11 @@ const IN_SCOPE = (rel, kind) =>
 const DICTATES_ASSERTIONS = (rel, kind) =>
   baseKind(kind) === 'frontmatter'
   || baseKind(kind) === 'mermaid-line'
+  // A RENDERED UI STRING, for the mermaid reason and no other: it is painted into
+  // a box that removes the page, with no adjacent sentence a qualifier could sit
+  // in, and it is a promise about the reader's own money rather than a component
+  // inventory. See the ui units header.
+  || baseKind(kind) === 'ui-rendered'
   || ['AGENTS.md', 'CLAUDE.md'].includes(rel)
   || rel.startsWith(`.cursor${sep}rules${sep}`)
   || rel.startsWith(`docs${sep}ai${sep}`);   // the whole agent-facing tree: these
@@ -552,29 +598,38 @@ function classifyLock(body) {
   };
 }
 
-function classify(body, { agentFile }) {
-  if (!SUBJECT.test(body)) return null;
+// `ui` switches three things and nothing else: the Class A cue list gains the two
+// rendered-only forms, the subject may be satisfied by the enclosing element's
+// SOURCE, and the qualifier window is the on-screen window computed by jsxUnits
+// rather than a character window inside the unit. COND_WALLET is treated as
+// discharged -- see the ui units header for why that is a property of the surface
+// and not a concession.
+function classify(body, { agentFile, ui, uiWindow, uiSource } = {}) {
+  const ASR = ui ? ASSERTS_SWEEP_UI : ASSERTS_SWEEP;
+  if (ui ? !(SUBJECT.test(body) || SUBJECT_UI.test(uiSource ?? body)) : !SUBJECT.test(body)) return null;
 
   // Class L is decided first and independently of agentFile: a false statement
   // about the contract is false on a human page too.
   const lock = classifyLock(body);
   if (lock) return lock;
 
+  const winOf = (h) => (ui ? (uiWindow ?? body) : windowAt(body, h.index));
+
   const exc = cueHits(EXCULPATORY, body);
-  const asr = cueHits(ASSERTS_SWEEP, body);
+  const asr = cueHits(ASR, body);
   const sole = cueHits(SOLE_REMEDY, body)
     .filter((h) => !precededBy(body, h, PROSCRIBED_BEFORE))
     .filter((h) => !(NEG_SENSITIVE.has(h.name) && precededBy(body, h, NEGATED_BEFORE)))
-    .filter((h) => any(FALLBACK_CTX, windowAt(body, h.index)));
+    .filter((h) => any(FALLBACK_CTX, winOf(h)));
 
   // A claim is discharged only by a qualifier inside its own window.
   const liveEA = [...exc, ...asr].filter((h) => {
-    const w = windowAt(body, h.index);
-    return !(any(COND_NODE, w) && any(COND_WALLET, w));
+    const w = winOf(h);
+    return !(any(COND_NODE, w) && (ui || any(COND_WALLET, w)));
   });
   const liveExc = liveEA.filter((h) => EXCULPATORY.some(([n]) => n === h.name));
-  const liveAsr = liveEA.filter((h) => ASSERTS_SWEEP.some(([n]) => n === h.name));
-  const liveSole = sole.filter((h) => !any(COND_START, windowAt(body, h.index)));
+  const liveAsr = liveEA.filter((h) => ASR.some(([n]) => n === h.name));
+  const liveSole = sole.filter((h) => !any(COND_START, winOf(h)));
 
   // Nothing survived: either no cue fired, or every cue that did fire had its
   // qualifier inside its own window. Both are "clean".
@@ -583,19 +638,24 @@ function classify(body, { agentFile }) {
   const names = (hs) => [...new Set(hs.map((h) => h.name))];
   const missing = [];
   if (liveExc.length || liveAsr.length) {
-    const w = liveEA.map((h) => windowAt(body, h.index)).join(' ');
-    const node = any(COND_NODE, w), wallet = any(COND_WALLET, w);
+    const w = liveEA.map(winOf).join(' ');
+    const node = any(COND_NODE, w), wallet = ui || any(COND_WALLET, w);
     missing.push([!node && 'NODE', !wallet && 'WALLET'].filter(Boolean).join('+'));
   }
   if (liveSole.length) missing.push('START');
 
+  // `at` carries the cue OFFSETS, not only the names. A JSX unit is assembled
+  // from fragments on different source lines, so without offsets every finding
+  // in a multi-line rendered block reports the first line of the block and the
+  // report cannot say WHICH string is wrong.
   const cues = names([...liveExc, ...liveAsr, ...liveSole]);
+  const at = [...liveExc, ...liveAsr, ...liveSole].map((h) => ({ name: h.name, index: h.index }));
   if (liveSole.length) {
-    return { verdict: 'violation', cues, missing: missing.join(','), note: 'sole-remedy: the manual call is not the only route' };
+    return { verdict: 'violation', cues, at, missing: missing.join(','), note: 'sole-remedy: the manual call is not the only route' };
   }
-  if (liveExc.length) return { verdict: 'violation', cues, missing: missing.join(',') };
-  if (agentFile) return { verdict: 'violation', cues, missing: missing.join(','), note: 'agent-instruction file' };
-  return { verdict: 'info', cues, missing: missing.join(','), why: 'describes the mechanism; no exculpatory clause' };
+  if (liveExc.length) return { verdict: 'violation', cues, at, missing: missing.join(',') };
+  if (agentFile) return { verdict: 'violation', cues, at, missing: missing.join(','), note: 'agent-instruction file' };
+  return { verdict: 'info', cues, at, missing: missing.join(','), why: 'describes the mechanism; no exculpatory clause' };
 }
 
 // ------------------------------------------------------------- go units ----
@@ -707,10 +767,312 @@ function goUnits(text) {
   return out.sort((a, b) => a.start - b.start);
 }
 
+// ------------------------------------------------------------- ui units ----
+// `ui-desktop` has been in SCAN_ROOTS since this checker was written, but walk()
+// admitted only .md .mdx .mdc .yml .yaml .json .go -- so the directory was
+// SCANNED AND NEVER IN SCOPE, the identical structural hole this file records
+// having closed for smart-contracts/docs. Nineteen files (package.json,
+// tsconfig, a yml) were read; the 407 .jsx/.tsx/.ts files that contain every
+// sentence a user of the app actually reads were not. `PASS: 0` was therefore
+// never evidence about the desktop UI at any wording.
+//
+// JSX prose has THREE text kinds and they do not share a reader:
+//
+//   ui-rendered   text the app PAINTS ON SCREEN -- bare JSX children text, and
+//                 string/template literals inside a JSX expression container in
+//                 children position. IN_SCOPE, and the high-stakes kind: this is
+//                 the sentence a user reads next to their own balance.
+//   ui-comment    `{/* ... */}`, `// ...` and `/* ... */`. Read by whoever is
+//                 already editing the component. INFO, exactly like go-comment.
+//   (attributes)  className, data-testid, styled-component CSS. Not prose at
+//                 all; never cut into a unit, but the element's SOURCE is used
+//                 as subject context (see SUBJECT_UI) because `onHoldLines` and
+//                 `lock.unlockAt` are how a JSX subtree says what it is about.
+//
+// A RENDERED STRING CARRIES THE ASSERTION-DICTATING TIER, and the reason is the
+// one DICTATES_ASSERTIONS already gives for a mermaid node label: it is rendered
+// into a place that REMOVES the page. "Returns automatically" sits in a tile
+// beside "On Hold  12.4 MOR". There is no adjacent sentence a qualifier could
+// live in, the user did not choose to read documentation, and the box is not a
+// component inventory -- it is a promise about the reader's own money. So a bare
+// Class A assertion is a violation here, where on a human prose page it is INFO.
+//
+// THE WALLET LEG IS DISCHARGED BY CONSTRUCTION IN THIS SURFACE, and only here.
+// Fact 2 (the claimer withdraws for GetMyAddress alone) cannot strand a reader
+// of this app: ui-desktop/src/main/orchestrator/** spawns and owns the
+// proxy-router, and every balance the renderer shows is that node's own wallet.
+// Requiring COND_WALLET of a UI string would be requiring text to disclaim a
+// case the surface cannot produce -- a gate firing on something unfixable, which
+// is how a gate gets switched off. COND_NODE is NOT discharged: the app can be
+// quit, and then nothing sweeps. That is the whole finding.
+
+// The subject test for a UI unit. Rendered text alone is too thin to carry it --
+// "Returns automatically" names nothing -- so the enclosing element's SOURCE
+// counts as subject evidence. Identifiers cannot themselves produce a cue hit,
+// so widening here can only add candidate units, never invent a claim.
+const SUBJECT_UI = /\bstakes?\b|\bstaking\b|\bstaked\b|stakesOnHold|onHold|on-hold|lockedWei|unlockAt|releaseAt|StakeClaimer|withdrawUserStakes|day-?lock/i;
+
+// Class A cues for RENDERED text only. Two forms the prose cue set does not
+// reach, both measured live in this tree:
+//   RETURN_TO_WALLET  "Returning to your wallet now" -- SWEPT_BACK's verb list
+//                     has `returns?|returned` and no participle, so the one
+//                     string on the On Hold tile that names the destination
+//                     tripped nothing at all.
+//   UNAIDED_RETURN    "each one returns at the end of the day it closes" -- a
+//                     bare intransitive `returns` with no destination and no
+//                     adverb. In PROSE this cue would be unusable: the corpus
+//                     note above ASSERTS_SWEEP records that widening the verb
+//                     list took the scan 0 -> 4 violations on sentences about
+//                     what the CLOSE transaction returns and on a quoted user
+//                     complaint. Rendered UI text has neither shape, which is
+//                     why the cue is scoped to it and not promoted. Measured
+//                     across all 407 UI source files before adopting.
+const ASSERTS_SWEEP_UI = [
+  ...ASSERTS_SWEEP,
+  ['RETURN_TO_WALLET', /\b(return|returns|returned|returning|comes?|coming|came|back)\b[^.;:]{0,40}?\bto (your|the) wallet\b/i],
+  ['UNAIDED_RETURN',   /\b(returns|returning|return)\b(?![^.;:]{0,20}\b(in the close|at close|in the same txn)\b)[^.;:]{0,60}?\b(at the end of|after|once|when|automatically|on its own)\b/i],
+];
+
+// jsxMask blanks every string body and comment body in place, preserving
+// offsets, exactly as goMask does -- so a `<` inside a string cannot open a tag
+// and a `//` inside a string cannot start a comment.
+//
+// Two deliberate deviations from goMask, both forced by JSX:
+//   * an apostrophe in JSX TEXT ("It's locked") is not a string opener. A quote
+//     only opens a literal when the previous non-space character is not a word
+//     character, and an unterminated quote at end-of-line is abandoned rather
+//     than swallowing the rest of the file.
+//   * a TAGGED template (styled.div`...`) is masked but NOT recorded as a
+//     string: styled-components CSS is not prose, and recording it would put a
+//     stylesheet into the rendered-text stream.
+function jsxMask(text) {
+  const out = text.split('');
+  const strings = [], comments = [];
+  const n = text.length;
+  const blank = (a, b) => { for (let k = a; k < b && k < n; k++) if (out[k] !== '\n') out[k] = ' '; };
+  const wordch = /[A-Za-z0-9_$)\]`]/;
+  let i = 0;
+  while (i < n) {
+    const c = text[i];
+    if (c === '/' && text[i + 1] === '/') {
+      let j = text.indexOf('\n', i); if (j < 0) j = n;
+      comments.push({ start: i, end: j, value: text.slice(i + 2, j) });
+      blank(i, j); i = j; continue;
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      let j = text.indexOf('*/', i + 2); j = j < 0 ? n : j + 2;
+      comments.push({ start: i, end: j, value: text.slice(i + 2, j - 2), block: true });
+      blank(i, j); i = j; continue;
+    }
+    if (c === '"' || c === "'") {
+      let k = i - 1; while (k >= 0 && /[ \t]/.test(text[k])) k--;
+      if (k >= 0 && /[A-Za-z0-9_]/.test(text[k])) { i++; continue; }   // don't / it's
+      let j = i + 1, v = '';
+      while (j < n && text[j] !== c && text[j] !== '\n') {
+        if (text[j] === '\\') { v += ' '; j += 2; continue; }
+        v += text[j]; j++;
+      }
+      if (j >= n || text[j] === '\n') { i++; continue; }               // unterminated
+      const end = j + 1;
+      strings.push({ start: i, end, value: v });
+      blank(i, end); i = end; continue;
+    }
+    if (c === '`') {
+      let k = i - 1; while (k >= 0 && /\s/.test(text[k])) k--;
+      const tagged = k >= 0 && wordch.test(text[k]);
+      let j = i + 1, v = '';
+      while (j < n) {
+        if (text[j] === '\\') { v += ' '; j += 2; continue; }
+        if (text[j] === '$' && text[j + 1] === '{') {
+          let d = 1; j += 2; v += ' ';
+          while (j < n && d > 0) { if (text[j] === '{') d++; else if (text[j] === '}') d--; if (d) j++; }
+          j++; continue;
+        }
+        if (text[j] === '`') break;
+        v += text[j]; j++;
+      }
+      const end = Math.min(j + 1, n);
+      if (!tagged) strings.push({ start: i, end, value: v });
+      blank(i, end); i = end; continue;
+    }
+    i++;
+  }
+  return { masked: out.join(''), strings, comments };
+}
+
+// A '<' opens a JSX tag unconditionally when we are already inside JSX CHILDREN
+// (an element is open and brace depth is 0): a comparison there would have to
+// sit inside an expression container. Everywhere else it must be in expression
+// position -- after an identifier it is a comparison or a TS generic
+// (`useState<Foo>`, `Array<string>`, `a < b`), never a tag. Getting this wrong
+// in the safe direction costs a spurious element with no text; getting it wrong
+// in the other direction loses a subtree, which is why legWiring asserts the
+// generic and comparison forms explicitly.
+const TAG_PREV_OK = /[({[>,=;?&|!+\n]|^$/;
+// ...and after a keyword. `return <Panel/>` is the single most common JSX form in
+// this tree and its preceding character is `n`, which TAG_PREV_OK rejects. Tested
+// in legWiring both ways: the keyword must open a tag, a bare identifier must not.
+const TAG_PREV_KEYWORD = /(?:^|[^\w$])(return|case|await|yield|typeof|void|delete|else|do|of|in)$/;
+
+function jsxTree(text) {
+  const { masked, strings, comments } = jsxMask(text);
+  const n = masked.length;
+  const root = { name: '#root', openStart: 0, openEnd: 0, closeStart: text.length, closeEnd: text.length,
+                 children: [], parent: null, depth: 0 };
+  let cur = root, brace = 0, i = 0;
+  while (i < n) {
+    const c = masked[i];
+    if (c === '{') { brace++; i++; continue; }
+    if (c === '}') { if (brace > 0) brace--; i++; continue; }
+    if (c !== '<') { i++; continue; }
+    const nx = masked[i + 1];
+    if (!nx || !/[A-Za-z/>]/.test(nx)) { i++; continue; }
+    if (!(cur !== root && brace === 0) && nx !== '/') {
+      let k = i - 1; while (k >= 0 && /\s/.test(masked[k])) k--;
+      if (!TAG_PREV_OK.test(k >= 0 ? masked[k] : '\n')
+          && !TAG_PREV_KEYWORD.test(masked.slice(Math.max(0, k - 12), k + 1))) { i++; continue; }
+    }
+    let j = i + 1;
+    const closing = masked[j] === '/';
+    if (closing) j++;
+    const nm = /^[A-Za-z][\w.$:-]*/.exec(masked.slice(j, j + 120));
+    const name = nm ? nm[0] : '';
+    if (!name && masked[j] !== '>') { i++; continue; }        // neither <Tag nor <> / </>
+    j += name.length;
+    let d = 0, end = -1;
+    while (j < n) {
+      const ch = masked[j];
+      if (ch === '{') d++;
+      else if (ch === '}') d--;
+      else if (ch === '>' && d === 0) { end = j + 1; break; }
+      else if (ch === '<' && d === 0) break;                  // ran into another '<': not a tag
+      j++;
+    }
+    if (end < 0) { i++; continue; }
+    if (closing) {
+      let up = cur;
+      while (up && up !== root && up.name !== name) up = up.parent;
+      if (up && up !== root) { up.closeStart = i; up.closeEnd = end; cur = up.parent; brace = up.savedBrace; }
+      i = end; continue;
+    }
+    const selfClosing = masked[end - 2] === '/';
+    const el = { name, openStart: i, openEnd: end, closeStart: end, closeEnd: end,
+                 children: [], parent: cur, depth: cur.depth + 1, selfClosing };
+    cur.children.push(el);
+    if (!selfClosing) { el.savedBrace = brace; cur = el; brace = 0; }
+    i = end;
+  }
+  return { root, masked, strings, comments };
+}
+
+// Rendered fragments owned DIRECTLY by `el` -- the gaps between its open tag and
+// its children and its close tag. Bare text comes from the raw source (so an
+// apostrophe survives); text inside a `{...}` container contributes only the
+// string literals it holds, which is what `{cond ? 'A' : 'B'}` actually paints.
+function jsxOwnFrags(el, text, masked, strings, lineOf) {
+  const frags = [];
+  const gaps = [];
+  let a = el.openEnd;
+  for (const c of el.children) { gaps.push([a, c.openStart]); a = c.closeEnd; }
+  gaps.push([a, el.closeStart]);
+  for (const [s, e] of gaps) {
+    if (e <= s) continue;
+    let i = s;
+    while (i < e) {
+      if (masked[i] === '{') {
+        let d = 0, j = i;
+        while (j < e) { if (masked[j] === '{') d++; else if (masked[j] === '}') { d--; if (!d) { j++; break; } } j++; }
+        for (const st of strings) {
+          if (st.start >= i && st.end <= j && st.value.trim()) frags.push({ line: lineOf(st.start), text: st.value.trim() });
+        }
+        i = j; continue;
+      }
+      let j = i;
+      while (j < e && masked[j] !== '{') j++;
+      let off = i;
+      for (const piece of text.slice(i, j).split('\n')) {
+        if (piece.trim()) frags.push({ line: lineOf(off), text: piece.trim() });
+        off += piece.length + 1;
+      }
+      i = j;
+    }
+  }
+  return frags;
+}
+
+const fragBody = (frags) => frags.map((f) => f.text).join(' ');
+
+// One unit per element that OWNS rendered text. Body is its own text only, so a
+// cue can never be counted twice up the ancestor chain; the qualifier window is
+// widened separately (see jsxUnits below), which is the JSX form of CLAIM_WINDOW:
+// what a qualifier has to be on the same SCREEN as, not merely in the same file.
+function jsxUnits(text) {
+  const { root, masked, strings, comments } = jsxTree(text);
+  const starts = [0];
+  for (let k = 0; k < text.length; k++) if (text[k] === '\n') starts.push(k + 1);
+  const lineOf = (off) => {
+    let lo = 0, hi = starts.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (starts[m] <= off) lo = m; else hi = m - 1; }
+    return lo + 1;
+  };
+
+  const out = [];
+  const visit = (el) => {
+    el.own = jsxOwnFrags(el, text, masked, strings, lineOf);
+    for (const c of el.children) visit(c);
+    el.sub = [...el.own];
+    for (const c of el.children) el.sub.push(...c.sub);
+    el.sub.sort((a, b) => a.line - b.line);
+  };
+  visit(root);
+
+  // `root` owns every byte outside a JSX element -- imports, hooks, statements.
+  // It is not something the app paints, so it never becomes a unit.
+  const emit = (el) => {
+    if (el !== root && el.own.length) {
+      // The qualifier window: climb while the ancestor's whole rendered subtree
+      // still fits in CLAIM_WINDOW. That ancestor's rendered text is what a
+      // qualifier must live in to reach the claim, and its SOURCE is the subject
+      // context. Beyond CLAIM_WINDOW a qualifier is on a different part of the
+      // screen and does not travel with the claim -- the same bound, and the
+      // same reason, as the prose case.
+      let win = el;
+      while (win.parent && win.parent !== root
+             && fragBody(win.parent.sub).length <= CLAIM_WINDOW) win = win.parent;
+      const body = fragBody(el.own);
+      out.push({
+        kind: 'ui-rendered', start: el.own[0].line, end: el.own[el.own.length - 1].line,
+        lines: [body], body,
+        frags: el.own,
+        window: fragBody(win.sub),
+        source: text.slice(win.openStart, win.closeEnd),
+      });
+    }
+    for (const c of el.children) emit(c);
+  };
+  emit(root);
+
+  // comments: contiguous // lines are one block; a /* */ (which is what a
+  // {/* ... */} JSX comment reduces to) is one on its own
+  let cur = null;
+  const flush = () => { if (cur && cur.lines.some((l) => l.trim())) out.push(cur); cur = null; };
+  for (const c of comments) {
+    const ln = lineOf(c.start);
+    if (c.block) { flush(); out.push({ kind: 'ui-comment', start: ln, end: lineOf(c.end), lines: [c.value] }); continue; }
+    if (cur && ln === cur.end + 1) { cur.lines.push(c.value); cur.end = ln; continue; }
+    flush();
+    cur = { kind: 'ui-comment', start: ln, end: ln, lines: [c.value] };
+  }
+  flush();
+
+  return out.sort((a, b) => a.start - b.start);
+}
+
 // ---------------------------------------------------------------- units ----
 // Split a document into the spans a reader can encounter on their own.
 function units(text, ext = 'md') {
   if (ext === 'go') return goUnits(text);
+  if (['jsx', 'tsx', 'ts', 'js'].includes(ext)) return jsxUnits(text);
   const lines = text.split('\n');
   const out = [];
   let cur = null;
@@ -783,7 +1145,7 @@ function units(text, ext = 'md') {
 // line. It has to carry its own qualifier, so it is classified as a unit too.
 const BOLD_LEAD = /^(?:\s*(?:[-*+]|\d+\.)\s+)?\*\*([^*][\s\S]{38,}?)\*\*(?=[\s.,;:]|$)/;
 function subUnits(u) {
-  const body = u.lines.join(' ');
+  const body = u.body ?? u.lines.join(' ');
   const out = [{ ...u, body }];
   const m = BOLD_LEAD.exec(body.trim());
   if (m && m[1].length + 4 < body.trim().length) {
@@ -798,7 +1160,7 @@ function walk(p, acc) {
   if (st.isDirectory()) {
     if (/(^|\/)(node_modules|\.git|dist|build)$/.test(p)) return acc;
     for (const e of readdirSync(p)) walk(join(p, e), acc);
-  } else if (/\.(mdx?|mdc|ya?ml|json|go)$/.test(p)) acc.push(p);
+  } else if (/\.(mdx?|mdc|ya?ml|json|go|jsx|tsx|ts|js)$/.test(p)) acc.push(p);
   return acc;
 }
 
@@ -820,14 +1182,22 @@ function scan(root) {
     // File-level count, kept as the coarse "did the walk reach real prose"
     // signal the pipeline leg asserts on. Per-unit scope is decided below.
     if (PROSE_IN_SCOPE(rel)) scannedInScope++;
-    if (!SUBJECT.test(text)) continue;
     const ext = abs.slice(abs.lastIndexOf('.') + 1).toLowerCase();
+    const isUi = ['jsx', 'tsx', 'ts', 'js'].includes(ext);
+    // File-level prefilter. A UI file has to be allowed in on SUBJECT_UI too, or
+    // the widening is undone one line above the code that implements it: no
+    // rendered string in this app contains the word "StakeClaimer".
+    if (!SUBJECT.test(text) && !(isUi && SUBJECT_UI.test(text))) continue;
 
     for (const u of units(text, ext)) {
       for (const su of subUnits(u)) {
         const body = su.body;
-        if (!SUBJECT.test(body)) continue;
-        const c = classify(body, { agentFile: DICTATES_ASSERTIONS(rel, su.kind) });
+        const ui = su.kind === 'ui-rendered';
+        if (!ui && !SUBJECT.test(body)) continue;
+        const c = classify(body, {
+          agentFile: DICTATES_ASSERTIONS(rel, su.kind),
+          ui, uiWindow: su.window, uiSource: su.source,
+        });
         if (!c) continue;
         // A Go COMMENT is INFO for the sweep classes, and the reason is about the
         // reader: a comment describes a mechanism to whoever is already editing
@@ -847,9 +1217,24 @@ function scan(root) {
         const inScope = IN_SCOPE(rel, su.kind)
           || (c.missing === 'ANCHOR' && baseKind(su.kind) === 'go-comment' && IS_SCANNED_GO(rel));
 
+        // Attribute each cue to the source line of the FRAGMENT it landed in.
+        // For md/go there is one line span and this is a no-op; for a JSX unit
+        // it is the difference between "somewhere in this 12-line block" and
+        // Dashboard.jsx:676.
+        let cueLines = null;
+        if (su.frags && c.at && c.at.length) {
+          const bounds = []; let off = 0;
+          for (const f of su.frags) { bounds.push([off, off + f.text.length, f.line]); off += f.text.length + 1; }
+          const ls = new Set();
+          for (const h of c.at) {
+            const b = bounds.find(([a, z]) => h.index >= a && h.index < z) ?? bounds[bounds.length - 1];
+            if (b) ls.add(b[2]);
+          }
+          cueLines = [...ls].sort((a, b) => a - b);
+        }
         const rec = {
           file: rel, line: su.start, endLine: su.end ?? su.start, kind: su.kind,
-          cues: c.cues, missing: c.missing, note: c.note,
+          cueLines, cues: c.cues, missing: c.missing, note: c.note,
           excerpt: body.replace(/\s+/g, ' ').trim().slice(0, 200),
         };
 
@@ -1147,6 +1532,57 @@ const FIXTURE_TREE = {
     + '  Hold --> Claim["6. StakeClaimer auto-sweep after releaseAt"]\n'
     + '```\n',
 
+  // --- ui-desktop. The three JSX text kinds in one place. ---
+  // A rendered STRING LITERAL inside a children expression container, which is
+  // what a ternary paints, plus a JSX comment carrying the SAME defect one line
+  // above it. A mutation that collapses the two kinds breaks one of the two
+  // assertions whichever way it collapses them -- the Go fixture's property,
+  // transplanted, because the failure it guards against is the same one.
+  'ui-desktop/src/renderer/fx-tile.jsx':
+    'export function FxTile({ onHoldMor }) {\n'
+    + '  return (\n'
+    + '    <StatCard data-testid="stakes-on-hold-tile">\n'
+    + '      <StatLabel>On Hold</StatLabel>\n'
+    + '      {/* The stake is swept back to the wallet automatically, so no manual claim is needed. */}\n'
+    + "      <StatSub>{onHoldMor ? 'Returns automatically' : 'Returning to your wallet now'}</StatSub>\n"
+    + '    </StatCard>\n'
+    + '  );\n'
+    + '}\n',
+
+  // BARE JSX CHILDREN TEXT spanning two lines -- not a string literal at all,
+  // which is the form three of the four live findings actually take. Pins the
+  // fragment offset map too: the cue is on line 5, the unit starts on line 4,
+  // and legPipeline asserts the report says 5.
+  'ui-desktop/src/renderer/fx-multiline.tsx':
+    'export function FxMulti() {\n'
+    + '  return (\n'
+    + '    <StakeNote>\n'
+    + '      Your stake is collateral, not a fee. It is locked until the end of the\n'
+    + '      day the session closes, then returns automatically.\n'
+    + '    </StakeNote>\n'
+    + '  );\n'
+    + '}\n',
+
+  // Qualified with the NODE condition -> no finding. The wallet leg is not
+  // required here and this fixture is what says so: if COND_WALLET were ever
+  // demanded of a UI string again, this clean case becomes a violation.
+  'ui-desktop/src/renderer/fx-clean.tsx':
+    'export function FxClean() {\n'
+    + '  return (\n'
+    + '    <StakeNote>\n'
+    + '      Your stake is locked until the end of the day, then returns automatically\n'
+    + '      - but only while this app is running a proxy-router.\n'
+    + '    </StakeNote>\n'
+    + '  );\n'
+    + '}\n',
+
+  // ui-desktop/tools/** is a developer harness: scanned, listed, out of scope.
+  // Same defect as fx-tile, and it must land in INFO and never in violations.
+  'ui-desktop/tools/fx-tool.tsx':
+    'export function FxTool() {\n'
+    + '  return <StakeNote>Your stake returns automatically after the day-lock.</StakeNote>;\n'
+    + '}\n',
+
   // out of scope: same defect, must land in info and NEVER in violations
   'verify/fx-audit.md':
     '# Fixture audit\n\n'
@@ -1171,6 +1607,8 @@ const FIXTURE_EXPECTED = [
   'proxy-router/internal/proxyctl/fx_proxyctl.go:4',
   'smart-contracts/docs/fx-rfp.md:3',
   'smart-contracts/docs/fx-rfp.md:3/bold-lead',
+  'ui-desktop/src/renderer/fx-tile.jsx:6',
+  'ui-desktop/src/renderer/fx-multiline.tsx:4',
 ];
 
 function writeTree(dir, tree) {
@@ -1242,6 +1680,31 @@ function legPipeline(fail) {
     }
     const scRel = 'smart-contracts/docs/fx-rfp.md'.split('/').join(sep);
     if (!r.violations.some((v) => v.file === scRel)) fail('pipeline: smart-contracts/docs produced no violation - it is scanned but out of scope again');
+
+    // --- ui-desktop, the three text kinds and the scope line between them ---
+    const uiTile = 'ui-desktop/src/renderer/fx-tile.jsx'.split('/').join(sep);
+    if (!r.violations.some((v) => v.file === uiTile && v.kind === 'ui-rendered')) {
+      fail('pipeline: a rendered JSX string produced no violation - the UI extension filter, UI_SOURCE_ROOTS, jsxUnits or the ui-rendered scope leg is broken');
+    }
+    if (r.violations.some((v) => v.kind === 'ui-comment')) {
+      fail('pipeline: a JSX COMMENT was raised to a violation - the two UI readers were collapsed');
+    }
+    if (!r.info.some((v) => v.file === uiTile && v.kind === 'ui-comment')) {
+      fail('pipeline: the JSX comment produced no INFO record - jsxUnits never cut a comment unit');
+    }
+    const uiMulti = 'ui-desktop/src/renderer/fx-multiline.tsx'.split('/').join(sep);
+    const multi = r.violations.find((v) => v.file === uiMulti);
+    if (!multi) fail('pipeline: bare JSX children text produced no violation - only string literals are being read');
+    else if (!multi.cueLines || !multi.cueLines.includes(5) || multi.cueLines.includes(4)) {
+      fail(`pipeline: the cue line is wrong (got ${multi.cueLines}, want [5]) - the fragment offset map is broken, so every multi-line finding reports the wrong line`);
+    }
+    const uiClean = 'ui-desktop/src/renderer/fx-clean.tsx'.split('/').join(sep);
+    if (r.violations.some((v) => v.file === uiClean)) {
+      fail('pipeline: the NODE-qualified UI string was reported - either the on-screen window stopped reaching the qualifier, or COND_WALLET is being demanded of a surface that cannot fail it');
+    }
+    const uiTool = 'ui-desktop/tools/fx-tool.tsx'.split('/').join(sep);
+    if (r.violations.some((v) => v.file === uiTool)) fail('pipeline: ui-desktop/tools produced a VIOLATION - UI_SOURCE_ROOTS lost its bound');
+    if (!r.info.some((v) => v.file === uiTool)) fail('pipeline: ui-desktop/tools produced no INFO record either - it was not scanned at all');
     return got.length;
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
@@ -1342,6 +1805,111 @@ function legWiring(fail) {
     writeFileSync(join(goProbe, 'a.go'), 'package p\n');
     if (!walk(goProbe, []).some((p) => p.endsWith('a.go'))) fail('wiring: walk() no longer picks up .go');
   } finally { rmSync(goProbe, { recursive: true, force: true }); }
+
+  // --- ui-desktop wiring ---
+  if (!SCAN_ROOTS.includes('ui-desktop')) fail('wiring: SCAN_ROOTS no longer contains "ui-desktop"');
+  // The extension filter is the exact hole this extension closed: ui-desktop was
+  // in SCAN_ROOTS for the whole life of the checker and walk() admitted none of
+  // its source. Named one extension at a time so the failure says which one went.
+  const uiProbe = mkdtempSync(join(tmpdir(), 'sweep-ui-'));
+  try {
+    for (const n of ['a.jsx', 'b.tsx', 'c.ts', 'd.js']) writeFileSync(join(uiProbe, n), 'x\n');
+    writeFileSync(join(uiProbe, 'e.tsbuildinfo'), 'x\n');
+    const found = walk(uiProbe, []).map((f) => f.slice(f.lastIndexOf(sep) + 1));
+    for (const n of ['a.jsx', 'b.tsx', 'c.ts', 'd.js']) {
+      if (!found.includes(n)) fail(`wiring: walk() no longer picks up ${n} - ui-desktop is scanned-but-invisible again`);
+    }
+    if (found.includes('e.tsbuildinfo')) fail('wiring: walk() is picking up build artefacts');
+  } finally { rmSync(uiProbe, { recursive: true, force: true }); }
+
+  const uiSrc = join('ui-desktop', 'src', 'renderer', 'src', 'components', 'dashboard', 'Dashboard.jsx');
+  const uiTool = join('ui-desktop', 'tools', 'ui-verify', 'run.tsx');
+  if (!IS_SCANNED_UI(uiSrc)) fail('wiring: ui-desktop/src left UI_SOURCE_ROOTS - its rendered strings cannot be cut into units');
+  if (IS_SCANNED_UI(uiTool)) fail('wiring: ui-desktop/tools is inside UI_SOURCE_ROOTS - the harness bound is gone');
+  if (!IN_SCOPE(uiSrc, 'ui-rendered')) fail('wiring: a rendered UI string is out of scope - the UI leg is disabled');
+  if (IN_SCOPE(uiSrc, 'ui-comment')) fail('wiring: a JSX COMMENT is in scope - the two UI readers were collapsed');
+  if (IN_SCOPE(uiTool, 'ui-rendered')) fail('wiring: a developer harness string is in scope - UI_SOURCE_ROOTS lost its bound');
+  if (!DICTATES_ASSERTIONS(uiSrc, 'ui-rendered')) fail('wiring: a rendered UI string lost the assertion-dictating tier - a bare sweep promise on a tile is INFO again');
+  if (DICTATES_ASSERTIONS(uiSrc, 'ui-comment')) fail('wiring: the tier spread to JSX comments');
+
+  // jsxUnits must cut BOTH kinds out of one file, or the split above is theatre
+  const ju = jsxUnits("function f() {\n  return (\n    <A>\n      {/* swept back automatically, no manual claim needed */}\n      <B>{'swept back automatically'}</B>\n    </A>\n  );\n}\n");
+  const jk = ju.map((x) => x.kind);
+  for (const k of ['ui-comment', 'ui-rendered']) {
+    if (!jk.includes(k)) fail(`wiring: jsxUnits() no longer produces a "${k}" unit (got ${jk.join(',') || 'nothing'})`);
+  }
+  // `return <Tag>` -- the commonest JSX form, and its preceding character is `n`
+  if (!jsxUnits('function f() {\n  return <A>Returns automatically</A>;\n}\n').some((x) => x.kind === 'ui-rendered' && x.body.includes('Returns automatically'))) {
+    fail('wiring: `return <Tag>` is no longer read as a tag - TAG_PREV_KEYWORD is gone and most components render nothing');
+  }
+  // ...and a bare identifier before `<` must still NOT open one, or every
+  // comparison and TS generic in 400 files becomes an element
+  if (jsxUnits('const [a, b] = useState<Foo>(1);\nconst c = a < b ? 1 : 2;\nconst d: Array<string> = [];\n').some((x) => x.kind === 'ui-rendered')) {
+    fail('wiring: a TS generic or a comparison is being parsed as a JSX tag');
+  }
+  // sibling elements: if a closing tag stops being matched the second sibling
+  // owns nothing and its claim disappears silently
+  const sib = jsxUnits('function f() {\n  return (\n    <A>\n      <B>On Hold</B>\n      <C>Returns automatically</C>\n    </A>\n  );\n}\n')
+    .filter((x) => x.kind === 'ui-rendered');
+  if (sib.length !== 2 || !sib.some((x) => x.start === 5 && x.body === 'Returns automatically')) {
+    fail(`wiring: sibling JSX elements did not produce two separate units (got ${sib.map((x) => x.start + ':' + x.body).join(' | ')}) - the element tree is collapsing`);
+  }
+  // a ternary in children position paints both branches
+  const tern = jsxUnits("function f() {\n  return <A>{x ? 'Returns automatically' : 'Returning to your wallet now'}</A>;\n}\n")
+    .find((x) => x.kind === 'ui-rendered');
+  if (!tern || !/Returns automatically/.test(tern.body) || !/Returning to your wallet now/.test(tern.body)) {
+    fail('wiring: string literals inside a children expression container are not being read - the ternary form paints nothing');
+  }
+  // a `<` and a `//` inside a rendered string must not derail the tag scan
+  const jm = jsxUnits('function f() {\n  return <A>{"see http://x <b> y"}</A>;\n}\n');
+  if (!jm.some((x) => x.kind === 'ui-rendered' && x.body.includes('http://x <b> y'))) {
+    fail('wiring: jsxMask lost a string containing "//" or "<" - the mask is not masking');
+  }
+  if (jm.some((x) => x.kind === 'ui-comment')) fail('wiring: jsxMask treated a "//" INSIDE a string literal as a comment');
+  // An apostrophe in JSX TEXT is not a string opener. TWO of them on one line is
+  // the shape that matters: with one, an unterminated quote is abandoned at the
+  // newline and nothing is lost, so a one-apostrophe case cannot detect the guard
+  // being removed. With two, the text between them is masked away and the
+  // sentence the user reads is silently truncated.
+  // The discriminating shape is an apostrophe in TEXT and a real string literal
+  // LATER ON THE SAME LINE: the quote pairs across the closing tag, `</A>` is
+  // masked out of existence, the element tree collapses and two elements' text is
+  // served as one corrupted blob with raw markup in it. A single apostrophe
+  // cannot detect the guard being removed -- an unterminated quote is abandoned
+  // at the newline and nothing is lost, which is why the first version of this
+  // assertion passed against the sabotaged mask.
+  const apos = jsxUnits("function f() {\n  return (\n    <>\n      <A>It's locked</A>{' '}\n      <B>Returns automatically</B>\n    </>\n  );\n}\n")
+    .filter((x) => x.kind === 'ui-rendered').map((x) => `${x.start}:${x.body}`);
+  if (apos.join(' | ') !== "4:It's locked | 5:Returns automatically") {
+    fail(`wiring: an apostrophe in JSX text is being read as a string quote (got ${JSON.stringify(apos)})`);
+  }
+  // styled-components CSS is a TAGGED template: masked, never a rendered string
+  const styled = jsxUnits('const S = styled.div`color: red; content: "returns automatically";`;\nfunction f() {\n  return <A>ok</A>;\n}\n');
+  if (styled.some((x) => x.kind === 'ui-rendered' && /color: red/.test(x.body))) {
+    fail('wiring: a styled-components stylesheet entered the rendered-text stream');
+  }
+
+  // --- the UI classify lane ---
+  const uiOpt = (win) => ({ ui: true, agentFile: true, uiWindow: win, uiSource: 'onHoldLines' });
+  const bare = 'Returns automatically';
+  if (!classify(bare, uiOpt(bare))) fail('wiring: a bare sweep promise on a rendered tile is no longer a violation - the ui-rendered tier is off');
+  const qualified = 'Returns automatically - but only while this app is running a proxy-router.';
+  if (classify(qualified, uiOpt(qualified))) fail('wiring: a NODE-qualified rendered string is still a violation - the on-screen window stopped discharging');
+  if (classify(bare, { ui: true, agentFile: true, uiWindow: bare, uiSource: 'no subject here' })) {
+    fail('wiring: SUBJECT_UI is satisfied by text that names nothing - the subject gate inverted');
+  }
+  if (!classify('Returning to your wallet now', uiOpt('Returning to your wallet now'))) {
+    fail('wiring: RETURN_TO_WALLET is gone - the one string on the On Hold tile that names the destination trips nothing');
+  }
+  if (!classify('each one returns at the end of the day it closes', uiOpt('each one returns at the end of the day it closes'))) {
+    fail('wiring: UNAIDED_RETURN is gone - a bare intransitive return promise trips nothing');
+  }
+  // ...and the UI cues must stay OUT of the prose lane, where the header records
+  // that widening the verb list cost four false positives
+  if (classify('each one returns at the end of the day it closes and the stake is swept', { agentFile: true })
+      ?.cues?.includes('UNAIDED_RETURN')) {
+    fail('wiring: a rendered-only cue leaked into the prose lane');
+  }
 }
 
 function selftest() {
@@ -1449,9 +2017,30 @@ if (process.argv.includes('--verify-fixtures')) process.exit(verifyFixtures() ? 
 if (process.argv.includes('--selftest')) process.exit(selftest() ? 1 : 0);
 
 // ----------------------------------------------------------------- main ----
-const { violations, info, scanned, scannedInScope } = scan(ROOT);
+// Exit 2 is COULD-NOT-RUN, and it is a distinct code on purpose: a checker that
+// throws and exits non-zero is indistinguishable from a checker that found a
+// violation, so a broken gate reads as a failing tree and gets "fixed" by being
+// switched off. 0 = clean, 1 = violations, 2 = the gate did not run.
+let scanned_, scannedInScope_, violations_, info_;
+try {
+  ({ violations: violations_, info: info_, scanned: scanned_, scannedInScope: scannedInScope_ } = scan(ROOT));
+} catch (e) {
+  console.error(`COULD NOT RUN: ${e && e.stack ? e.stack : e}`);
+  process.exit(2);
+}
+const violations = violations_, info = info_, scanned = scanned_, scannedInScope = scannedInScope_;
+// Pointed at the wrong directory, walk() finds nothing, every loop below is empty
+// and the gate prints `PASS: 0 violation(s)` and exits 0. A gate that certifies a
+// directory it never read is worse than no gate, so being unable to find the
+// repo is COULD-NOT-RUN, not clean.
+for (const r of ['README.md', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md']) {
+  try { statSync(join(ROOT, r)); } catch {
+    console.error(`COULD NOT RUN: ${join(ROOT, r)} is missing - --root is not this repository`);
+    process.exit(2);
+  }
+}
 
-const fmt = (v) => `${v.file}:${v.line}${v.endLine > v.line ? `-${v.endLine}` : ''}  [${v.kind}] missing:${v.missing} cues:${v.cues.join(',')}${v.note ? ` (${v.note})` : ''}\n    ${v.excerpt}`;
+const fmt = (v) => `${v.file}:${v.line}${v.endLine > v.line ? `-${v.endLine}` : ''}${v.cueLines && (v.cueLines.length > 1 || v.cueLines[0] !== v.line) ? ` [cue at ${v.cueLines.join(',')}]` : ''}  [${v.kind}] missing:${v.missing} cues:${v.cues.join(',')}${v.note ? ` (${v.note})` : ''}\n    ${v.excerpt}`;
 
 console.log(`scanned ${scanned} file(s), ${scannedInScope} in scope`);
 console.log(`\nVIOLATIONS (${violations.length}):`);
