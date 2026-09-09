@@ -63,9 +63,15 @@ func (c *BlockchainController) RegisterRoutes(r interfaces.Router) {
 	// sessions
 	r.GET("/proxy/sessions/:id/providerClaimableBalance", c.authConf.CheckAuth("get_sessions"), c.getProviderClaimableBalance)
 	r.POST("/proxy/sessions/:id/providerClaim", c.authConf.CheckAuth("session_provider_claim"), c.claimProviderBalance)
-	// Stake time-locked by closing sessions EARLY. The Diamond has always had
-	// getUserStakesOnHold/withdrawUserStakes; nothing ever published them, so the
-	// money was invisible to the UI and unreachable by the user.
+	// Stake time-locked by closing a session before the end of the UTC day it ended in
+	// (any close, not only an early one - SessionRouter.sol:305 gates on
+	// block.timestamp < releaseAt_, with releaseAt_ from :296-298). The Diamond has always had
+	// getUserStakesOnHold/withdrawUserStakes, but no proxy-router surface called
+	// either until this route and the auto-claimer. withdrawUserStakes is external
+	// (SessionRouter.sol:435), so it was always callable on the Diamond directly;
+	// there is still no HTTP route for it here. The GET below is the read side, and
+	// StakeClaimer is the write side - but only while this node runs and only for the
+	// wallet it holds, so otherwise nothing sweeps until such a node runs.
 	r.GET("/blockchain/stakes/on-hold", c.authConf.CheckAuth("get_balance"), c.getStakesOnHold)
 	r.GET("/blockchain/sessions/user", c.authConf.CheckAuth("get_sessions"), c.getSessionsForUser)
 	r.GET("/blockchain/sessions/user/ids", c.authConf.CheckAuth("get_sessions"), c.getSessionsIdsForUser)
@@ -79,23 +85,14 @@ func (c *BlockchainController) RegisterRoutes(r interfaces.Router) {
 	r.GET("/blockchain/token/supply", c.authConf.CheckAuth("get_supply"), c.getSupply)
 }
 
-// GetProviderClaimableBalance godoc
-//
-//	@Summary		Get Provider Claimable Balance
-//	@Description	Get provider claimable balance from session
-//	@Tags			sessions
-//	@Produce		json
-//	@Param			id	path		string	true	"Session ID"
-//	@Success		200	{object}	structs.BalanceRes
-//	@Security		BasicAuth
-//	@Router			/proxy/sessions/{id}/providerClaimableBalance [get]
 // GetStakesOnHold godoc
 //
-//	@Summary		Get stake on hold from early session closes
-//	@Description	MOR time-locked by closing sessions before they ended. `available` has matured and is swept home automatically by the stake auto-claimer; `hold` is still locked (released a day after the UTC day the session was closed).
+//	@Summary		Get stake on hold from session closes landing before releaseAt
+//	@Description	MOR time-locked when a session close lands before the stake's releaseAt, which is not the same as closing early. `available` has matured: a running proxy-router sweeps it, and only for its own wallet, so with that node off or for a session opened from another wallet nothing sweeps until a proxy-router holding that wallet runs -- starting one claims matured stake immediately on startup, and calling `withdrawUserStakes` yourself is the alternative, never the only route. `hold` is still locked, released at startOfTheDay(min(closedAt, endsAt)) + 1 day.
 //	@Tags			wallet
 //	@Produce		json
 //	@Success		200	{object}	structs.StakesOnHoldRes
+//	@Security		BasicAuth
 //	@Router			/blockchain/stakes/on-hold [get]
 func (c *BlockchainController) getStakesOnHold(ctx *gin.Context) {
 	available, hold, err := c.service.GetUserStakesOnHold(ctx)
@@ -110,6 +107,16 @@ func (c *BlockchainController) getStakesOnHold(ctx *gin.Context) {
 	})
 }
 
+// GetProviderClaimableBalance godoc
+//
+//	@Summary		Get Provider Claimable Balance
+//	@Description	Get provider claimable balance from session
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			id	path		string	true	"Session ID"
+//	@Success		200	{object}	structs.BalanceRes
+//	@Security		BasicAuth
+//	@Router			/proxy/sessions/{id}/providerClaimableBalance [get]
 func (c *BlockchainController) getProviderClaimableBalance(ctx *gin.Context) {
 	var params structs.PathHex32ID
 	err := ctx.ShouldBindUri(&params)
@@ -386,7 +393,7 @@ func (c *BlockchainController) getAllModels(ctx *gin.Context) {
 
 // GetBidsByModelAgent godoc
 //
-//	@Summary		Get Bids by	Model Agent
+//	@Summary		Get Bids by Model Agent
 //	@Description	Get bids from blockchain by model agent
 //	@Tags			bids
 //	@Produce		json
@@ -432,7 +439,7 @@ func (c *BlockchainController) getBidsByModelAgent(ctx *gin.Context) {
 //	@Param			request	query		structs.QueryOffsetLimitOrder	true	"Query Params"
 //	@Success		200		{object}	structs.BidsRes
 //	@Security		BasicAuth
-//	@Router			/blockchain/models/{id}/bids [get]
+//	@Router			/blockchain/models/{id}/bids/active [get]
 func (c *BlockchainController) getActiveBidsByModel(ctx *gin.Context) {
 	var params structs.PathHex32ID
 	err := ctx.ShouldBindUri(&params)
@@ -495,7 +502,6 @@ func (s *BlockchainController) getBalance(ctx *gin.Context) {
 //	@Security		BasicAuth
 //	@Success		200	{object}	structs.TransactionsRes
 //	@Router			/blockchain/transactions [get]
-//	@Security		BasicAuth
 func (c *BlockchainController) getTransactions(ctx *gin.Context) {
 	page, limit, err := getPageLimit(ctx)
 	if err != nil {

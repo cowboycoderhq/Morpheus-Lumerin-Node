@@ -1,19 +1,18 @@
 ---
 title: "Prosumer overview"
-description: "Run your own Consumer node (C-Node) plus a local AI gateway for agents like Everclaw, NodeNeo, or your own bots."
+description: "Run your own Consumer node (C-Node) which serves as the AI gateway for agents like Everclaw, NodeNeo, or your own bots."
 audience: ["prosumer"]
 product: ["proxy-router", "ui-desktop", "cli"]
 last_verified: "v7.0.0"
 ---
 
-A **prosumer** sits between a casual consumer (using `app.mor.org` or MorpheusUI) and a full provider. You run your own **C-Node** (consumer-side proxy-router) and you typically host a small **AI gateway** so other tools — Everclaw skills, local agents, automation — can hit Morpheus through a single local endpoint with predictable auth.
+A **prosumer** sits between a casual consumer (using `app.mor.org` or MorpheusUI) and a full provider. You run your own **C-Node** (consumer-side proxy-router) which serves as the **AI gateway** — it listens on port 8082 so other tools — Everclaw skills, local agents, automation — can hit Morpheus through a single local endpoint with predictable auth.
 
 ## Topology
 
 ```mermaid
 flowchart LR
-  YourBot[Your local agent / bot] --> Gateway[AI gateway 8082]
-  Gateway --> CRouter[Your proxy-router C-Node]
+  YourBot[Your local agent / bot] --> CRouter["Your proxy-router C-Node (listens on :8082)"]
   CRouter --> Network[BASE + Morpheus providers]
 ```
 

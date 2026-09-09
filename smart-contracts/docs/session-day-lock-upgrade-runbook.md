@@ -20,7 +20,7 @@ Atomic `diamondCut`:
 2. **Add** all `ISessionRouter` selectors → new SessionRouter facet.
 3. **Add** all `IStatsStorage` selectors → new SessionRouter facet.
 
-ABI unchanged. Behavior change: session close day-locks the used stipend even on
+ABI unchanged. Behavior change: session close day-locks the final UTC day's consumed slice even on
 late close (anchors to `min(closedAt, endsAt)`).
 
 **Forward-only.** Do not re-add a pre-fix SessionRouter facet. Hotfix = new facet

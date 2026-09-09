@@ -3,11 +3,17 @@
 How the functional changes in this PR were verified. Four layers: an automated
 kit you can run (`tools/ui-verify/`), adversarial code review, an on-chain
 money-logic trace, and live manual testing of each user-facing flow. Every
-commit also passes `typecheck` + `electron-vite build`.
+commit is expected to pass `typecheck` + `electron-vite build`.
+
+**Nothing enforces that automatically, so do not read it as a guarantee.**
+No CI workflow runs a `typecheck` step: the packaging jobs in `build.yml`
+call `build:mac-arm64` and siblings, which are `electron-vite build &&
+electron-builder` and skip typecheck entirely. Run `npm run build` --
+which is `npm run typecheck && electron-vite build` -- before pushing.
 
 ## Run the automated kit
 
-**Prerequisites.** Install the app's own dependencies first — `npm install` in
+**Prerequisites.** Install the app's own dependencies first — `yarn install` in
 `ui-desktop/` — because the isolation cases mount *real* app components, which
 resolve `styled-components` / `react` / etc. from `ui-desktop/node_modules`.
 Anyone building or running the app already has this.
@@ -16,7 +22,7 @@ Anyone building or running the app already has this.
 cd ui-desktop/tools/ui-verify
 npm install
 npx playwright install chromium   # one-time browser download, if not already present
-npm run verify        # logic-checks + isolation cases
+npm run verify        # all three: logic-checks + frozen-values + isolation cases
 # or individually:
 npm run logic         # pure-function assertions over the exported utils
 npm run isolate       # Playwright renders each changed component and drives it
@@ -25,7 +31,7 @@ npm run isolate       # Playwright renders each changed component and drives it
 `npm run verify` exits non-zero if anything fails. Isolation screenshots land in
 `shots/` (gitignored).
 
-### `logic-checks.mjs` — 30 assertions over the exported substrate utils
+### `logic-checks.mjs` — 569 assertions over the exported substrate utils
 
 Runs the real exported functions and asserts their behaviour:
 
@@ -41,7 +47,7 @@ Runs the real exported functions and asserts their behaviour:
 - **`buildModelsWithBids`** (`store/queries.ts`) — skips local models, drops
   bids with no matching provider, attaches `ProviderData` (with a stub fetcher).
 
-### `isolate/` — 3 component render-and-drive cases
+### `isolate/` — 24 component render-and-drive cases
 
 Each mounts ONE real component in the app's own `ThemeProvider` with mock props
 that force the target state (no backend/wallet needed), drives it with
@@ -73,7 +79,7 @@ contracts, so the client-side guards mirror the chain:
   `formatMor(Stake, 18)` is correct — replacing the old
   `(EndsAt-OpenedAt)·PricePerSecond` cost formula (the session cost, far smaller
   than the stake).
-- `MIN_REQUEST_SECONDS = 360` clears `MIN_SESSION_DURATION = 300s`
+- `MIN_REQUEST_SECONDS = 305` clears `MIN_SESSION_DURATION = 300s`
   (`SessionStorage.sol`) after the contract's integer-truncating division, so a
   request no longer reverts with `SessionTooShort()` (`SessionRouter.sol`).
 - The pre-send affordability check refuses an on-chain open the wallet can't

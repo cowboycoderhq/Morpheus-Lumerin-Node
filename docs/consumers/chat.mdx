@@ -71,7 +71,7 @@ curl -X POST 'http://localhost:8082/v1/embeddings' \
 
 ## Closing a session early
 
-Always close manually if you are finished well before the session timer expires. Unused stake returns to your wallet on close; the used stipend day-locks until the next UTC day (`withdrawUserStakes`). See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
+Always close manually if you are finished well before the session timer expires. **What returns at close scales with how much of the session went unused.** The day-lock is sized from the seconds you actually consumed, so closing at 10% of the scheduled duration returns roughly 90% of the stake to your wallet in the close transaction — whether or not the whole session sat inside one UTC day. Only the consumed part day-locks, until the next UTC day — after which the proxy-router's StakeClaimer sweeps it back automatically, with no manual `withdrawUserStakes` needed while your own node is running and holds the wallet you opened from; with the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs: starting one claims it immediately on startup, and that manual call is the alternative. The return approaches nothing only as consumption approaches the full scheduled duration: a session left to run to `endsAt` inside one UTC day returns approximately zero, which is exactly what closing early avoids. See [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover).
 
 ```bash
 curl -X POST 'http://localhost:8082/blockchain/sessions/<sessionId>/close' \

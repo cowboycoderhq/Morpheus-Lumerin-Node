@@ -252,11 +252,11 @@ func (g *SessionRouter) ClaimProviderBalance(opts *bind.TransactOpts, sessionId 
 	return tx.Hash(), nil
 }
 
-// GetUserStakesOnHold reports the stake a user has locked from closing sessions
-// EARLY. `available` has passed its release time and can be withdrawn now;
-// `hold` is still locked. Closing a session before it ends pushes an
-// OnHold(amount, startOfDay(closedAt)+1day) entry onto this list — see
-// SessionRouter._rewardUserAfterClose. Closing late locks nothing.
+// GetUserStakesOnHold reports the stake a user has locked by any close landing
+// before releaseAt, not only an early one. `available` has passed its release
+// time and can be withdrawn now; `hold` is still locked. Such a close pushes an
+// OnHold(amount, startOfTheDay(min(closedAt, endsAt))+1day) entry onto this list
+// (SessionRouter._rewardUserAfterClose, :296-298). Only a LATER-day close locks nothing.
 func (g *SessionRouter) GetUserStakesOnHold(ctx context.Context, userAddr common.Address, iterations uint8) (available *big.Int, hold *big.Int, err error) {
 	res, err := g.sessionRouter.GetUserStakesOnHold(&bind.CallOpts{Context: ctx}, userAddr, iterations)
 	if err != nil {
@@ -265,11 +265,11 @@ func (g *SessionRouter) GetUserStakesOnHold(ctx context.Context, userAddr common
 	return res.Available, res.Hold, nil
 }
 
-// WithdrawUserStakes returns matured on-hold stake to the user. The contract
-// SKIPS entries whose releaseAt has not passed (it does not revert on them), so
-// calling this early is a wasted gas fee, not an error — check the `available`
-// leg of GetUserStakesOnHold first. It reverts with
-// SessionUserAmountToWithdrawIsZero when there are no entries at all.
+// WithdrawUserStakes returns matured on-hold stake to the user. The contract's
+// loop skips entries whose releaseAt has not passed, but the CALL still reverts
+// with SessionUserAmountToWithdrawIsZero when nothing matured (SessionRouter.sol
+// :461-463 on amount_ == 0, as well as :443-445 on an empty list), so calling
+// early is an error, not a wasted fee - read GetUserStakesOnHold's `available`.
 func (g *SessionRouter) WithdrawUserStakes(opts *bind.TransactOpts, userAddr common.Address, iterations uint8) (common.Hash, error) {
 	tx, err := g.sessionRouter.WithdrawUserStakes(opts, userAddr, iterations)
 	if err != nil {

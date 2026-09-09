@@ -7,40 +7,169 @@ last_verified: "v7.6.0"
 source: "docs/ui-desktop.all.env"
 ---
 
-MorpheusUI configuration lives in `ui-desktop/.env` when building from source (or the equivalent platform-specific resource for a packaged install). The complete annotated dump is at [`docs/ui-desktop.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/ui-desktop.all.env). Source of truth: [`ui-desktop/src/main/config/index.ts`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/ui-desktop/src/main/config/index.ts).
+MorpheusUI configuration lives in `ui-desktop/.env`, and it is read **only at build time**. `electron.vite.config.ts:41-43` substitutes `process.env.<KEY>` with a JSON literal for every key `env.schema.ts` declares, and passes that map as `define:` for all three bundles — main (`:55`), preload (`:71`) and renderer (`:85`) — so these values are compiled in as constants. A **packaged install carries no configuration file**: `.env` is excluded from the app bundle (`electron.builder.config.ts:46`) and nothing under `ui-desktop/src/` loads dotenv, so editing a `.env` beside an installed app does nothing, silently. That is a claim about the *file*; the *process environment* is a separate channel, and for one variable it still reaches the code — see the note below. Changing any value on this page means rebuilding from source ([macOS install (from source)](/consumers/install/macos)). The complete annotated dump is at [`docs/ui-desktop.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/ui-desktop.all.env). It is aligned to Base mainnet and **validates as written** against `env.schema.ts` under the build's own ajv check (`ui-desktop/electron.vite.config.ts:14-24`, options from `ui-desktop/validator.ts:6`): `CHAIN_ID` is `8453` there, matching `ui-desktop/.env.example:12`. Validating is not the same as being ready to build — `EXPLORER_URL` and every `SERVICE_PROXY_DOWNLOAD_URL_*` are blank in it and validate blank, so a build made from it as-is has nowhere to fetch the proxy-router. Source of truth: [`ui-desktop/env.schema.ts`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/ui-desktop/env.schema.ts) — the build injects exactly the keys it declares. A variable absent from it is never substituted, so it is not compiled in — but neither is it erased: the `process.env.<KEY>` read survives into the shipped bundle as a live runtime lookup. The app consumes those keys in five places (`src/main/config/index.ts`, `orchestrator.config.ts`, `src/main/logger.ts`, `src/main/core/logger.js` and `src/preload/index.ts`), so no single reader is the full list.
+
+<Note>
+**One undeclared variable is still live at runtime.** `IGNORE_DEBUG_LOGS` is read at
+`ui-desktop/src/main/config/index.ts:17` (`debug: process.env.DEBUG && !process.env.IGNORE_DEBUG_LOGS`)
+but is **absent from `ui-desktop/env.schema.ts`**, so the `define:` map built at
+`ui-desktop/electron.vite.config.ts:41-43` never substitutes it. It therefore stays a real
+`process.env` lookup in a packaged build: launching the app with `IGNORE_DEBUG_LOGS` set **in the
+process environment** still suppresses `config.debug`. Putting it in a `.env` file next to the
+installed app does nothing, because that file is never read. It also still ships in
+`ui-desktop/.env.example:75`, where it has no build-time effect.
+
+The only other `process.env` keys under `ui-desktop/src/` that the schema does not declare are
+Electron tooling rather than settings, and neither is a runtime input for a packaged build:
+`ELECTRON_RENDERER_URL` is injected by the electron-vite dev server and every consumer is gated on
+`is.dev` / `!app.isPackaged` (`ui-desktop/src/main/index.ts:52`, `:158`, and
+`ui-desktop/src/main/src/client/subscriptions/utils.js:61`); `ELECTRON_DISABLE_SECURITY_WARNINGS` is
+*assigned* by the app, not read from the environment, and only when unpackaged
+(`ui-desktop/src/main/index.ts:83-84`).
+</Note>
 
 ## Auth & networking
 
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `BYPASS_AUTH` | `false` | `true` to bypass auth (dev only) |
-| `PROXY_WEB_DEFAULT_PORT` | `8082` | Default port for the local proxy-router |
-| `PROXY_WEB_URL` | `http://localhost:8082` | Override the local API URL |
 
 ## Chain
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `CHAIN_ID` | (unset) | `8453` (mainnet) or `84532` (testnet) |
+| `CHAIN_ID` | (required) | Must be a number; no default value. See `ui-desktop/env.schema.ts`. |
 | `DEFAULT_SELLER_CURRENCY` | `BTC` | Default seller currency symbol |
-| `DIAMOND_ADDRESS` | mainnet `0x6aBE1d282f72B474E54527D93b979A4f64d3030a`; testnet `0xA328196f2438DADA5ab729E39388D86896c27c85` | Diamond contract |
-| `EXPLORER_URL` | (unset) | Block explorer URL |
+| `DIAMOND_ADDRESS` | (required, no default) | Diamond contract |
+| `TOKEN_ADDRESS` | (required, no default) | Token contract address for the main token. Omitting it fails the **build**, not the run: `ui-desktop/env.schema.ts:32` declares it without `Type.Optional`, so the validation in `electron.vite.config.ts:17-24` throws `Invalid environment variables` and no bundle is written. It is forwarded to the proxy-router under a different name — see the pass-through table below |
+| `EXPLORER_URL` | (required) | Block explorer URL |
 
 ## Branding
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `DISPLAY_NAME` | `MorpheusUI` | Window/title text |
+| `CHAIN_NAME` | `(required, no default)` | Human-readable chain name shown in the UI (used as `config.chain.displayName`). Must be set explicitly or the build will fail. |
+
+## Bundled services
+
+MorpheusUI downloads and supervises three child processes: the proxy-router, a
+llama.cpp server for the local model, and an IPFS daemon. These settings are read
+by [`ui-desktop/orchestrator.config.ts`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/ui-desktop/orchestrator.config.ts).
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `SERVICE_PROXY_DOWNLOAD_URL_MAC_ARM64` | (empty) | Where to fetch the proxy-router binary for this platform |
+| `SERVICE_PROXY_DOWNLOAD_URL_MAC_X64` | (empty) | " |
+| `SERVICE_PROXY_DOWNLOAD_URL_LINUX_X64` | (empty) | " |
+| `SERVICE_PROXY_DOWNLOAD_URL_LINUX_ARM64` | (empty) | " |
+| `SERVICE_PROXY_DOWNLOAD_URL_WINDOWS_X64` | (empty) | " |
+| `SERVICE_PROXY_DOWNLOAD_URL_WINDOWS_ARM64` | (empty) | " |
+| `SERVICE_PROXY_API_PORT` | `8082` | proxy-router HTTP API. WEB_ADDRESS is set to `0.0.0.0:${SERVICE_PROXY_API_PORT}` and WEB_PUBLIC_URL is set to `http://localhost:${SERVICE_PROXY_API_PORT}` in orchestrator.config.ts. The host is fixed in source; only the port varies, and only at build time (see above) |
+| `SERVICE_PROXY_PORT` | `3333` | proxy-router's consumer-facing TCP tunnel, passed as `PROXY_ADDRESS`. This is what other nodes connect to |
+| `SERVICE_IPFS_API_PORT` | `5001` | Bundled IPFS (kubo) daemon API; also becomes the router's `IPFS_MULTADDR` |
+| `SERVICE_AI_API_PORT` | `3434` | Bundled llama.cpp server serving the local model; also the local model's `apiUrl` |
+
+<Note>
+Each platform reads only its own download URL. All six default to empty, so a
+build with none set has nowhere to fetch the proxy-router from.
+</Note>
+
+## Logging
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `LOG_LEVEL` | `warn` | Verbosity of the **desktop app's own** logger, console and file. Read by two loggers, not one: `src/main/logger.ts:36-37` and `src/main/core/logger.js:39-40`. One of `error`, `warn`, `info`, `verbose`, `debug`, `silly` |
+
+<Warning>
+This is not the proxy-router's logging. That process has no plain `LOG_LEVEL` —
+it has `LOG_LEVEL_APP`, `LOG_LEVEL_ETH_RPC`, `LOG_LEVEL_STORAGE` and
+`LOG_LEVEL_TCP`, listed in [Env: proxy-router](/reference/env-proxy-router). The
+names look alike and control different programs.
+</Warning>
+
+## Passed through to the proxy-router
+
+Set these on MorpheusUI; it forwards them to the proxy-router process it starts.
+Their behaviour is the proxy-router's and is documented in
+[Env: proxy-router](/reference/env-proxy-router) (which omits a few variables like IPFS_DISABLED, IPFS_MULTADDR, and MULTICALL3_ADDR).
+
+| Variable | Forwarded as | Notes |
+|----------|--------------|-------|
+| `BLOCKSCOUT_API_URL` | `BLOCKSCOUT_API_URL` | Unchanged (`orchestrator.config.ts:17`) |
+| `DIAMOND_ADDRESS` | `DIAMOND_CONTRACT_ADDRESS` | Renamed in transit (`orchestrator.config.ts:15`) |
+| `TOKEN_ADDRESS` | `MOR_TOKEN_ADDRESS` | Renamed in transit (`orchestrator.config.ts:16`) |
+| `CHAIN_ID` | `ETH_NODE_CHAIN_ID` | Renamed in transit and passed as a string (`orchestrator.config.ts:18`) |
+| `NODE_ENV` | `ENVIRONMENT` | Renamed in transit (`orchestrator.config.ts:19`). One of `development`, `production` |
 
 ## Pairing with a custom proxy-router
 
-Most consumer setups use the proxy-router that the MorpheusUI desktop app downloads and starts itself. To point the UI at a separate proxy-router (e.g. a Docker container or a remote C-Node):
+Most consumer setups use the proxy-router that the MorpheusUI desktop app downloads and starts itself. You can point the UI at a proxy-router you run yourself, but being reachable is not the bar: **the app adopts your router only if it can read that router's auth cookie file, at the exact path the router reports.** A proxy-router running natively on the host clears that bar. One inside a Docker container does not, unless you give its cookie a path that is also valid on the host (see below).
 
-1. Stop the managed proxy-router (quit the app, or stop it from the startup screen).
-2. Start your own proxy-router and confirm `http://<host>:8082/healthcheck`.
-3. Set `PROXY_WEB_URL=http://<host>:8082` in MorpheusUI's `.env`.
-4. Restart MorpheusUI.
+Before the window loads, the app probes `http://localhost:8082/auth/cookie/path` and sorts the answer three ways (`ui-desktop/src/main/orchestrator/resolve-router-endpoint.ts:28-51`, called from `src/main/index.ts:282`):
+
+| What the probe finds | What the app does |
+|---|---|
+| Nothing listening | Starts its own router on 8082 — the normal, unpaired case |
+| A router whose reported cookie path the app **can** read | **Adopts it.** This is what pairing means |
+| A router that answers but whose reported cookie path the app **cannot** read | Ignores it, starts **its own** router on the next free port, and rewrites `config.chain.localProxyRouterUrl` to point there (`:85-129`) |
+
+Answering `/healthcheck` is not enough. Every authenticated call — onboarding, balances, sessions — reads the admin credential out of that cookie file, so a router whose cookie the app cannot open is useless to it.
+
+To pair:
+
+1. **Quit MorpheusUI.** That is the only way to stop the managed proxy-router: there is no stop control anywhere in the UI. The only service IPC channels are `start-services`, `restart-service` and `ping-service` (`ui-desktop/src/main/src/client/subscriptions/index.ts:89-91`), and the per-service panel under **Settings → Services** offers Ping and Restart only. Quitting is what stops them (`ui-desktop/src/main/orchestrator/orchestrator.ts:118-129`).
+2. Start your own proxy-router **on the same machine** and confirm `http://localhost:8082/healthcheck`. Then confirm it reports a cookie path your desktop user can read on the host: `curl -s http://localhost:8082/auth/cookie/path` must return a path that exists **on the host**, not one that exists only inside a container.
+3. **Packaged install:** run your router on **8082**. `SERVICE_PROXY_API_PORT` is baked into the bundle at build time (see the top of this page), so a packaged app cannot be pointed at another port — move the router, not the app. **From-source build only:** to use a different port, set `SERVICE_PROXY_API_PORT` in `ui-desktop/.env` before building.
+4. **From-source build only:** rebuild MorpheusUI so the new port is compiled in — relaunching alone will not pick it up. On a packaged install this step does not apply; just start MorpheusUI again and it will use 8082.
+5. Relaunch MorpheusUI and **verify which router it actually used** (see below). Adoption is never announced in the UI, so this is the only way to know pairing succeeded.
+
+<Warning>
+**A Docker proxy-router is not adopted by default, and the failure is silent.** With the layout in [Docker (consumer)](/consumers/install/docker) — `COOKIE_FILE_PATH=/app/data/.cookie` together with `-v ~/morpheus-data:/app/data` — the container reports `/app/data/.cookie`, a path that exists only inside the container. The app classifies that router unusable, leaves it running on 8082, and starts **a second proxy-router of its own on the next free port** (8083 unless that is taken). No error is raised and no dialog appears: the UI works normally, but it is running against the app's own router — its own wallet, its own sessions — while your container sits idle on 8082.
+</Warning>
+
+To make a container adoptable, give the cookie the **same absolute path inside and outside** the container by bind-mounting the host directory onto itself. This is an **additional** mount, not a replacement: keep the Quickstart's `-v ~/morpheus-data:/app/data` too, or the four values that still point inside `/app/data` (`AUTH_CONFIG_FILE_PATH`, `RATING_CONFIG_PATH`, `PROXY_STORAGE_PATH`, `MODELS_CONFIG_PATH`) silently become container-local — the router creates the directory in the container's writable layer (`proxy-router/internal/storages/storage.go:34`) and `docker rm` then destroys the session store and `proxy.conf`:
+
+```bash
+docker run -d --name morpheus-proxy-consumer \
+  --env-file proxy-router.env \
+  -e COOKIE_FILE_PATH=$HOME/morpheus-data/.cookie \
+  -v ~/morpheus-data:/app/data \
+  -v ~/morpheus-data:$HOME/morpheus-data \
+  -p 8082:8082 \
+  ghcr.io/morpheusais/morpheus-lumerin-node:latest
+```
+
+The router resolves a relative `COOKIE_FILE_PATH` against its working directory at startup and reports the absolute result (`proxy-router/internal/config/config.go:266-268`, `proxy-router/internal/authapi/controller_http.go:338-364`), so the value has to be absolute and identical on both sides. The container writes the cookie `0600` as root (`proxy-router/internal/system/auth.go:235-238`); if the resulting file is not readable by your desktop user, create it **before** starting the container — an existing cookie file is never overwritten (`auth.go:215`):
+
+```bash
+printf 'admin:%s\n' "$(openssl rand -hex 24)" > ~/morpheus-data/.cookie
+chmod 600 ~/morpheus-data/.cookie
+```
+
+<Warning>
+**A remote proxy-router is not supported.** The app constructs its API URL as `http://localhost:${SERVICE_PROXY_API_PORT}` with the host fixed in source (`ui-desktop/src/main/config/index.ts:11`). Only the port can be changed, and only by rebuilding. Earlier revisions of this page described a `PROXY_WEB_URL` override for pointing at another host; no released build has ever read that variable, so setting it has no effect.
+</Warning>
+
+### Confirming which router the UI is using
+
+Read it off the log first. The relocation is logged at `warn` — the default `LOG_LEVEL` — so it appears without raising verbosity (macOS: `~/Library/Logs/morpheus-app/main.log` — Electron takes that directory from the package name at `ui-desktop/package.json:2`; `MorpheusUI` is set only at `ui-desktop/electron.builder.config.ts:36` and names the macOS bundle, so no `~/Library/Logs/MorpheusUI` is ever created):
+
+```
+Port 8082 is held by a router we can't authenticate with (foreign/containerized). Starting our own on API 8083, P2P 8084.
+```
+
+That line means pairing did **not** happen: your router still holds 8082 and the UI is talking to the app's own router on the API port named in the message. The app takes the next free port above 8082, so it is usually 8083 but not always — read the port from the line rather than assuming it.
+
+Then confirm by asking each router where its cookie lives. The app's own router answers with a path inside its own service directory; yours answers with whatever you configured:
+
+```bash
+curl -s http://localhost:8082/auth/cookie/path        # your router
+PORT=8083   # the API port from the log line above
+curl -s "http://localhost:$PORT/auth/cookie/path"     # answers only if the app started its own
+```
+
+Adoption itself logs at `info`, which the default level hides. The positive signal is therefore the absence of that warning, plus nothing answering on the relocated port.
 
 ## Full annotated dump
 
-For every variable (including theme tweaks, debug flags, and feature toggles), see [`docs/ui-desktop.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/ui-desktop.all.env).
+For every variable — including required build inputs such as `TOKEN_ADDRESS`, not only theme tweaks, debug flags and feature toggles — see [`docs/ui-desktop.all.env`](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/blob/main/docs/ui-desktop.all.env).

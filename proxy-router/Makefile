@@ -37,8 +37,25 @@ test-unit:
 test-integration:
 	go test -v ./test/...
 
+# swag init deliberately runs WITHOUT --parseDependency. Do not add it back.
+#
+# Go's stdlib gained a `structs` package, so --parseDependency puts it on swag's
+# parse path and rebinds the name `structs` away from this repo's own
+# internal/*/structs packages. Generation then resolves the first structs.* type
+# it meets and dies on the second ("cannot find type definition: structs.BalanceRes"),
+# emitting NO files at all -- which is how the committed spec silently drifted.
+# The type it names varies with file order; that variance is the tell that this is
+# name rebinding rather than a genuinely missing type.
+#
+# Without the flag: 78 paths / 90 operations / 100 definitions, versus 75 / 87 / 98
+# in the spec generated before this change. No route is lost and no dangling refs
+# remain. The one definition dropped, lib.BigInt, is a CORRECTION rather than a
+# regression: lib.BigInt has a custom MarshalJSON (internal/lib/bigint.go:29-31)
+# returning a bare quoted string, so its wire format is a string, and the old
+# ref-to-object shape misdescribed it. The no-flag output inlines it as a string,
+# which is what the code actually emits.
 swagger:
-	swag fmt -g ./internal/handlers/httphandlers/http.go && swag init -g ./internal/handlers/httphandlers/http.go --parseInternal --parseDependency
+	swag fmt -g ./internal/handlers/httphandlers/http.go && swag init -g ./internal/handlers/httphandlers/http.go --parseInternal
 
 mocks:
 	mockery

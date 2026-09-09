@@ -119,9 +119,14 @@ type ReserveRun = {
  * count as free.
  *
  * Two rules, both load-bearing:
- * - Mode does not matter. A closed block's stake is held to the end of the UTC
- *   day, so nothing is recycled into the next block in either restake mode
- *   (measured on Base mainnet 2026-08-06). Skipping sequential runs here let the
+ * - Mode does not matter, but not for the reason once written here. What a close
+ *   returns IMMEDIATELY is only the portion of the block outside the closing UTC
+ *   day, so a renewing run cannot count on recycling — reserve the full per-block
+ *   stake in both modes. (SessionRouter.sol:296-298 anchors the lock to
+ *   startOfTheDay(min(closedAt, endsAt)); :305 fires it only while
+ *   block.timestamp < releaseAt_. A multi-day block therefore returns most of its
+ *   stake at close — see the day-slice formula at :35-39 above.)
+ *   Skipping sequential runs here let the
  *   gate approve runs the wallet could not fund.
  * - A run with no blocks LEFT reserves nothing. Its current stake is already out
  *   of the wallet, so free balance excludes it, and it will never open another.
@@ -822,8 +827,10 @@ export const KeepAliveProviderInner = ({ client, children }: any) => {
     }
     // Seamless: open N+1 just BEFORE N ends (overlap → gapless inference).
     // Sequential: open N+1 just AFTER N ends, leaving a small gap.
-    // Both commit the same MOR — N's stake is held to the end of the UTC day
-    // either way, so there is no stake to wait for and no saving to be had.
+    // Both commit the same amount. Only the closing-day slice of N's stake is
+    // held (SessionRouter.sol:296-298, :305) — the rest returns at close — but a
+    // renewing run cannot count on that timing, so there is still no saving to be
+    // had by waiting.
     // Sequential still fires AFTER expiry, never at it: a close that mines
     // before endsAt leaves the session live and the reopen races it.
     const fireAt = run.overlap

@@ -23,7 +23,7 @@ This page describes MyProvider behavior including the onboarding wizard (active.
 4. Fill wallet / RPC / admin password and **copy secrets** (`MODELS_CONFIG_CONTENT` value for SecretVM, or a full 5-secret bundle).
 5. Deploy the node (SecretVM portal, Docker, or binary) with those secrets.
 6. **Connect** MyProvider to the node URL + Basic Auth; register the provider; **bid on the existing model**.
-7. Use **Model Configuration Sync** if you need to re-export `MODELS_CONFIG_CONTENT` after bidding.
+7. After bidding, update `models-config.json` directly and restart, or delete the file and set `MODELS_CONFIG_CONTENT` again if needed.
 8. **Verify** with [Verify your provider setup](/providers/full/verify-setup).
 
 Mint a **new** model only when nothing suitable exists (new weights, or a required `tee` tag with no existing tee-tagged listing).
@@ -34,7 +34,7 @@ Mint a **new** model only when nothing suitable exists (new weights, or a requir
 |---------|-----------|
 | Guided onboarding (SecretVM / Venice / standard) | Yes |
 | Look up models + competitor prices via active.mor.org | Yes |
-| Craft SecretVM 5 secrets + `MODELS_CONFIG_CONTENT` value | Yes |
+| Craft the 5 SecretVM secrets (`MODELS_CONFIG_CONTENT` is one of the five) | Yes |
 | Venice Diem API URL presets | Yes |
 | Connect to proxy-router API (Basic Auth) | Yes |
 | Register / update / delete provider | Yes |

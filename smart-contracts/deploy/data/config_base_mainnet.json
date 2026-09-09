@@ -1,9 +1,9 @@
 {
   "MOR": "0x7431ada8a591c955a994a21710752ef9b882b8e3",
   "fundingAccount": "0x5160C0311A95E0A1072FA85Df23712A7BA1cD4b1",
-  "providerMinStake": "100000000000000000",
+  "providerMinStake": "200000000000000000",
   "modelMinStake": "100000000000000000",
-  "marketplaceBidFee": "100000000000000000",
+  "marketplaceBidFee": "300000000000000000",
   "marketplaceMinBidPricePerSecond": "10000000000000",
   "marketplaceMaxBidPricePerSecond": "10000000000000000",
   "delegateRegistry": "0x00000000000000447e69651d841bD8D104Bed493",

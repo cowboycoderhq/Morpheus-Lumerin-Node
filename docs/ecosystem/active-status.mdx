@@ -35,7 +35,7 @@ curl -sS https://active.mor.org/active_models.json \
 ## How to read it
 
 - **A model "active" here means `(at least one bid posted) AND (provider healthcheck passes)`.** A model on chain that has no healthy provider won't show up in `active_models.json` even if its Diamond record exists — check `all_models.json` in that case.
-- Snapshot fields use PascalCase (`Id`, `Name`, `ModelName`, `PricePerSecond`, `Provider`, …).
+- **Top-level** snapshot fields use PascalCase (`Id`, `Name`, `ModelName`, `PricePerSecond`, `Provider`, …). The nested objects do not: `health` and `bidDetail` are lowercase, and `bidDetail` entries use camelCase (`providerId`, `pricePerSecond`) — so a jq filter has to switch case when it descends.
 - **`pricePerSecond`** values are MOR wei per second. Many UIs also show `priceMorPerHour`.
 - Snapshots refresh on a short cron (on the order of minutes); a brand-new bid may take a few minutes to appear.
 

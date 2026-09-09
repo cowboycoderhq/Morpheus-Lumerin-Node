@@ -19,8 +19,7 @@ Everclaw is an agent-focused project; it includes a Morpheus skill for **OpenCla
 
 ```mermaid
 flowchart LR
-  Skill[Everclaw / OpenClaw skill] --> Local["http://127.0.0.1:8082"]
-  Local --> CRouter[Your C-Node proxy-router]
+  Skill[Everclaw / OpenClaw skill] --> CRouter["Your C-Node proxy-router (listens on http://127.0.0.1:8082)"]
   CRouter --> Network[Morpheus providers on BASE]
 ```
 

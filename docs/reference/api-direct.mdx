@@ -13,6 +13,7 @@ This is the curl-only path through Morpheus — no MorpheusUI, no CLI. Useful fo
 
 - A consumer-side proxy-router running locally with a funded wallet. See [Install from source](/consumers/install-from-source) or [C-Node setup](/prosumers/c-node-setup).
 - BasicAuth credentials. The default `admin` lives in `.cookie`. See [API auth](/reference/api-auth).
+- `jq` for the shell examples below. The walkthrough pipes responses through it (`jq .address`, `jq -r '.models[]...'`, `jq -r .sessionID`). Without it the first two lines error visibly, but the session capture `SESSION=$(... | jq -r .sessionID)` fails **silently** — `SESSION` ends up empty and the following chat call returns an auth/session error instead. Install with `brew install jq` (macOS) or `apt install jq` (Debian/Ubuntu).
 - If you prefer Swagger at `http://localhost:8082/swagger/index.html`, click **Authorize** and enter those same credentials before **Try it out** — Swagger's generated curl includes `Authorization: Basic …`; the examples below match that.
 
 ## TL;DR
@@ -28,12 +29,16 @@ This is the curl-only path through Morpheus — no MorpheusUI, no CLI. Useful fo
 
 ```bash
 curl -X POST \
-  'http://localhost:8082/blockchain/approve?spender=0x6aBE1d282f72B474E54527D93b979A4f64d3030a&amount=3' \
+  'http://localhost:8082/blockchain/approve?spender=0x6aBE1d282f72B474E54527D93b979A4f64d3030a&amount=3000000000000000000' \
   -H 'Authorization: Basic <base64(user:pass)>' \
   -H 'accept: application/json' -d ''
 ```
 
 This authorizes the Diamond contract to spend up to `3` MOR on your behalf.
+
+<Warning>
+**`amount` is in base units, not whole tokens.** The value is passed to the ERC-20 `approve` call verbatim with no decimal scaling (`blockchainapi/service.go:1047`), and the token has 18 decimals. `amount=3` approves 3 base units — about 10⁻¹⁸ of a token — which leaves the allowance effectively zero and makes every later session-open fail. Three whole tokens is `3000000000000000000`.
+</Warning>
 
 ## B. Query for a model
 
@@ -100,7 +105,7 @@ OpenAI-compatible SSE response.
 SPENDER=0x6aBE1d282f72B474E54527D93b979A4f64d3030a
 AUTH='Authorization: Basic <base64(user:pass)>'
 
-curl -s -X POST "http://localhost:8082/blockchain/approve?spender=$SPENDER&amount=3" -H "$AUTH" -d ''
+curl -s -X POST "http://localhost:8082/blockchain/approve?spender=$SPENDER&amount=3000000000000000000" -H "$AUTH" -d ''
 
 curl -s 'http://localhost:8082/wallet' -H "$AUTH" | jq .address
 
@@ -112,7 +117,7 @@ MODEL=0x84b6df5c84e1e6ae59c90e1639e3e77148d140065ef2cd4fba7f41cc7440e2c5
 
 SESSION=$(curl -s -X POST "http://localhost:8082/blockchain/models/$MODEL/session" \
   -H "$AUTH" -H 'Content-Type: application/json' \
-  -d '{"sessionDuration":600}' | jq -r .sessionId)
+  -d '{"sessionDuration":600}' | jq -r .sessionID)
 
 curl -X POST 'http://localhost:8082/v1/chat/completions' \
   -H "$AUTH" -H "session_id: $SESSION" -H 'Content-Type: application/json' \

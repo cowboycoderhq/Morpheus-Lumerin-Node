@@ -10,7 +10,7 @@ installed.
 
 ```bash
 # prerequisite — install the app's deps (the cases mount real components):
-(cd ui-desktop && npm install)
+(cd ui-desktop && yarn install)
 
 cd ui-desktop/tools/ui-verify
 npm install
@@ -52,9 +52,13 @@ Two things make it an audit rather than a checklist:
   its author already knew; that is how `border: 1px solid grey` and `color: white`
   survived a sweep in `ImportFlow.jsx`. The named-colour set here is the full CSS
   spec list, so it can surface a spelling nobody thought of.
-- **It splits findings by reachability from `App.tsx`**, resolving every import
+- **It splits findings by reachability from `main.tsx`** (`frozen-values.mjs:38`), resolving every import
   specifier to a file (basename matching conflates `dashboard/tx-list/Filter.jsx`
-  with `contracts-list/Filter.jsx` — different files, one dead). This repo carries
+  with `contracts-list/Filter.jsx` — different files, one dead). That walk is not
+  the whole reachable set: nothing imports `index.html`, so once the walk is done
+  it is added to the set directly (`frozen-values.mjs:80-83`), because Electron
+  loads it as the real entry. A frozen value in `index.html` is therefore treated
+  as live and fails, instead of being reported as dead code. This repo carries
   a dead legacy marketplace holding ~40 of the 41 raw hits. A frozen value in code
   that never renders is not a defect, and a gate that is permanently red is a gate
   nobody runs. Live findings fail; dead ones are reported. `--all` fails on both,
@@ -64,7 +68,9 @@ Two things make it an audit rather than a checklist:
 Each case mounts ONE real product component in the app's real `ThemeProvider`
 (dev's palette) with mock props forcing a target state, then drives it with
 Playwright and asserts behaviour — including that destructive handlers fire **0×**.
-Screenshots land in `shots/` (gitignored).
+Screenshots land in `shots/` (gitignored). There are **24** cases in
+`isolate/cases/`; three of the highest-risk ones are described below — read the
+directory for the full set.
 - **sendform-confirm** — the two-step send: first press reveals the confirm panel
   (amount + full `toAddress` + irreversible warning) and switches the button to
   "Confirm & send"; asserts `onSubmit` fired **0×** before the confirm.

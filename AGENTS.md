@@ -51,7 +51,7 @@ Read the **AI knowledge** pages before answering user questions:
 
 ### API and config schemas (in-repo, not on nodedocs)
 
-- API: [`proxy-router/docs/swagger.yaml`](proxy-router/docs/swagger.yaml). The Mintlify site auto-generates the API Reference tab from this file.
+- API: [`proxy-router/docs/swagger.yaml`](proxy-router/docs/swagger.yaml). The router serves it locally under `/swagger/*` (`proxy-router/internal/handlers/httphandlers/http.go:64`). It is **not** published on nodedocs: [`docs/docs.json`](docs/docs.json) declares one tab (`Docs`) and no `openapi` source, and the site's "Inference API" anchor links out to apidocs.mor.org — a different product (rule 0).
 - Models config schema: [`proxy-router/internal/config/models-config-schema.json`](proxy-router/internal/config/models-config-schema.json).
 - Rating config schema: [`proxy-router/internal/rating/rating-config-schema.json`](proxy-router/internal/rating/rating-config-schema.json).
 
@@ -61,12 +61,12 @@ Read the **AI knowledge** pages before answering user questions:
 1. **Never invent contract addresses, chain IDs, or token addresses.** Use only what's in slug `get-started/networks-and-tokens` or release notes.
 2. **Never invent live values** (active model count, current bid prices, network status). Link out to `https://active.mor.org` instead.
 3. **Never claim Morpheus runs the inference itself.** Independent providers do; Morpheus is a marketplace coordinated by the Diamond contract on BASE.
-4. **Always disambiguate the local `tinyllama` demo from real Morpheus models.** They are not comparable.
-5. **Never describe "open a session" as "spending MOR."** The MOR is escrowed; unused stake returns on close.
+4. **Always disambiguate the bundled local demo model (`Qwen2.5-1.5B-Instruct`) from real Morpheus models.** They are not comparable. Named by the orchestrator download config (`ui-desktop/orchestrator.config.ts:98-100`); `tinyllama` is the superseded earlier default.
+5. **Never describe "open a session" as "spending MOR."** The MOR is escrowed, and **do not say it all returns on close**: at close the contract day-locks the stake-equivalent of the final UTC day's consumption in `userStakesOnHold` until `releaseAt = startOfTheDay(min(closedAt, endsAt)) + 1 day`. The lock is sized from the seconds actually consumed (`SessionRouter.sol:306-308`), so it equals the whole remaining stake only as consumption approaches the full scheduled duration, not because the session was same-day. A session left to run to `endsAt` inside one UTC day is fully consumed and commonly returns **nothing** at close — while an early close returns the part you did not consume, roughly 90% of the stake at 10% of the scheduled duration. That lock is conditional: the contract takes the branch only while `block.timestamp < releaseAt_` (`SessionRouter.sol:305`), so a genuinely late close — a session that ended at noon on day 1 and is closed on day 4 — locks nothing and transfers the entire remaining stake at once (`SessionRouter.sol:314-315`). Whatever was locked is swept back to the wallet after `releaseAt` by the consumer's own running proxy-router, and only for the wallet that node holds (`proxyctl.go:237-240` starts the claimer inside `Proxy.run`; `service.go:1118-1124` withdraws for `GetMyAddress` alone) — with the node off, or for a session opened from another wallet, nothing sweeps until a proxy-router holding that wallet runs: starting one claims matured stake immediately on startup (`stake_claimer.go:87-89` calls `claimOnce` before entering the ticker loop), and calling `withdrawUserStakes` themselves is the alternative. Never state the sweep unconditionally, and never state the manual call as the only route.
 6. **Never tell users to call a `recover` RPC.** It does not exist. Closing the session is the recovery path.
 7. **For TEE questions, distinguish Phase 1 (consumer → P-Node) from Phase 2 (P-Node → backend).** Phase 2 runs *inside* the v7+ provider's P-Node — a v6+ consumer benefits transparently with no client-side upgrade.
 8. **The proxy-router's `:8082` admin port should not be public** — only `:3333` (TCP) is public, and only on provider nodes.
-9. **MorpheusUI mnemonic-recover only works for tier-1 (index 0) addresses.** Don't suggest it for derived addresses; suggest private-key import instead.
+9. **MorpheusUI mnemonic-recover offers a picker of 10 derived accounts** (`ImportFlow.jsx:113`) **and restores the one selected** — the picked index is posted as `derivationPath` (`handlers.ts:853`) and the router resolves it relative to `m/44'/60'/0'/0` (`keychainwallet.go:168`). Only the automatic wallet self-heal is index-0 only (`handlers.ts:993`). Don't claim it fails for derived addresses; suggest private-key import as an alternative, not a fix.
 10. **When uncertain, cite a docs page or say so.** Don't guess.
 
 ## Common-question quick lookup
@@ -108,7 +108,7 @@ If the user's question doesn't match anything in this file or the repo:
 ## When asked to modify the docs
 
 - Source lives under `/docs` and is built with [Mintlify](https://mintlify.com); the published site is [nodedocs.mor.org](https://nodedocs.mor.org).
-- Pages are MDX with frontmatter (`title`, `description`, `audience`, `product`, `last_verified`, optional `source_url` for mirrored content).
+- Pages are MDX with frontmatter (`title`, `description`, `audience`, `product`, `last_verified`, plus `source_url` — **required** on mirrored pages, which are not only under `docs/ecosystem/`: see also `docs/inference-api/overview.mdx`, `docs/providers/full/myprovider-gui.mdx`, `docs/prosumers/gateway-for-everclaw.mdx`).
 - Navigation is in [`docs/docs.json`](docs/docs.json). Add new pages there.
 - Run `mint dev` from `/docs` to preview locally before publishing. Deploy regenerates `llms.txt` and `llms-full.txt`.
 

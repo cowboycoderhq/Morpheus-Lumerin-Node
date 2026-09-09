@@ -446,9 +446,11 @@ const Dashboard = ({
     refetchInterval: 30000,
   });
 
-  // MOR that closing a session early time-locked. Polled on the same cadence as
-  // balances because it IS part of the balance story: without it, a user who
-  // closed early just sees their MOR gone.
+  // MOR that closing a session time-locked — ANY close, not only an early one:
+  // SessionRouter.sol:305 holds the final UTC day's consumed slice whenever the
+  // close lands before releaseAt_, so a session left to expire on its own puts
+  // stake here too. Polled on the same cadence as balances because it IS part
+  // of the balance story: without it, a user who closed just sees their MOR gone.
   const stakesOnHoldQuery = useQuery({
     queryKey: ['stakesOnHold', address],
     queryFn: getStakesOnHold,
@@ -511,11 +513,11 @@ const Dashboard = ({
   }, [stakesOnHoldQuery.data]);
 
   // "Returns automatically" was true but useless — it never said WHEN, and worse,
-  // stake locked by DIFFERENT early closes frees on different days, so a single
+  // stake locked by DIFFERENT session closes (early, late, natural expiry) frees on different days, so a single
   // time would be a lie for every chunk but the first. The release schedule is
   // not in the on-hold endpoint (it only sums amounts), so it is derived from the
-  // sessions the dashboard already has: each early close frees at
-  // startOfDay(closedAt)+1day, grouped by day.
+  // sessions the dashboard already has: each close landing before releaseAt_
+  // frees at startOfDay(min(closedAt, endsAt))+1day, grouped by day.
   //
   // The lines fully account for the on-hold total: whatever has already matured
   // (endpoint `available`, authoritative — the auto-claimer is sweeping it, and
@@ -649,12 +651,12 @@ const Dashboard = ({
             </StatText>
           </StatCard>
 
-          {/* Stake that closing a session EARLY time-locked. Rendered only when
-              there IS something locked — a permanent "0 MOR on hold" tile would
-              be noise, and this must read as an answer to "where did my MOR
-              go?", which is only a question when some went.
-              It sits next to Staked Balance deliberately: that is the tile a
-              user stares at when their MOR seems to have vanished. */}
+          {/* Stake that any close landing before releaseAt time-locked — not
+              only an early one. Rendered only when there IS something locked —
+              a permanent "0 MOR on hold" tile would be noise, and this must read
+              as an answer to "where did my MOR go?", which is only a question
+              when some went. It sits next to Staked Balance deliberately: that
+              is the tile a user stares at when their MOR seems to have vanished. */}
           {onHoldMor && (
             <StatCard data-testid="stakes-on-hold-tile">
               <StatIcon>

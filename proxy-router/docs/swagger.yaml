@@ -71,6 +71,8 @@ definitions:
         $ref: '#/definitions/attestation.BackendAttestationStatus'
       teeType:
         $ref: '#/definitions/attestation.TEEType'
+      tlsBindingKind:
+        $ref: '#/definitions/attestation.TLSBindingKind'
       verifiedAt:
         type: string
       vmTemplateName:
@@ -96,6 +98,14 @@ definitions:
     x-enum-varnames:
     - TEETypeTDX
     - TEETypeSEV
+  attestation.TLSBindingKind:
+    enum:
+    - spki
+    - certificate
+    type: string
+    x-enum-varnames:
+    - TLSBindingSPKI
+    - TLSBindingCertificate
   authapi.AddUserReq:
     properties:
       password:
@@ -126,7 +136,7 @@ definitions:
     properties:
       allowances:
         additionalProperties:
-          $ref: '#/definitions/lib.BigInt'
+          type: string
         type: object
       isConfirmed:
         type: boolean
@@ -247,6 +257,12 @@ definitions:
         type: boolean
       modelId:
         type: string
+      sessionId:
+        description: |-
+          Mirrors ChatHistory.SessionID so the chat LIST alone is enough to bind each
+          row to its own session; the client would otherwise have to fetch every
+          chat's full transcript just to learn which session it belongs to.
+        type: string
       title:
         type: string
     type: object
@@ -259,6 +275,18 @@ definitions:
           $ref: '#/definitions/genericchatstorage.ChatMessage'
         type: array
       modelId:
+        type: string
+      sessionId:
+        description: |-
+          The marketplace session this chat's turns were served by. Empty for local
+          models, and empty for chats written before this field existed (Go leaves
+          absent JSON fields at the zero value, so old files load fine and pick the
+          id up on their next write — no migration).
+
+          This exists so a chat can be re-bound to ITS OWN session. Without it the
+          client had to re-derive the session from the model on every chat switch
+          (first open session wins), which made two chats on one model share one
+          session and made a second session on the same provider unreachable.
         type: string
       title:
         type: string
@@ -278,11 +306,6 @@ definitions:
         type: string
       responseAt:
         type: integer
-    type: object
-  lib.BigInt:
-    properties:
-      big.Int:
-        type: string
     type: object
   morrpcmesssage.SessionRes:
     properties:
@@ -681,6 +704,15 @@ definitions:
       result:
         type: boolean
     type: object
+  proxyapi.UpdateChatSessionReq:
+    properties:
+      modelId:
+        type: string
+      sessionId:
+        type: string
+    required:
+    - sessionId
+    type: object
   proxyapi.UpdateChatTitleReq:
     properties:
       title:
@@ -1026,6 +1058,13 @@ definitions:
         items:
           $ref: '#/definitions/structs.Session'
         type: array
+    type: object
+  structs.StakesOnHoldRes:
+    properties:
+      available:
+        type: string
+      hold:
+        type: string
     type: object
   structs.SupplyRes:
     properties:
@@ -1675,6 +1714,44 @@ paths:
             $ref: '#/definitions/structs.BidsRes'
       security:
       - BasicAuth: []
+      summary: Get Bids by Model Agent
+      tags:
+      - bids
+  /blockchain/models/{id}/bids/active:
+    get:
+      description: Get bids from blockchain by model agent
+      parameters:
+      - description: ModelAgent ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - example: 10
+        in: query
+        minimum: 1
+        name: limit
+        type: integer
+      - example: 0
+        in: query
+        minimum: 0
+        name: offset
+        type: integer
+      - enum:
+        - asc
+        - desc
+        example: asc
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/structs.BidsRes'
+      security:
+      - BasicAuth: []
       summary: Get Active Bids by Model
       tags:
       - bids
@@ -2118,6 +2195,28 @@ paths:
       summary: Get Sessions for User
       tags:
       - sessions
+  /blockchain/stakes/on-hold:
+    get:
+      description: 'MOR time-locked when a session close lands before the stake''s
+        releaseAt, which is not the same as closing early. `available` has matured:
+        a running proxy-router sweeps it, and only for its own wallet, so with that
+        node off or for a session opened from another wallet nothing sweeps until
+        a proxy-router holding that wallet runs -- starting one claims matured stake
+        immediately on startup, and calling `withdrawUserStakes` yourself is the alternative,
+        never the only route. `hold` is still locked, released at startOfTheDay(min(closedAt,
+        endsAt)) + 1 day.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/structs.StakesOnHoldRes'
+      security:
+      - BasicAuth: []
+      summary: Get stake on hold from session closes landing before releaseAt
+      tags:
+      - wallet
   /blockchain/token/supply:
     get:
       description: Get MOR token supply from blockchain
@@ -2153,7 +2252,6 @@ paths:
           schema:
             $ref: '#/definitions/structs.TransactionsRes'
       security:
-      - BasicAuth: []
       - BasicAuth: []
       summary: Get Transactions
       tags:
@@ -2792,8 +2890,7 @@ paths:
       responses:
         "200":
           description: OK
-          schema:
-            type: object
+          schema: {}
       security:
       - BasicAuth: []
       summary: Call agent tool
@@ -3003,6 +3100,33 @@ paths:
       security:
       - BasicAuth: []
       summary: Update chat title by id
+      tags:
+      - chat
+  /v1/chats/{id}/session:
+    post:
+      parameters:
+      - description: Chat ID
+        format: hex32
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Session
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/proxyapi.UpdateChatSessionReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/proxyapi.ResultResponse'
+      security:
+      - BasicAuth: []
+      summary: Bind a chat to the session currently serving it
       tags:
       - chat
   /v1/embeddings:

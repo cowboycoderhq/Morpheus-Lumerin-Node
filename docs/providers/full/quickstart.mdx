@@ -22,7 +22,7 @@ This page covers a **non-TEE provider** running on your own infrastructure. For 
   <Step title="Get the software">
     <Tabs>
       <Tab title="Release binary">
-        The proxy-router ships as a **standalone binary** (not a zip archive). Download the **latest** `*-morpheus-router-*` asset for your platform from [Releases](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/releases). Mainnet builds have no suffix; testnet builds end in `-test`. Asset names look like (version will differ):
+        The proxy-router ships as a **standalone binary** (not a zip archive). Download the **latest** `*-morpheus-router-*` asset for your platform from [Releases](https://github.com/MorpheusAIs/Morpheus-Lumerin-Node/releases). Asset filenames never contain a `-test` suffix; testnet releases are distinguished only by the release tag (e.g., `v7.7.0-testnet`), as shown in the asset table and confirmed by the Linux install document. Asset names look like (version will differ):
 
         | Platform | File |
         |----------|------|
@@ -143,13 +143,13 @@ A few things will quietly draw down your MOR balance during initial configuratio
 
 | Event | Cost | Refundable? |
 |-------|------|-------------|
-| Register provider (`providerRegister`) | `0.2 MOR` (or `10000 MOR` for subnet) | **Yes**, on `providerDeregister` (after deregistration cooldown opens) |
+| Register provider (`providerRegister`) | `0.2 MOR` mainnet (live on-chain) / `0.2 MOR` Sepolia (no subnet tier) | **Partly** — `providerDeregister` reverts while any bid is active (`ProviderRegistry.sol:70-72`); there is no cooldown. You get `stake − limitPeriodEarned` during the 365-day limiter period, and the full stake only after a period ends with no payout landing after it — any payout past `limitPeriodEnd`, including one from an ordinary `closeSession`, restarts a fresh 365 days (`SessionRouter.sol:378-381`; refund branch `ProviderRegistry.sol:99-105`) |
 | Register model (`modelRegister`) | `0.1 MOR` | **Yes**, on `modelDeregister` (model must have no active bids) |
-| **Post a bid** (`postModelBid`) | **`0.3 MOR` non-refundable `marketplaceBidFee`** | **No** — every bid post charges this fee |
+| **Post a bid** (`postModelBid`) | **non-refundable `marketplaceBidFee`** — `0.3 MOR` on Base mainnet (live on-chain), `0` on Base Sepolia (bids are free there) | **No** — every bid post on mainnet charges this fee |
 | BASE gas | a few cents in ETH-on-BASE per tx | No (standard gas) |
-| Sessions consumed before your node was actually serving | Possibly small — see "Disputed early closes" in [Sessions: stake, close, claim](/concepts/sessions-stake-close-recover) | n/a |
+| Sessions consumed before your node was actually serving | Possibly small — see "Disputes / on-hold" in [Rewards and economics](/concepts/rewards-and-economics) | n/a |
 
-The most common pattern: a new provider posts a bid, tweaks their setup, **deletes and reposts the bid** several times. Each repost charges `0.3 MOR`. Six iterations is `~1.8 MOR` gone before the node is even serving traffic.
+The most common pattern: a new provider posts a bid, tweaks their setup, **deletes and reposts the bid** several times. Each repost charges the fee again. Six iterations is `~1.8 MOR` on Base mainnet gone before the node is even serving traffic. On Base Sepolia the bid fee is `0`, so the same six posts cost only gas.
 
 **Mitigation:** finish your model and `models-config.json` setup, run [verify-setup steps 1-4](/providers/full/verify-setup) **before** posting your first bid. Repost only when pricing actually needs to change.
 

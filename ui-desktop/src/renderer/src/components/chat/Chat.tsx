@@ -2363,8 +2363,8 @@ export const Chat = (props: ChatProps) => {
                   {/* The direction of causation is the whole change: the length
                       is chosen and the stake follows it. The old copy said the
                       reverse ("session will last ... depending on the amount you
-                      stake"), and promised a 24h claim — which is what happens
-                      after an EARLY close, not after a session that runs out. */}
+                      stake"), and promised a 24h claim unconditionally — that
+                      follows ANY close landing before releaseAt, expiry included. */}
                   {/* Reference prices for THIS model, not a ceiling. Calling the
                       day figure "max" read as a limit — and sat two lines above
                       a 604.80 MOR quote for a longer session, which is the page
