@@ -724,11 +724,19 @@ const browser = await chromium.launch();
     await pickModel(p);
     const text = await body(p);
     assert(/Stakes about\s*0\.305 MOR/.test(text), `default length did not quote the 5-minute floor stake: ${text.slice(0, 500)}`);
-    // The lock, not a refund. MOR is held until the end of the day regardless of
-    // when the session ends, so a disclosure promising it "returns in full" when
-    // the session lapses would be telling the user something untrue about money.
-    assert(/end of the day/.test(text),
+    // The lock, not a refund. MOR is held past the session's end regardless of
+    // when it is closed, so a disclosure promising it "returns in full" when the
+    // session lapses would be telling the user something untrue about money.
+    //
+    // WHICH day is load-bearing and this used to be vague about it. releaseAt_ =
+    // startOfTheDay(min(closedAt, endsAt)) + 1 day (SessionRouter.sol:296-298):
+    // the UTC day the session ENDED in. A bare "end of the day" reads as TODAY,
+    // and a single block runs up to the 7-day cap, so for anything but a
+    // same-day session that was simply the wrong date.
+    assert(/end of the UTC day it ends/.test(text),
       `the disclosure did not say when the MOR is actually released: ${text.slice(0, 500)}`);
+    assert(!/until the end of the day\b/.test(text),
+      `the disclosure anchors the lock to "the end of the day" — which day is the point, and it is the day the session ENDS: ${text.slice(0, 500)}`);
     assert(!/returned in full|returns when its session lapses/.test(text),
       `the disclosure still promises an on-expiry refund: ${text.slice(0, 500)}`);
 
@@ -742,7 +750,7 @@ const browser = await chromium.launch();
     // that this element must NOT be a layout container at all: its children are
     // inline text, and flex/grid turn each of them into a separate item.
     const noteDisplay = await p
-      .locator('strong', { hasText: 'end of the day' })
+      .locator('strong', { hasText: 'end of the UTC day it ends' })
       .first()
       .evaluate((el) => getComputedStyle(el.parentElement).display);
     assert(!/flex|grid/.test(noteDisplay),
@@ -751,7 +759,9 @@ const browser = await chromium.launch();
     // And confirm it flows at the NARROW end, where the breakage actually shows.
     await p.setViewportSize({ width: 620, height: 900 });
     await p.waitForTimeout(200);
-    const emph = p.locator('strong', { hasText: 'end of the day' }).first();
+    const emph = p
+      .locator('strong', { hasText: 'end of the UTC day it ends' })
+      .first();
     const box = await emph.boundingBox();
     assert(box && box.width > box.height,
       `emphasised text is stacked vertically at a narrow width (${box?.width}x${box?.height})`);
@@ -794,8 +804,8 @@ const browser = await chromium.launch();
     // 105 blocks. It used to say the stakes "ACCUMULATE across renewals and do
     // not come back between them", which reads as needing 105x and contradicted
     // the refusal message thirty lines away in the same component. A block's
-    // hold clears at the end of the day it closed, six days before the next one
-    // opens, so the wallet never carries more than two.
+    // hold clears at the end of the UTC day that block ENDED in, six days before
+    // the next one opens, so the wallet never carries more than two.
     // 2 x 604.80 = 1209.60, which formatMor renders as "1,210" — above 1000 it
     // rounds to whole MOR (coinValue.tsx:35).
     assert(
@@ -805,6 +815,41 @@ const browser = await chromium.launch();
     assert(
       !/ACCUMULATE/i.test(text),
       `the plan still claims stakes accumulate across renewals: ${text.slice(0, 600)}`,
+    );
+
+    // THE RELEASE ANCHOR. releaseAt_ = startOfTheDay(min(closedAt, endsAt)) + 1
+    // day (SessionRouter.sol:296-298) — the day the block ENDED, not the day it
+    // was closed. This line said "the day it closes" for the whole life of the
+    // feature. The two coincide when the keep-alive closes a block on time and
+    // diverge when it does not: past releaseAt_ the `block.timestamp <
+    // releaseAt_` gate at :305 is false and NOTHING is held. The sweep checker
+    // (scripts/check-sweep-preconditions.mjs) cannot see this — its LOCK_SUBJECT
+    // needs `userStakesOnHold`/`OnHold(`/`releaseAt`/`day-lock`, none of which
+    // appear in rendered copy — so this assertion is the only guard there is.
+    assert(
+      /each returns at the end of the UTC day it ends/.test(text),
+      `the plan does not anchor the release to the day the block ENDS: ${text.slice(0, 600)}`,
+    );
+    assert(
+      !/day it closes|day it closed|day the session closes/i.test(text),
+      `the plan anchors the release to the CLOSE — the contract anchors to min(closedAt, endsAt): ${text.slice(0, 600)}`,
+    );
+    // ...and the sweep that performs the return needs a running node, same as
+    // the close-session panel. Nothing sweeps inside a quit app. Bound to the
+    // return clause rather than to the whole note, so a "node" mentioned
+    // somewhere else on the screen cannot satisfy it; loose on the connective,
+    // so "waits until" / "while" / "once" are all allowed to be the wording.
+    assert(
+      /returns?[^.]{0,40}your node is running/.test(text),
+      `the plan promises returns with no mention of the node that performs them: ${text.slice(0, 600)}`,
+    );
+    // The plan's own lifetime is a DIFFERENT condition — KeepAliveProvider lives
+    // in the renderer and dies with the window, while the sweep lives in the
+    // router, which the app may merely have adopted. Collapsing the two into
+    // "your node" was an error an earlier draft of this fix made.
+    assert(
+      /lasts only while the app is open/.test(text),
+      `the plan no longer says it stops when the app does: ${text.slice(0, 600)}`,
     );
 
     await p.getByText('Stake MOR', { exact: true }).first().click();
@@ -1069,9 +1114,35 @@ const browser = await chromium.launch();
       `confirm still promises a lock-free wait: ${panel}`,
     );
     // And it must say the locked part comes back on its own, since it does.
+    // Keep this: the mirror failure of the over-promise is dropping the promise
+    // altogether, which reads as caution and is equally untrue.
     assert(
       /returns automatically/i.test(panel),
       `confirm did not say the locked MOR returns automatically: ${panel}`,
+    );
+    // ...AND under what condition, which is the half this case used to leave
+    // out. The sweep is the router's StakeClaimer, constructed and started only
+    // inside Proxy.run (proxy-router/internal/proxyctl/proxyctl.go:236-240), so
+    // with no node running nothing sweeps and the hold waits indefinitely.
+    // `/returns automatically/` alone PINNED the defect: the unqualified copy
+    // satisfied it, so the assertion could never go red for the thing that was
+    // actually wrong. This one goes red if the qualifier is removed.
+    assert(
+      /returns automatically[\s,\u2014-]*while your node is running/i.test(panel),
+      `confirm promised an UNCONDITIONAL automatic return — the sweep only runs while a proxy-router holding this wallet does: ${panel}`,
+    );
+    // The over-correction is its own defect. With the node off the stake is not
+    // stranded and the manual call is not "the" remedy: starting the node claims
+    // matured stake on startup (stake_claimer.go:87-89), which for most people
+    // is the easier of the two routes. Both must be named, or the panel has
+    // traded an over-promise for an under-promise.
+    assert(
+      /starting the node claims it/i.test(panel),
+      `confirm did not name starting the node as a way out of a stopped-node hold — that leaves the manual call reading as the only route: ${panel}`,
+    );
+    assert(
+      /withdraw it yourself/i.test(panel),
+      `confirm did not name the manual withdrawal as the alternative: ${panel}`,
     );
 
     // Backing out must not close it.

@@ -322,6 +322,19 @@ const StatSub = styled.span`
   margin-top: 0.2rem;
 `;
 
+// The CONDITION on the "automatically" StatSub states. Second-rank, so SMALLER —
+// but NOT dimmer, and that is measured rather than taste: theme.colors.textMuted
+// over moneySurfaceBg is 3.11:1 under aurora and 4.91:1 under classic, i.e. below
+// WCAG AA for 10.5px text on the variant most people run. Rendering the
+// correction in the least legible colour on the tile is a quiet way of not making
+// it, which is the same defect as leaving it out. textSecondary — what StatSub
+// itself uses — measures 7.88:1 / 11.73:1, so hierarchy comes from size alone.
+const StatCond = styled.span`
+  font-size: 1.05rem;
+  color: ${(p) => p.theme.colors.textSecondary};
+  margin-top: 0.1rem;
+`;
+
 // Navigation actions (Receive / Staking Dashboard) — not a money surface, so
 // the app's usual glass chrome applies.
 const ActionTile = styled.button`
@@ -691,6 +704,32 @@ const Dashboard = ({
                     ))}
                   </div>
                 )}
+                {/* The condition on every "automatically" above. The sweep is
+                    the router's StakeClaimer, which is constructed and started
+                    ONLY inside Proxy.run
+                    (proxy-router/internal/proxyctl/proxyctl.go:236-240) and
+                    reads/withdraws for GetMyAddress alone
+                    (blockchainapi/service.go:1105, 1119) — so with no node
+                    running, nothing sweeps and the hold simply waits. The
+                    promise itself is left intact: with the app up this IS
+                    automatic, and scaring people off the normal case would be
+                    the opposite error.
+
+                    ONE line under all four variants rather than a clause inside
+                    each. The subtitle column measures 174px at View's 600px
+                    min-width and 191px at the 1200px default window; each
+                    variant is already 1-2 lines there, and a per-variant
+                    qualifier takes every one of them to four. What does not fit
+                    — that nothing is lost, that starting the node claims it on
+                    startup, and that withdrawing by hand is the ALTERNATIVE
+                    rather than the remedy — rides on `title`, which costs no
+                    layout at all. */}
+                <StatCond
+                  data-testid="stakes-on-hold-condition"
+                  title="Your node claims matured stake when it starts and every 10 minutes after that. With it stopped nothing is lost — the hold just waits: starting the node claims it, or you can withdraw it yourself on-chain."
+                >
+                  while your node is running
+                </StatCond>
               </StatText>
             </StatCard>
           )}

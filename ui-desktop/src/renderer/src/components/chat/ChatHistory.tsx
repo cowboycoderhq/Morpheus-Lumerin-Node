@@ -162,8 +162,11 @@ const HistoryEntry = ({
 };
 
 // Closing does not spend the stake — it time-locks the part of the session that
-// falls inside the UTC day of the close, until the end of that day. Running to
-// the end does NOT avoid that (measured against the deployed Diamond,
+// falls inside the UTC day the session ENDED in (sessionEnd_ = min(closedAt,
+// endsAt), SessionRouter.sol:296), until the end of that day. Not the day of
+// the CLOSE: a close landing on a later UTC day fails the
+// `block.timestamp < releaseAt_` gate at :305 and locks nothing at all. Running
+// to the end does NOT avoid the lock (measured against the deployed Diamond,
 // 2026-08-06); it locks more, because more of the session has been used. The
 // user cannot know any of this from the button, so state it with the real
 // figure. A live session lost part of the stake to this silence.
@@ -198,14 +201,29 @@ const CloseSessionConfirm = ({
             <components.ConfirmLockAmount>
               {weiToMor(lock.lockedWei, 4)} MOR
             </components.ConfirmLockAmount>{' '}
-            until {when(lock.unlockAt)}, when it returns automatically. You get{' '}
-            {weiToMor(lock.returnedWei, 4)} MOR back right away — nothing is
-            lost, but the locked part is unreachable until then.
+            until {when(lock.unlockAt)}, when it returns automatically while
+            your node is running. You get {weiToMor(lock.returnedWei, 4)} MOR
+            back right away — nothing is lost, but the locked part is
+            unreachable until then.
           </components.ConfirmText>
           <components.ConfirmHint>
             {lock.isEarly
               ? `Letting it run to ${when(lock.endsAt)} does not avoid this — the lock covers the time you use, so a full session locks the full stake. Closing early is what frees the unused part now.`
               : 'This session has already reached its end time, so the whole stake counts as used.'}
+          </components.ConfirmHint>
+          {/* The other half of "automatically", and the reason it is a
+              condition rather than a warning. The sweep is the router's
+              StakeClaimer: it claims once on start and then every 10 minutes
+              (stake_claimer.go:87-101), and it is started only inside Proxy.run
+              (proxyctl.go:236-240). So a stopped node at the release time costs
+              nothing — the hold waits, and there are TWO ways out of it, of
+              which starting the node is by far the easier. Naming only the
+              manual call here would steer people into a transaction they do not
+              need, which is the mirror error of the over-promise above. */}
+          <components.ConfirmHint>
+            If your node is stopped when the lock expires, nothing is lost —
+            starting the node claims it on startup, or you can withdraw it
+            yourself on-chain.
           </components.ConfirmHint>
         </>
       ) : (

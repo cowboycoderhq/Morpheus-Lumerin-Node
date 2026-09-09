@@ -1054,10 +1054,27 @@ function StartPickerModal({ open, args, onDone, onOpened }: Props) {
                           </StakeValue>
                         </SummaryRow>
                       </SummaryCard>
+                      {/* Two corrections, both read out of the contract rather
+                          than out of the copy this replaces.
+
+                          ANCHOR: releaseAt_ = startOfTheDay(min(closedAt,
+                          endsAt)) + 1 days (SessionRouter.sol:296-298), so the
+                          lock is pinned to the day the session ENDED, not the
+                          day it happened to be closed. Those coincide for a
+                          punctual close and diverge for a late one, where the
+                          `block.timestamp < releaseAt_` gate at :305 is already
+                          false and nothing is locked at all.
+
+                          CONDITION: the sweep is the router's StakeClaimer,
+                          started only inside Proxy.run (proxyctl.go:236-240),
+                          so "returns automatically" holds while a node is
+                          running and not with the app shut. StakeNote is a free
+                          <p> with no height reservation, so the qualifier goes
+                          inline here rather than into an affordance. */}
                       <StakeNote>
                         The stake is collateral, not a fee. It is locked until
-                        the end of the day the session closes, then returns
-                        automatically.
+                        the end of the UTC day the session ends, then returns
+                        automatically while your node is running.
                       </StakeNote>
                       {opening && (
                         <LoadingState>

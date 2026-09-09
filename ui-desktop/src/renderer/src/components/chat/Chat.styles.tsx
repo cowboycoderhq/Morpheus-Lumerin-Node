@@ -381,7 +381,8 @@ export const SessionLengthNote = styled.div`
      while a money figure is being typed. */
   min-height: 7.5em;
   /* NOT display:flex. This was flex-centred, which makes every inline child its
-     own flex item — so <strong>end of the day</strong> became a separate column
+     own flex item — so the <strong>end of the UTC day it ends</strong> span
+     became a separate column
      and the sentence rendered as a stack of single words. Reserving the height
      is what stops the page moving; vertical centring was only cosmetic and is
      not worth breaking text flow for. */

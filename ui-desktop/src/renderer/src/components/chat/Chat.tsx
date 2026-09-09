@@ -2555,22 +2555,68 @@ export const Chat = (props: ChatProps) => {
                             MOR
                           </strong>{' '}
                           free to start — a renewal opens before the previous
-                          stake comes back, and each one returns at the end of
-                          the day it closes.{' '}
+                          stake comes back, and each returns at the end of the
+                          UTC day it ends.{' '}
                           {/* This said the stakes ACCUMULATE across renewals
                               and never come back between them, which read as
                               "a 1-year plan needs 53x a block's stake". The
                               gate 30 lines up charges the PEAK, not the sum,
                               and the peak is what the wallet actually has to
-                              carry: a block's hold clears by the end of the day
-                              it closed, which at the 7-day cap is six days
-                              before the next block opens. Quote the same number
-                              the gate enforces, computed from the same
+                              carry: a block's hold clears by the end of the UTC
+                              day it ENDED in, which at the 7-day cap is six
+                              days before the next block opens. Quote the same
+                              number the gate enforces, computed from the same
                               function, so the screen cannot disagree with the
-                              refusal it is about to show. */}
+                              refusal it is about to show.
+
+                              The anchor is startOfTheDay(min(closedAt, endsAt))
+                              + 1 day (SessionRouter.sol:296-298), i.e. the day
+                              the block ENDED — not the day it was closed, which
+                              is what this line used to say. They coincide when
+                              the keep-alive closes a block on time and diverge
+                              when it does not; on a close landing past
+                              releaseAt_ the :305 gate is false and nothing is
+                              held at all.
+
+                              The closing clause names TWO conditions because
+                              they are two, and an earlier draft of this fix
+                              collapsed them into one. The PLAN lives in
+                              KeepAliveProvider, which is mounted in the renderer
+                              — it dies with the window, so it lasts only while
+                              the app is open. The RETURN is the router's
+                              StakeClaimer, which claims on start and every 10
+                              minutes (stake_claimer.go:87-101) and runs only
+                              inside Proxy.run (proxyctl.go:236-240). They
+                              coincide whenever the app started its own router
+                              and come apart when it adopted one already running
+                              (resolve-router-endpoint.ts), which outlives the
+                              window. Saying "your node" for both would have been
+                              wrong about the plan.
+
+                              Both fit, and the fit is measured, not assumed.
+                              SessionLengthNote reserves min-height 7.5em = 5
+                              lines at 13px/19.5px, sized for this, the tallest
+                              thing the slot ever says; crossing that grows the
+                              note and moves everything below it while the user
+                              is typing. Rendered at the note's real 520px width:
+                              base 97.5px, this 97.5px under the default classic
+                              (Inter) theme — no change. The wording is what pays
+                              for it: "the UTC day it ends" rather than "its own
+                              block ends" is the same fact 12 characters shorter,
+                              and 12 characters is the whole margin.
+
+                              KNOWN, PRE-EXISTING, AND NOT FIXED HERE: under the
+                              aurora variant the note is set in Roboto Mono,
+                              where the SHIPPED text is already 6 lines (117px)
+                              against the same 97.5px reservation, so crossing
+                              the cap already moves the page there; this text is
+                              7. Correcting it means raising min-height, which
+                              changes the layout of every message in the slot and
+                              is not a string fix. Flagged rather than folded in
+                              or quietly ignored. */}
                           Each is priced again when it opens, so this is a plan,
-                          not a purchase — and it lasts only as long as the app
-                          keeps running.
+                          not a purchase — it lasts only while the app is open,
+                          and each return waits until your node is running.
                         </>
                       ) : (
                         <>
@@ -2579,7 +2625,7 @@ export const Chat = (props: ChatProps) => {
                             {formatMor(stakePreviewWei, 18) ?? '…'} MOR
                           </strong>
                           , which is locked until the{' '}
-                          <strong>end of the day</strong>.
+                          <strong>end of the UTC day it ends</strong>.
                         </>
                       )}
                     </SessionLengthNote>
@@ -2598,9 +2644,12 @@ export const Chat = (props: ChatProps) => {
                             read "2× stake" and "1× stake", which contradicted
                             the sentence right below them and, worse, priced a
                             saving that does not exist: both modes cost the same
-                            because a closed block's stake is locked to the end
-                            of the day either way. The only real difference is
-                            whether inference pauses at each renewal. */}
+                            because a block's stake is locked to the end of the
+                            UTC day that block ENDS in either way — the anchor
+                            is min(closedAt, endsAt), not the close
+                            (SessionRouter.sol:296-298). The only real
+                            difference is whether inference pauses at each
+                            renewal. */}
                         <KeepAliveChip
                           $active={restakeMode === 'seamless'}
                           onClick={() => setRestakeMode('seamless')}
@@ -2617,7 +2666,7 @@ export const Chat = (props: ChatProps) => {
                       <ChatIntroInnerText style={{ marginTop: '0.4rem' }}>
                         {restakeMode === 'seamless'
                           ? `Seamless: the next session opens before the current one ends, so inference never pauses. The previous stake is still locked when the next one opens, so keep the figure above free — not just one session's worth.`
-                          : `Sequential: the next session opens only after the current one expires, so there is a short gap in inference. It costs exactly the same — MOR is locked until the end of the day either way, so each renewal needs new MOR rather than reusing the last stake. Pick this only if an overlap would be a problem.`}
+                          : `Sequential: the next session opens only after the current one expires, so there is a short gap in inference. It costs exactly the same — MOR is locked until the end of the UTC day its block ends either way, so each renewal needs new MOR rather than reusing the last stake. Pick this only if an overlap would be a problem.`}
                       </ChatIntroInnerText>
                     </>
                   )}
