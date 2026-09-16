@@ -158,24 +158,44 @@ console.log('[app] First run takes a few minutes; later ones are much faster.\n'
 const forwardedEnv = Object.fromEntries(
   Object.entries(process.env).filter(([key]) => !/^npm_config_/i.test(key)),
 );
+// Snapshot dist/ BEFORE building. Reporting "the newest installer matching this
+// version" is not the same claim as "the installer this run produced": when
+// electron-builder skips or fails its packaging step, a stale artifact from a
+// previous build still matches, and the script announced it with a tick. The
+// person then ships, tests, or reports a bug against a binary that predates
+// every change they just made. A success indicator has to be able to say no.
+const dist = join(uiDesktop, 'dist');
+const INSTALLERS = /\.(dmg|exe|AppImage|deb|snap)$/;
+const listInstallers = () =>
+  (existsSync(dist) ? readdirSync(dist) : [])
+    .filter((f) => INSTALLERS.test(f) && f.includes(version))
+    .map((f) => [f, statSync(join(dist, f)).mtimeMs]);
+const preBuild = new Map(listInstallers());
+
 execSync(`npm run ${script}`, {
   cwd: uiDesktop,
   stdio: 'inherit',
   env: { ...forwardedEnv, CSC_IDENTITY_AUTO_DISCOVERY: 'false' },
 });
 
-// Find what was actually produced rather than predicting its name: the artifact
-// pattern lives in electron.builder.config.ts and would drift out of sync with
-// any name guessed here.
-const dist = join(uiDesktop, 'dist');
-const INSTALLERS = /\.(dmg|exe|AppImage|deb|snap)$/;
-const built = readdirSync(dist)
-  .filter((f) => INSTALLERS.test(f) && f.includes(version))
-  .map((f) => ({ f, mtime: statSync(join(dist, f)).mtimeMs }))
+// Only artifacts this run created or rewrote count. mtime is compared with >,
+// not >=, so an untouched file from an earlier build can never qualify.
+const built = listInstallers()
+  .filter(([f, mtime]) => !preBuild.has(f) || mtime > preBuild.get(f))
+  .map(([f, mtime]) => ({ f, mtime }))
   .sort((a, b) => b.mtime - a.mtime);
 
 if (!built.length) {
-  console.error(`\n[app] Build finished but no installer appeared in ${dist}.`);
+  const stale = preBuild.size;
+  console.error(`\n[app] Build finished but produced no new installer in ${dist}.`);
+  if (stale) {
+    console.error(
+      `[app] ${stale} installer(s) for ${version} are already there from an earlier\n` +
+        `[app] build. They are NOT this build's output, so this run reports failure\n` +
+        `[app] rather than handing you a binary that predates your changes.`,
+    );
+  }
+  console.error('[app] Scroll up for the packaging step\'s own error.');
   process.exit(1);
 }
 
