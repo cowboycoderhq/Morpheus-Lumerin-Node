@@ -190,26 +190,32 @@ Requires **Node >= 20** — nothing else. On **macOS**, one line builds an
 installer for the machine you are on and puts it in your Downloads folder:
 
 ```bash
-git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git && cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
+git clone -q https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git Morpheus-Lumerin-Node 2>/dev/null; cd Morpheus-Lumerin-Node && git fetch -q origin && { git merge --ff-only -q "@{u}" 2>/dev/null || { git branch -f "backup/$(git rev-parse --abbrev-ref HEAD | tr / -)-$(git rev-parse --short HEAD)" >/dev/null 2>&1; git stash push -u -q -m "auto-save $(date -u +%Y%m%dT%H%M%SZ)" >/dev/null 2>&1; git checkout -q -B stake-duration origin/stake-duration; }; } && cd ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
 ```
 
-Already have a clone? Same command, minus the clone:
+**Run that same line every time** — first install or fifth rebuild. It clones if
+you have nothing, fast-forwards if it can, and repairs the checkout if it
+cannot. Tested against this repository from a clean machine, a checkout that
+was merely behind, one that had diverged, one that was diverged with
+uncommitted and untracked files, and one whose branch had no upstream at all.
 
-```bash
-cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
-```
+It is long because the short version was wrong. `git clone || cd && git pull`
+looks equivalent and is not: a pull refuses to fast-forward a diverged branch,
+`&&` then stops the chain, and the older form ended that branch with `|| true`,
+so the build ran on whatever was already on disk and reported success for code
+you never received. Every clause above exists because one of those states
+produced a wrong answer.
 
-There is deliberately no `git pull` in front of it. `yarn app` updates the
-checkout itself, and it can recover from states a plain pull refuses: a branch
-that has diverged, uncommitted edits, a branch with no upstream, or a clone
-taken before this repo's history was rebuilt. Putting `git pull --ff-only &&`
-first actively breaks that — the pull aborts on exactly those states and `&&`
-stops the chain, so the step that knows how to fix them never runs.
+**Nothing is discarded.** Commits that exist only in your checkout are moved to
+a `backup/<branch>-<sha>` branch before anything is reset — restore them with
+`git rebase backup/<branch>-<sha>`. Uncommitted and untracked files go to the
+stash — `git stash pop` brings them back. Both are kept *before* the checkout
+moves, so neither depends on the reflog.
 
-Nothing is discarded when it recovers. Uncommitted work is stashed, commits
-that exist only in your checkout are moved to a `backup/…` branch, and both are
-printed with the command that restores them. Set `MOR_NO_AUTO_RECOVER=1` to
-keep a checkout exactly as it is and build from it unchanged.
+Running `yarn app` on its own also works and performs the same repair from
+inside the build script, which is what you get if you skip the line above. Set
+`MOR_NO_AUTO_RECOVER=1` to leave a checkout exactly as it is and build from it
+unchanged — the right choice on a shared machine mid-change.
 
 > **If you have Xcode installed**, accept its licence once after any major
 > Xcode upgrade — `sudo xcodebuild -license accept` — or the native-module
