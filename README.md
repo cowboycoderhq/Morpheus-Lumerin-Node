@@ -190,8 +190,28 @@ Requires **Node >= 20** — nothing else. On **macOS**, one line builds an
 installer for the machine you are on and puts it in your Downloads folder:
 
 ```bash
-(git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git || (cd Morpheus-Lumerin-Node && git fetch -q && git merge --ff-only -q @{u} || true)) && cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
+git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git && cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
 ```
+
+Already have a clone? Update it explicitly, in the clone's own directory:
+
+```bash
+cd Morpheus-Lumerin-Node && git pull --ff-only && cd ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
+```
+
+These are two commands rather than one clone-or-update line on purpose. The
+combined form used to end its update branch with `|| true`, so a `git pull`
+that could not fast-forward — a diverged branch, local edits, a clone taken
+before this repo's history was rebuilt — was swallowed, and the build ran on
+whatever was already on disk. It then reported success for an installer built
+from code the user had not seen. A `git pull` that fails now stops the chain
+and prints why, which is the outcome you want from an update that did not
+happen.
+
+> **If you have Xcode installed**, accept its licence once after any major
+> Xcode upgrade — `sudo xcodebuild -license accept` — or the native-module
+> step stops with the full licence text and no explanation. Machines with only
+> the Command Line Tools are unaffected.
 
 `npx` runs the exact Yarn release pinned in `ui-desktop/package.json`
 (`packageManager`) without installing anything globally, so there is no
