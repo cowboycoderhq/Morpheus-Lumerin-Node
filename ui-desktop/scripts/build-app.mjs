@@ -54,9 +54,25 @@ try {
       console.log(`[app] Updated ${branch}: ${before} -> ${after} (was behind its remote)`);
     }
   } catch {
-    // No upstream configured, already current, or diverged (local commits
-    // this checkout would lose by fast-forwarding) — build from what is
-    // actually here rather than guess at resolving it.
+    // No upstream configured, already current, or diverged (local commits this
+    // checkout would lose by fast-forwarding) — build from what is actually
+    // here rather than guess at resolving it. That restraint is right; doing it
+    // SILENTLY was not. Someone who cloned before this repo's history was
+    // rebuilt has no upstream relationship at all, so the update can never
+    // apply, and every build they run quietly produces the code they already
+    // had. Say so, and name the commit being built, so "I rebuilt and nothing
+    // changed" is answerable without knowing this script exists.
+    let why = 'no upstream branch is configured, or the branch has diverged';
+    try {
+      execSync('git rev-parse --abbrev-ref --symbolic-full-name @{u}', { cwd: uiDesktop, stdio: 'pipe' });
+      why = 'the branch has diverged from its remote, or has local commits a fast-forward would lose';
+    } catch {
+      /* no upstream — the default message above is already the accurate one */
+    }
+    console.warn(`\n[app] NOT updated: ${why}.`);
+    console.warn(`[app] Building ${branch} at ${before} — the checkout as it stands.`);
+    console.warn('[app] If you expected newer code, resolve the branch first:');
+    console.warn('[app]   git -C .. status    # then rebase, stash, or re-clone\n');
   }
 } catch (err) {
   console.warn(`[app] Could not check for updates (${err.message}) — building the checkout as-is.`);
