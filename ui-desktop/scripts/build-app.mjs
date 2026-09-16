@@ -43,36 +43,89 @@ const uiDesktop = join(dirname(fileURLToPath(import.meta.url)), '..');
 // is not an error here, just a reason to build from what's already there).
 // Best-effort: no git, no network, or genuinely no remote configured all
 // degrade to "build whatever is checked out," same as before this existed.
+// Earlier versions stopped at a failed fast-forward and told the reader to go
+// fix their checkout. That is a worse failure than it looks: the person ran ONE
+// command to get an app, and got homework about rebases in a repository they
+// may never have opened. So this recovers on its own — under one rule that
+// makes recovering safe: NOTHING IS EVER DISCARDED. Work in progress is
+// stashed, diverging commits are kept on a named backup branch, and both are
+// printed with the command that brings them back. A recovery that can lose
+// work would be worse than the homework it replaces.
+//
+// Set MOR_NO_AUTO_RECOVER=1 to keep the old behaviour (report and build as-is),
+// which is what a contributor mid-change on a shared machine wants.
+const git = (args, opts = {}) =>
+  execSync(`git ${args}`, { cwd: uiDesktop, encoding: 'utf8', stdio: 'pipe', ...opts }).trim();
+const gitOk = (args) => {
+  try { git(args); return true; } catch { return false; }
+};
+
 try {
-  const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: uiDesktop, encoding: 'utf8' }).trim();
-  const before = execSync('git rev-parse --short HEAD', { cwd: uiDesktop, encoding: 'utf8' }).trim();
-  execSync('git fetch --quiet', { cwd: uiDesktop, stdio: 'pipe' });
-  try {
-    execSync('git merge --ff-only --quiet @{u}', { cwd: uiDesktop, stdio: 'pipe' });
-    const after = execSync('git rev-parse --short HEAD', { cwd: uiDesktop, encoding: 'utf8' }).trim();
+  const branch = git('rev-parse --abbrev-ref HEAD');
+  const before = git('rev-parse --short HEAD');
+  git('fetch --quiet');
+
+  if (gitOk('merge --ff-only --quiet @{u}')) {
+    const after = git('rev-parse --short HEAD');
     if (after !== before) {
       console.log(`[app] Updated ${branch}: ${before} -> ${after} (was behind its remote)`);
     }
-  } catch {
-    // No upstream configured, already current, or diverged (local commits this
-    // checkout would lose by fast-forwarding) — build from what is actually
-    // here rather than guess at resolving it. That restraint is right; doing it
-    // SILENTLY was not. Someone who cloned before this repo's history was
-    // rebuilt has no upstream relationship at all, so the update can never
-    // apply, and every build they run quietly produces the code they already
-    // had. Say so, and name the commit being built, so "I rebuilt and nothing
-    // changed" is answerable without knowing this script exists.
-    let why = 'no upstream branch is configured, or the branch has diverged';
-    try {
-      execSync('git rev-parse --abbrev-ref --symbolic-full-name @{u}', { cwd: uiDesktop, stdio: 'pipe' });
-      why = 'the branch has diverged from its remote, or has local commits a fast-forward would lose';
-    } catch {
-      /* no upstream — the default message above is already the accurate one */
+  } else if (process.env.MOR_NO_AUTO_RECOVER) {
+    console.warn(`\n[app] NOT updated (MOR_NO_AUTO_RECOVER is set).`);
+    console.warn(`[app] Building ${branch} at ${before} — the checkout as it stands.\n`);
+  } else {
+    // Work out where "up to date" actually IS. The branch may have no upstream
+    // at all, in which case fall back to the remote's default branch rather
+    // than giving up — that is the branch a plain clone would have produced.
+    let target = null;
+    if (gitOk('rev-parse --verify --quiet @{u}')) {
+      target = git('rev-parse --abbrev-ref --symbolic-full-name @{u}');
+    } else if (gitOk(`rev-parse --verify --quiet origin/${branch}`)) {
+      target = `origin/${branch}`;
+    } else {
+      try {
+        // "origin/HEAD -> origin/x" is only populated by some clones; ask the
+        // remote directly when it is not, rather than guessing a branch name.
+        target = git('rev-parse --abbrev-ref origin/HEAD');
+      } catch {
+        const head = git('ls-remote --symref origin HEAD')
+          .split('\n')
+          .find((l) => l.startsWith('ref:'));
+        if (head) target = `origin/${head.split(/\s+/)[1].replace('refs/heads/', '')}`;
+      }
     }
-    console.warn(`\n[app] NOT updated: ${why}.`);
-    console.warn(`[app] Building ${branch} at ${before} — the checkout as it stands.`);
-    console.warn('[app] If you expected newer code, resolve the branch first:');
-    console.warn('[app]   git -C .. status    # then rebase, stash, or re-clone\n');
+
+    if (!target) {
+      console.warn('\n[app] No remote branch to update from — building the checkout as-is.\n');
+    } else {
+      const recovered = [];
+
+      // 1. Uncommitted work, tracked and untracked, goes to the stash.
+      if (git('status --porcelain')) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        git(`stash push --include-untracked --message "yarn-app auto-save ${stamp}"`);
+        recovered.push(['Uncommitted changes', 'git stash pop']);
+      }
+
+      // 2. Commits that only exist here are parked on a branch that says what
+      //    it is. Created BEFORE the reset, so the objects stay reachable.
+      if (git(`rev-list --count ${target}..HEAD`) !== '0') {
+        const backup = `backup/${branch.replace(/[^\w.-]/g, '-')}-${before}`;
+        if (!gitOk(`rev-parse --verify --quiet ${backup}`)) git(`branch ${backup}`);
+        recovered.push([`Local commits (kept on ${backup})`, `git rebase ${backup}`]);
+      }
+
+      git(`reset --hard ${target}`, { stdio: 'pipe' });
+      const after = git('rev-parse --short HEAD');
+      // Re-point the branch at its remote so the NEXT run fast-forwards normally.
+      gitOk(`branch --set-upstream-to=${target} ${branch}`);
+
+      console.log(`\n[app] Checkout could not fast-forward, so it was reset to ${target}.`);
+      console.log(`[app] ${branch}: ${before} -> ${after}`);
+      for (const [what, how] of recovered) console.log(`[app]   ${what} — restore with: ${how}`);
+      if (!recovered.length) console.log('[app]   Nothing needed saving — the tree was clean.');
+      console.log('');
+    }
   }
 } catch (err) {
   console.warn(`[app] Could not check for updates (${err.message}) — building the checkout as-is.`);
