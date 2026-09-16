@@ -193,20 +193,23 @@ installer for the machine you are on and puts it in your Downloads folder:
 git clone https://github.com/cowboycoderhq/Morpheus-Lumerin-Node.git && cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
 ```
 
-Already have a clone? Update it explicitly, in the clone's own directory:
+Already have a clone? Same command, minus the clone:
 
 ```bash
-cd Morpheus-Lumerin-Node && git pull --ff-only && cd ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
+cd Morpheus-Lumerin-Node/ui-desktop && NODE_OPTIONS=--dns-result-order=ipv4first npx --yes yarn@1.22.22 app
 ```
 
-These are two commands rather than one clone-or-update line on purpose. The
-combined form used to end its update branch with `|| true`, so a `git pull`
-that could not fast-forward — a diverged branch, local edits, a clone taken
-before this repo's history was rebuilt — was swallowed, and the build ran on
-whatever was already on disk. It then reported success for an installer built
-from code the user had not seen. A `git pull` that fails now stops the chain
-and prints why, which is the outcome you want from an update that did not
-happen.
+There is deliberately no `git pull` in front of it. `yarn app` updates the
+checkout itself, and it can recover from states a plain pull refuses: a branch
+that has diverged, uncommitted edits, a branch with no upstream, or a clone
+taken before this repo's history was rebuilt. Putting `git pull --ff-only &&`
+first actively breaks that — the pull aborts on exactly those states and `&&`
+stops the chain, so the step that knows how to fix them never runs.
+
+Nothing is discarded when it recovers. Uncommitted work is stashed, commits
+that exist only in your checkout are moved to a `backup/…` branch, and both are
+printed with the command that restores them. Set `MOR_NO_AUTO_RECOVER=1` to
+keep a checkout exactly as it is and build from it unchanged.
 
 > **If you have Xcode installed**, accept its licence once after any major
 > Xcode upgrade — `sudo xcodebuild -license accept` — or the native-module
