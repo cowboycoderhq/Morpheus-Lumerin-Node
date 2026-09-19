@@ -22,6 +22,7 @@ export class ExternalProcess implements Process {
   private log?: LogFunctions
   private onStateChange?: (stateInfo?: StateInfo) => void
   private healthCheckTimer: NodeJS.Timeout | null = null
+  private pingInFlight = false
 
   constructor(params: ExternalProcessParams) {
     this.pinger = params.pinger
@@ -38,7 +39,7 @@ export class ExternalProcess implements Process {
    */
   async start(): Promise<void> {
     this.log?.info('starting external process monitoring')
-    if (this.monitoringState === 'running') {
+    if (this.monitoringState === 'running' || this.state === 'starting') {
       this.log?.info('external process monitoring was already running')
       return
     }
@@ -101,10 +102,15 @@ export class ExternalProcess implements Process {
     this.stopHealthChecks() // Clear any existing timer
 
     this.healthCheckTimer = setInterval(async () => {
+      // A hung ping (dead docker.sock) used to stack a new one every 5s.
+      if (this.pingInFlight) return
+      this.pingInFlight = true
       try {
         await this.ping()
       } catch (err) {
         this.log?.error('Health check failed:', err)
+      } finally {
+        this.pingInFlight = false
       }
     }, this.healthCheckIntervalMs)
     this.monitoringState = 'running'

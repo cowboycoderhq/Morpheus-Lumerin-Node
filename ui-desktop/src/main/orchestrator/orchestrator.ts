@@ -187,7 +187,14 @@ export class Orchestrator {
 
     await this.startOptionalService('ipfs', () => this.ensureIpfsProcess())
     await this.startOptionalService('aiRuntime', () => this.ensureAiRuntimeProcess())
-    await this.startOptionalService('containerRuntime', () => this.ensureContainerRuntimeProcess())
+    // Docker is detect-only (no child to spawn). A dead Docker Desktop leaves
+    // docker.sock up: connect succeeds, then nothing is read. Axios HTTP
+    // timeouts do not abort that. Awaiting it pinned startAll — and the
+    // renderer awaits startAll via start-services IPC (750s). Ready was
+    // already emitted above. Kick detection off; never wait for it.
+    void this.startOptionalService('containerRuntime', () =>
+      this.ensureContainerRuntimeProcess()
+    )
   }
 
   private async downloadProxyRouter() {
@@ -433,13 +440,11 @@ export class Orchestrator {
     name: string,
     ensure: () => Promise<void>
   ): Promise<void> {
+    // Docker detection must not be able to pin a caller even if one awaits
+    // this (restartService). The unix probe destroys the socket on timeout;
+    // this cap is the backstop if that ever regresses.
+    const capMs = name === 'containerRuntime' ? 3000 : undefined
     try {
-      await ensure()
-      const processMap: Record<string, Process | undefined> = {
-        ipfs: this.ipfsProcess,
-        aiRuntime: this.aiRuntimeProcess,
-        containerRuntime: this.containerRuntimeProcess
-      }
       // One service failing must not abort the pipeline or block another. This
       // used to be a bare `await ipfsProcess.start()` inline: when IPFS threw,
       // aiRuntime.start() below was never reached, so the AI runtime sat at
@@ -452,7 +457,33 @@ export class Orchestrator {
       // on its own ManagedProcess, which is what the UI escalates on.
       // Swallowing the throw here loses nothing and makes each service's
       // failure visible instead of silently fatal to everything downstream.
-      await processMap[name]?.start()
+      const run = async () => {
+        await ensure()
+        const processMap: Record<string, Process | undefined> = {
+          ipfs: this.ipfsProcess,
+          aiRuntime: this.aiRuntimeProcess,
+          containerRuntime: this.containerRuntimeProcess
+        }
+        await processMap[name]?.start()
+      }
+      if (capMs) {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+          await Promise.race([
+            run(),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error(`${name} start exceeded ${capMs}ms`)),
+                capMs
+              )
+            })
+          ])
+        } finally {
+          if (timer) clearTimeout(timer)
+        }
+      } else {
+        await run()
+      }
     } catch (err) {
       this.log.error(`Optional service ${name} failed to start; continuing`, err)
     }

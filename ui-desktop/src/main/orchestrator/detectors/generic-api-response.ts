@@ -1,5 +1,6 @@
 import { LogFunctions } from 'electron-log'
-import Axios, { AxiosRequestConfig, AxiosRequestHeaders, InternalAxiosRequestConfig } from 'axios'
+import Axios from 'axios'
+import { parseUnixNpipeUrl, unixNpipeRequest } from './unix-npipe-request'
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 type Params = {
@@ -80,7 +81,15 @@ export class GenericApiResponseDetector {
       }
 
       try {
-        const res = await this.request(this.url, this.method)
+        // Cap THIS attempt to the remaining budget. The loop condition is the
+        // overall ceiling, but a single request used to run on pollInterval
+        // (1s) even when ping() was called with 500ms — and a Unix docker.sock
+        // connect can ignore HTTP timeouts entirely. Remaining-budget + abort
+        // is what makes ProcessFactory's 500ms detect ping actually 500ms.
+        const remaining = timeout - (Date.now() - startTime)
+        if (remaining <= 0) break
+        const attemptTimeout = Math.max(1, Math.min(this.pollInterval, remaining))
+        const res = await this.request(this.url, this.method, attemptTimeout)
 
         if (this.responseRegexp) {
           const isMatch = this.responseRegexp.test(res.data)
@@ -95,13 +104,15 @@ export class GenericApiResponseDetector {
         this.log?.info('Ping attempt failed, retrying...', this.url, error?.message)
       }
 
-      // Wait before next attempt — but wake early if aborted.
-      this.log?.info(`waiting ${pollInterval}ms before next attempt`)
+      // Wait before next attempt — but do not sleep past the overall budget.
+      const wait = Math.min(pollInterval, timeout - (Date.now() - startTime))
+      if (wait <= 0) break
+      this.log?.info(`waiting ${wait}ms before next attempt`)
       await new Promise<void>((resolve) => {
         const t = setTimeout(() => {
           signal?.removeEventListener('abort', onAbort)
           resolve()
-        }, pollInterval)
+        }, wait)
         const onAbort = () => {
           clearTimeout(t)
           resolve()
@@ -124,32 +135,16 @@ export class GenericApiResponseDetector {
     )
   }
 
-  request(uri: string, method: HttpMethod) {
+  request(uri: string, method: HttpMethod, attemptTimeoutMs: number) {
+    if (parseUnixNpipeUrl(uri)) {
+      return unixNpipeRequest(uri, method, attemptTimeoutMs)
+    }
     return Axios.request({
       url: uri,
       method,
-      transformRequest: function (data, headers) {
-        return unixNpipeProtocolTransform(this, data, headers)
-      },
       transformResponse: (data) => data,
-      timeout: this.pollInterval
+      timeout: attemptTimeoutMs,
+      signal: AbortSignal.timeout(attemptTimeoutMs)
     })
   }
-}
-
-function unixNpipeProtocolTransform(
-  config: InternalAxiosRequestConfig,
-  data: any,
-  _: AxiosRequestHeaders
-): AxiosRequestConfig {
-  const [proto, pathname] = config.url?.split('://') ?? []
-  if (proto === 'unix' || proto === 'npipe') {
-    const [socketPath, apiPath] = pathname.split(':')
-
-    config.socketPath = socketPath
-    config.baseURL = 'http://localhost'
-    config.url = apiPath
-  }
-
-  return data
 }

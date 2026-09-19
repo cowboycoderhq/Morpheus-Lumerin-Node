@@ -10,12 +10,14 @@
 // never surfaces it, never shows it as an error, and never self-heals it.
 // The main-process orchestrator agrees: `calculateOrchestratorStatus()` (in
 // src/main/orchestrator/orchestrator.ts) reads only the proxy-router's download
-// state and `requiredServicesRunning()`. containerRuntime is started
-// best-effort via `startOptionalService` and appears nowhere in that
-// calculation, so a stuck Docker cannot hold the wizard short of 'ready'.
-// This note used to assert the opposite. The orchestrator was fixed and the
-// note was not, and the stale mechanism was copied out of here into
-// docs/consumers/install/linux.mdx — keep the two in step.
+// state and `requiredServicesRunning()`. containerRuntime is *detected*
+// best-effort via `startOptionalService` and is not awaited on the startup
+// pipeline — a wedged docker.sock (Desktop installed, daemon stopped) used to
+// hang Unix connect past HTTP timeouts and pin `startAll` / the start-services
+// IPC even though it was already off the readiness gate. Detection now has a
+// socket-destroy timeout and is fire-and-forget. The stale "Docker can block
+// the wizard" note was copied into docs/consumers/install/linux.mdx — keep
+// the two in step.
 // ============================================================================
 
 import type {

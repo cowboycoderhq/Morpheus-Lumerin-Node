@@ -121,7 +121,11 @@ const configMacArm = {
   containerRuntime: {
     downloadUrl: 'https://desktop.docker.com/mac/main/arm64/Docker.dmg' as string,
     probe: {
-      url: 'unix:///var/run/docker.sock:/version' as string
+      url: 'unix:///var/run/docker.sock:/version' as string,
+      // Dead Docker Desktop accepts on the socket and never replies. Keep this
+      // short — detection is optional and must not pin startup.
+      timeout: 2000,
+      interval: 400
     }
   }
 } as const satisfies OrchestratorConfig
@@ -235,7 +239,9 @@ const configWin: typeof configMacArm = {
   },
   containerRuntime: {
     probe: {
-      url: 'npipe:////./pipe/docker_engine:/version'
+      url: 'npipe:////./pipe/docker_engine:/version',
+      timeout: 2000,
+      interval: 400
     },
     downloadUrl:
       'https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe' as string
